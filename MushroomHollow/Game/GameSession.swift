@@ -194,6 +194,12 @@ final class GameSession {
         }
         panel = debug.panel
         if panel == .inventory { selection = Self.firstBagCell }
+        if debug.arguments.contains("-portrait"), let player = host.currentSnapshot.entity(host.localPlayerID) {
+            // Close-up from the front, for checking the character model.
+            camera.yaw = player.yaw
+            camera.pitch = 0.12
+            camera.distance = 3
+        }
         if debug.arguments.contains("-owl"), let arena = host.map.bossArena {
             host.summonWorldBoss()
             host.teleportPlayer(to: arena.center + (arena.center - arena.perch).normalizedOrZero * 6)
@@ -621,6 +627,7 @@ final class GameSession {
             renderer.sounds.play(.heal, from: renderer.entity(for: target), gain: -6)
 
         case let .skillCast(caster, skill, target):
+            renderer.playCast(caster: caster, time: elapsed)
             playSkillEffect(skill, caster: caster, target: target)
 
         case let .skillFailed(caster, skill, reason):
@@ -695,6 +702,7 @@ final class GameSession {
             if player == me { float("+\(amount) XP", style: .xp, above: player) }
 
         case let .levelUp(player, level):
+            renderer.playCheer(player, time: elapsed)
             guard player == me else { return }
             showBanner(Banner(title: "Level Up!", subtitle: "You are now level \(level)"))
             if level >= 10 { gameCenter.report(.level10) }
@@ -740,6 +748,7 @@ final class GameSession {
                     text: "\(quest.definition.title) \(progress)/\(goal)", tint: progress >= goal ? .green : .orange)
 
         case let .questCompleted(player, quest):
+            renderer.playCheer(player, time: elapsed)
             guard player == me else { return }
             showBanner(Banner(title: "Quest Complete", subtitle: quest.definition.title))
             feedback.levelUps += 1
@@ -754,6 +763,7 @@ final class GameSession {
             renderer.sounds.playInterface(.error)
 
         case let .classChosen(player, playerClass):
+            renderer.playCheer(player, time: elapsed)
             guard player == me else { return }
             closePanel()
             showBanner(Banner(title: "You are now a \(playerClass.definition.name)", subtitle: playerClass.definition.role))

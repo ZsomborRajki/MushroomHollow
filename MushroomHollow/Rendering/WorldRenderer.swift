@@ -45,7 +45,7 @@ final class WorldRenderer {
         let kind: EntityKind
         var gear: [ItemID] = []
         var playerClass: PlayerClass?
-        var gearEntity: Entity?
+        var rig: PlayerRig?
         var glider: Entity?
         var wings: [Entity] = []
         var telegraph: Entity?
@@ -163,7 +163,19 @@ final class WorldRenderer {
 
     func playAttack(source: EntityID, target: EntityID, time: Double) {
         actors[source]?.lungeStart = time
+        actors[source]?.rig?.playSwing(at: time)
         actors[target]?.hitStart = time
+        actors[target]?.rig?.playHurt(at: time)
+    }
+
+    /// Arms raised to cast a skill (players only).
+    func playCast(caster: EntityID, time: Double) {
+        actors[caster]?.rig?.playCast(at: time)
+    }
+
+    /// A happy hop for level ups and finished quests (players only).
+    func playCheer(_ id: EntityID, time: Double) {
+        actors[id]?.rig?.playCheer(at: time)
     }
 
     /// World point just above an entity's head.
@@ -227,10 +239,12 @@ final class WorldRenderer {
             entity.components.set(InputTargetComponent())
         }
 
-        let model = ActorModels.make(snapshot.kind)
+        let rig = snapshot.kind == .player ? PlayerRig() : nil
+        let model = rig?.root ?? ActorModels.make(snapshot.kind)
         entity.addChild(model)
         actorsRoot.addChild(entity)
         let view = ActorView(entity: entity, model: model, kind: snapshot.kind)
+        view.rig = rig
         view.wings = ActorModels.owlWingNames.compactMap { model.findEntity(named: $0) }
 
         if snapshot.kind == .mob(.beetle) {
@@ -251,27 +265,21 @@ final class WorldRenderer {
     }
 
     private func updateGear(_ view: ActorView, _ gear: [ItemID], playerClass: PlayerClass?) {
-        view.gearEntity?.removeFromParent()
-        let entity = ActorModels.makeGear(gear, playerClass: playerClass)
-        view.model.addChild(entity)
-        view.gearEntity = entity
+        view.rig?.dress(gear, playerClass: playerClass)
         view.gear = gear
         view.playerClass = playerClass
     }
 
     private func updateGlider(_ view: ActorView, airborne: Bool) {
+        // Parented to the model so the seed sways and leans with the hand holding it.
         if airborne, view.glider == nil {
-            let glider = ActorModels.makeGlider()
+            let glider = ActorModels.makeGlider(grip: PlayerRig.gliderGrip)
             glider.components.set(Self.makePollenTrail())
-            view.entity.addChild(glider)
+            view.model.addChild(glider)
             view.glider = glider
         } else if !airborne, let glider = view.glider {
             glider.removeFromParent()
             view.glider = nil
-        }
-        // A gentle pendulum sway under the seed.
-        if let glider = view.glider {
-            glider.orientation = simd_quatf(angle: sin(Float(time) * 1.6) * 0.08, axis: [0, 0, 1])
         }
     }
 
@@ -375,6 +383,8 @@ final class WorldRenderer {
         }
 
         view.model.transform = Transform(scale: scale, rotation: rotation, translation: offset)
+        view.rig?.animate(PlayerRig.Motion(moving: isMoving, airborne: view.glider != nil, fainted: view.deathStart != nil),
+                          time: time, seed: seed)
     }
 
     /// Wings fold at rest, beat while airborne, and flare wide before a gust.

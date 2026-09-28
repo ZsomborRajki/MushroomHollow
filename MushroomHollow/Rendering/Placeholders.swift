@@ -49,6 +49,91 @@ enum Meshes {
     /// Flat annulus in the XZ plane, outer radius 1.
     static let ring = makeRing(inner: 0.82, outer: 1, segments: 64)
     static let disc = makeRing(inner: 0, outer: 1, segments: 64)
+    /// Unit sphere with texture coordinates: u = 0.5 faces +Z, v = 1 at the top.
+    static let uvSphere = makeUVSphere(rings: 32, segments: 48)
+    /// Round at the top (y = 1), pointed at the bottom (y = -1), radius 1. Hair locks, leaves, petals.
+    static let teardrop = lathe([[0, 1], [0.45, 0.92], [0.78, 0.7], [0.95, 0.38], [0.92, 0.05],
+                                 [0.75, -0.3], [0.5, -0.6], [0.24, -0.84], [0, -1]], segments: 16)
+    private static var toruses: [SIMD2<Float>: MeshResource] = [:]
+
+    /// A ring around the Y axis with the given center-line radius and tube radius.
+    static func torus(radius: Float, tube: Float) -> MeshResource {
+        let key = SIMD2(radius, tube)
+        if let cached = toruses[key] { return cached }
+        let profile = (0...16).map { i -> SIMD2<Float> in
+            let a = Float.pi / 2 - Float(i) / 16 * 2 * .pi
+            return [radius + tube * cos(a), tube * sin(a)]
+        }
+        let mesh = lathe(profile, segments: 32, closed: true)
+        toruses[key] = mesh
+        return mesh
+    }
+
+    /// Revolves a profile of (radius, y) points around the Y axis. Walking the profile from top to
+    /// bottom along an outer wall faces the surface outward; `closed` profiles repeat their first point last.
+    static func lathe(_ profile: [SIMD2<Float>], segments: Int = 32, closed: Bool = false) -> MeshResource {
+        var positions: [SIMD3<Float>] = []
+        var normals: [SIMD3<Float>] = []
+        var uvs: [SIMD2<Float>] = []
+        var indices: [UInt32] = []
+        let count = profile.count
+        for (i, point) in profile.enumerated() {
+            let before = closed && i == 0 ? profile[count - 2] : profile[max(i - 1, 0)]
+            let after = closed && i == count - 1 ? profile[1] : profile[min(i + 1, count - 1)]
+            let tangent = after - before
+            var normal = SIMD2<Float>(-tangent.y, tangent.x)
+            if !closed, point.x < 0.0001, i == 0 || i == count - 1 {
+                normal = [0, i == 0 ? 1 : -1] // poles
+            }
+            normal = simd_length(normal) > 0 ? simd_normalize(normal) : [0, 1]
+            for j in 0...segments {
+                let a = Float(j) / Float(segments) * 2 * .pi
+                positions.append([point.x * sin(a), point.y, point.x * cos(a)])
+                normals.append([normal.x * sin(a), normal.y, normal.x * cos(a)])
+                uvs.append([Float(j) / Float(segments), 1 - Float(i) / Float(count - 1)])
+            }
+        }
+        let row = UInt32(segments + 1)
+        for i in 0..<UInt32(count - 1) {
+            for j in 0..<UInt32(segments) {
+                let a = i * row + j, b = a + 1, c = a + row, d = c + 1
+                indices += [a, c, d, a, d, b]
+            }
+        }
+        var descriptor = MeshDescriptor(name: "lathe")
+        descriptor.positions = MeshBuffers.Positions(positions)
+        descriptor.normals = MeshBuffers.Normals(normals)
+        descriptor.textureCoordinates = MeshBuffers.TextureCoordinates(uvs)
+        descriptor.primitives = .triangles(indices)
+        return try! MeshResource.generate(from: [descriptor])
+    }
+
+    private static func makeUVSphere(rings: Int, segments: Int) -> MeshResource {
+        var positions: [SIMD3<Float>] = []
+        var uvs: [SIMD2<Float>] = []
+        var indices: [UInt32] = []
+        for i in 0...rings {
+            let latitude = Float.pi / 2 - Float(i) / Float(rings) * .pi
+            for j in 0...segments {
+                let longitude = -Float.pi + Float(j) / Float(segments) * 2 * .pi
+                positions.append([cos(latitude) * sin(longitude), sin(latitude), cos(latitude) * cos(longitude)])
+                uvs.append([Float(j) / Float(segments), 1 - Float(i) / Float(rings)])
+            }
+        }
+        let row = UInt32(segments + 1)
+        for i in 0..<UInt32(rings) {
+            for j in 0..<UInt32(segments) {
+                let a = i * row + j, b = a + 1, c = a + row, d = c + 1
+                indices += [a, c, d, a, d, b]
+            }
+        }
+        var descriptor = MeshDescriptor(name: "uvSphere")
+        descriptor.positions = MeshBuffers.Positions(positions)
+        descriptor.normals = MeshBuffers.Normals(positions)
+        descriptor.textureCoordinates = MeshBuffers.TextureCoordinates(uvs)
+        descriptor.primitives = .triangles(indices)
+        return try! MeshResource.generate(from: [descriptor])
+    }
 
     /// A flat wedge in the XZ plane pointing along +Z, radius 1, ±`halfAngle`.
     static func fan(halfAngle: Float, segments: Int = 24) -> MeshResource {
@@ -173,5 +258,12 @@ extension Entity {
     /// A unit cylinder is 1 tall along Y; this sizes it by radius and height.
     func addCylinder(_ material: any RealityKit.Material, at position: SIMD3<Float>, radius: Float, height: Float, rotation: simd_quatf = simd_quatf(ix: 0, iy: 0, iz: 0, r: 1)) {
         addPart(Meshes.cylinder, material, at: position, scale: [radius, height, radius], rotation: rotation)
+    }
+
+    /// A cylinder running from one point to another.
+    func addRod(_ material: any RealityKit.Material, from start: SIMD3<Float>, to end: SIMD3<Float>, radius: Float) {
+        let axis = end - start
+        addCylinder(material, at: (start + end) / 2, radius: radius, height: simd_length(axis),
+                    rotation: simd_quatf(from: [0, 1, 0], to: simd_normalize(axis)))
     }
 }

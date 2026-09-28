@@ -23,7 +23,7 @@ Offline first; online (authoritative Swift server) later.
 - `MushroomHollow/` app target (Xcode synchronized folder: new files are picked up automatically)
   - `App/` SwiftUI entry and `GameView` (RealityView + overlays)
   - `Game/` `GameSession` (per-frame glue, panels, event → feedback), `OrbitCamera`
-  - `Rendering/` `WorldRenderer`, `WorldBuilder` (static world), `ActorModels` (placeholder primitives), `Placeholders` (palette, meshes, materials)
+  - `Rendering/` `WorldRenderer`, `WorldBuilder` (static world), `ActorModels` (mob/NPC primitives), `PlayerRig` (the chibi player "Sprout": joint hierarchy, procedural walk/attack/cast/cheer animation, gear on joints), `FacePainter` (anime face painted with CoreGraphics into a head texture, one material per expression), `Placeholders` (palette, meshes incl. lathe/torus/uvSphere, materials)
   - `Shaders/` Metal: `CustomMaterial` shaders (grass sway/color, day/night sky) and the post-process compute kernel
   - `Audio/` sound synthesis and playback
   - `Input/` (`InputHub`: gameplay vs menu button mapping), `HUD/` (HUD, `ActionBar`, `Panels` for bag / NPC dialogs), `Persistence/`
@@ -39,7 +39,7 @@ Conventions: yaw 0 faces +Z and yaw `a` faces (sin a, cos a); models face +Z. Th
 - Simulator controls (hardware keyboard): WASD move, Q/E or arrows camera, Space/F attack, Tab next target, Esc clear, 1/2/3 skills.
 - Keyboard extras: 1–5 skills, 6/7 potions, I bag, G fly/land, R/C climb/descend; in menus arrows/WASD navigate, Space/Enter confirm, Esc back, Q/E switch shop tab.
 - Controller: left stick move, right stick camera, A attack/talk/respawn, X/Y/B skills, RT+X/RT+Y class skills, LB/RB cycle target, LT clear target, d-pad up/down zoom, d-pad left/right potions, Menu bag, L3 fly/land (RT/LT climb/descend while flying). In panels: d-pad/stick navigate, A confirm, B back, LB/RB shop tabs.
-- Debug launch arguments (DEBUG builds only; all but `-resetSave` use a throwaway in-memory save): `-autofight`, `-demo` (geared level 10 character with a Dandelion Seed), `-level N`, `-class guardian|thornshot|sporecaster|dewkeeper` (level 18), `-time 0...1` (0 midnight, 0.5 noon), `-spawn village|glade|maze|barkfall|fen`, `-panel bag|morel|shop`, `-fly`, `-owl` (summon the world boss and stand in its arena), `-resetSave`. Example: `xcrun simctl launch <udid> org.mushroomhollow.MushroomHollow -demo -panel shop`.
+- Debug launch arguments (DEBUG builds only; all but `-resetSave` use a throwaway in-memory save): `-autofight`, `-demo` (geared level 10 character with a Dandelion Seed), `-level N`, `-class guardian|thornshot|sporecaster|dewkeeper` (level 18), `-time 0...1` (0 midnight, 0.5 noon), `-spawn village|glade|maze|barkfall|fen`, `-panel bag|morel|shop`, `-fly`, `-owl` (summon the world boss and stand in its arena), `-portrait` (camera close up in front of the player; view only), `-resetSave`. Example: `xcrun simctl launch <udid> org.mushroomhollow.MushroomHollow -demo -panel shop`.
 
 ## Roadmap
 
