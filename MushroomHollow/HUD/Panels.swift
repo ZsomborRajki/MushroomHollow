@@ -73,9 +73,15 @@ struct InventoryPanel: View {
 
         PanelChrome(title: "Bag", subtitle: player.map { "\($0.caps) caps" }, glyphs: session.glyphs, onClose: session.closePanel) {
             HStack(alignment: .top, spacing: 14) {
-                // Equipment column, then the bag grid; matches controller navigation.
-                VStack(spacing: 6) {
-                    ForEach(cells.prefix(GameSession.firstBagCell)) { cell($0) }
+                // Equipment paper doll, then the bag grid; matches controller navigation.
+                let slots = Array(cells.prefix(GameSession.firstBagCell))
+                let slotColumns = GameSession.equipmentColumns
+                Grid(horizontalSpacing: 6, verticalSpacing: 6) {
+                    ForEach(0..<(slots.count / slotColumns), id: \.self) { row in
+                        GridRow {
+                            ForEach(slots[(row * slotColumns)..<((row + 1) * slotColumns)]) { cell($0) }
+                        }
+                    }
                 }
                 Divider()
                 let bag = Array(cells.dropFirst(GameSession.firstBagCell))
@@ -109,6 +115,13 @@ struct InventoryPanel: View {
                             .font(.caption2.weight(.bold).monospacedDigit())
                             .padding(3)
                     }
+                    if cell.upgrade > 0 {
+                        Text("+\(cell.upgrade)")
+                            .font(.caption2.weight(.heavy).monospacedDigit())
+                            .foregroundStyle(Color(red: 1, green: 0.75, blue: 0.3))
+                            .padding(3)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    }
                 } else if let slot = cell.slot {
                     Image(systemName: slot.placeholderSymbol)
                         .font(.system(size: 18))
@@ -119,10 +132,18 @@ struct InventoryPanel: View {
             .frame(width: cellSize, height: cellSize)
             .overlay {
                 RoundedRectangle(cornerRadius: 12)
-                    .strokeBorder(isSelected ? Color.yellow : (cell.slot != nil ? .white.opacity(0.35) : .clear), lineWidth: isSelected ? 3 : 1)
+                    .strokeBorder(isSelected ? Color.yellow : border(cell), lineWidth: isSelected ? 3 : 1)
             }
         }
         .buttonStyle(.plain)
+    }
+
+    /// Set pieces and boss drops get a colored rim; empty equipment slots a faint one.
+    private func border(_ cell: InventoryCell) -> Color {
+        switch cell.item?.definition.rarity {
+        case .set, .unique: cell.item!.definition.rarity.color.opacity(0.8)
+        default: cell.slot != nil ? .white.opacity(0.35) : .clear
+        }
     }
 }
 
@@ -134,39 +155,47 @@ private struct ItemDetail: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            if let cell, let item = cell.item {
+            if let cell, let item = cell.item, let gear = cell.gear {
                 let definition = item.definition
-                HStack(spacing: 10) {
-                    Image(systemName: item.symbol)
-                        .font(.title)
-                        .foregroundStyle(item.tint)
-                    VStack(alignment: .leading) {
-                        Text(definition.name).font(.headline)
-                        if let gear = item.gearLine {
-                            Text(gear).font(.caption).foregroundStyle(.secondary)
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack(spacing: 10) {
+                            Image(systemName: item.symbol)
+                                .font(.title)
+                                .foregroundStyle(item.tint)
+                            VStack(alignment: .leading) {
+                                Text(gear.displayName).font(.headline).foregroundStyle(definition.rarity.color)
+                                if let line = item.gearLine {
+                                    Text(line).font(.caption).foregroundStyle(.secondary)
+                                }
+                                if let line = gear.statLine {
+                                    Text(line).font(.caption.weight(.semibold)).foregroundStyle(.green)
+                                }
+                            }
                         }
-                        if let line = item.statLine {
-                            Text(line).font(.caption.weight(.semibold)).foregroundStyle(.green)
+                        Text(definition.description)
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        if definition.requiredLevel > 1 {
+                            let tooLow = (player?.stats.level ?? 0) < definition.requiredLevel
+                            Text("Requires Lv \(definition.requiredLevel)")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(tooLow ? .red : .secondary)
                         }
+                        if let required = definition.requiredClass, player?.playerClass != required {
+                            Text("Requires \(required.definition.name)")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.red)
+                        }
+                        if let set = definition.set {
+                            SetSummary(set: set, worn: player.map { set.worn(in: $0.equipment) } ?? 0)
+                        }
+                        Text("Sells for \(gear.sellPrice) caps").font(.caption).foregroundStyle(.secondary)
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                Text(definition.description)
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                if definition.requiredLevel > 1 {
-                    let tooLow = (player?.stats.level ?? 0) < definition.requiredLevel
-                    Text("Requires Lv \(definition.requiredLevel)")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(tooLow ? .red : .secondary)
-                }
-                if let required = definition.requiredClass, player?.playerClass != required {
-                    Text("Requires \(required.definition.name)")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.red)
-                }
-                Text("Sells for \(definition.sellPrice) caps").font(.caption).foregroundStyle(.secondary)
-                Spacer(minLength: 4)
+                .scrollIndicators(.hidden)
                 switch (cell.slot, definition.kind) {
                 case (.some, _): ActionButton(title: "Unequip", glyph: glyph, isEnabled: true, action: action)
                 case (nil, .equipment): ActionButton(title: "Equip", glyph: glyph, isEnabled: true, action: action)
@@ -188,7 +217,10 @@ private struct ItemDetail: View {
                     stat("HP", stats.maxHP)
                     stat("MP", stats.maxMP)
                     if stats.blockChance > 0 {
-                        stat("BLK", "\(Int((stats.blockChance * 100).rounded()))%")
+                        stat("BLK", StatBonus.percent(stats.blockChance))
+                    }
+                    if stats.critChance > 0.1 {
+                        stat("CRT", StatBonus.percent(stats.critChance))
                     }
                 }
             }
@@ -205,6 +237,27 @@ private struct ItemDetail: View {
         VStack(spacing: 0) {
             Text(name).font(.caption2.weight(.bold)).foregroundStyle(.secondary)
             Text(value).font(.callout.weight(.semibold).monospacedDigit())
+        }
+    }
+}
+
+/// "Dewleaf Set 2/4" and its bonuses, the unlocked ones lit.
+private struct SetSummary: View {
+    let set: ItemSet
+    let worn: Int
+
+    var body: some View {
+        let definition = set.definition
+        VStack(alignment: .leading, spacing: 2) {
+            Text("\(definition.name) \(worn)/\(definition.pieces.count)")
+                .font(.caption.weight(.bold))
+                .foregroundStyle(Rarity.set.color)
+            ForEach(definition.tiers, id: \.pieces) { tier in
+                Text("\(tier.pieces) pieces: \(tier.bonus.summary)")
+                    .font(.caption2)
+                    .foregroundStyle(worn >= tier.pieces ? Rarity.set.color : .secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
     }
 }
@@ -244,12 +297,16 @@ struct NPCPanel: View {
                         }
                     }
                 }
+                if definition.upgradesGear, let player = session.hud.player {
+                    ForgeHeader(session: session, player: player)
+                }
                 HStack(alignment: .top, spacing: 16) {
                     ScrollViewReader { proxy in
                         ScrollView {
                             VStack(spacing: 6) {
                                 if rows.isEmpty {
-                                    Text(definition.isShopkeeper ? "Nothing to sell." : "No tasks right now. Come back later!")
+                                    Text(definition.isShopkeeper ? "Nothing to sell."
+                                         : definition.upgradesGear ? "No gear to upgrade." : "No tasks right now. Come back later!")
                                         .foregroundStyle(.secondary)
                                         .frame(maxWidth: .infinity, alignment: .leading)
                                 }
@@ -268,10 +325,14 @@ struct NPCPanel: View {
                     VStack(alignment: .leading, spacing: 10) {
                         if let selected {
                             Text(selected.title).font(.headline)
-                            Text(selected.detail)
-                                .font(.callout)
-                                .foregroundStyle(.secondary)
-                                .fixedSize(horizontal: false, vertical: true)
+                            ScrollView {
+                                Text(selected.detail)
+                                    .font(definition.upgradesGear ? .caption : .callout)
+                                    .foregroundStyle(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                            .scrollIndicators(.hidden)
                             Spacer(minLength: 4)
                             if selected.action != .none {
                                 ActionButton(title: actionTitle(selected.action), glyph: session.glyphs?.primary,
@@ -292,11 +353,34 @@ struct NPCPanel: View {
         switch action {
         case .buy: "Buy"
         case .sell: "Sell 1"
+        case .upgrade: "Upgrade"
         case .accept: "Accept"
         case .turnIn: "Turn in"
         case .chooseClass: "Choose this path"
         case .none: ""
         }
+    }
+}
+
+/// Materials on hand and the Ward Charm switch (LB/RB, Q/E).
+private struct ForgeHeader: View {
+    let session: GameSession
+    let player: PlayerStatus
+
+    var body: some View {
+        HStack(spacing: 14) {
+            Label("\(player.inventory.count(of: .amberShard))", systemImage: ItemID.amberShard.symbol)
+                .foregroundStyle(ItemID.amberShard.tint)
+            Label("\(player.inventory.count(of: .wardCharm))", systemImage: ItemID.wardCharm.symbol)
+                .foregroundStyle(ItemID.wardCharm.tint)
+            Spacer()
+            if let glyph = session.glyphs?.previousTarget { Image(systemName: glyph) }
+            Toggle("Ward Charm", isOn: Binding(get: { session.protectUpgrades }, set: { session.setProtectUpgrades($0) }))
+                .fixedSize()
+            Label("\(player.caps)", systemImage: "circle.circle.fill")
+                .foregroundStyle(.yellow)
+        }
+        .font(.callout.weight(.semibold).monospacedDigit())
     }
 }
 

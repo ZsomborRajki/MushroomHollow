@@ -78,7 +78,7 @@ extension QuestID {
                 giver: .elderMorel, requiredLevel: 7, prerequisite: .slipperySituation,
                 objective: .defeat(.beetle, count: 6),
                 rewardXP: 650, rewardCaps: 150,
-                rewardItems: [ItemStack(item: .beetleHelm, count: 1)])
+                rewardItems: [ItemStack(item: .beetleHelm, count: 1), ItemStack(item: .amberShard, count: 3)])
         case .sporeSeason:
             QuestDefinition(
                 id: self, title: "Spore Season",
@@ -86,7 +86,8 @@ extension QuestID {
                 giver: .elderMorel, requiredLevel: 10, prerequisite: .barkBeetles,
                 objective: .collect(.sporeSac, count: 5),
                 rewardXP: 1500, rewardCaps: 300,
-                rewardItems: [ItemStack(item: .beetleBlade, count: 1)])
+                rewardItems: [ItemStack(item: .beetleBlade, count: 1), ItemStack(item: .amberShard, count: 5),
+                              ItemStack(item: .wardCharm, count: 1)])
         case .hollowOwl:
             QuestDefinition(
                 id: self, title: "The Hollow Owl",

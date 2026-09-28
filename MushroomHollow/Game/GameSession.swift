@@ -83,7 +83,8 @@ enum ShopTab: Int, CaseIterable {
 struct PanelRow: Identifiable, Equatable {
     enum Action: Equatable {
         case buy(ItemID)
-        case sell(ItemID)
+        case sell(Gear)
+        case upgrade(GearLocation)
         case accept(QuestID)
         case turnIn(QuestID)
         case chooseClass(PlayerClass)
@@ -101,12 +102,15 @@ struct PanelRow: Identifiable, Equatable {
     let action: Action
 }
 
-/// One cell in the inventory grid. Column 0 holds the equipment slots.
+/// One cell in the inventory grid. The first two columns hold the equipment slots.
 struct InventoryCell: Identifiable, Equatable {
     let id: Int
     let item: ItemID?
     let count: Int
+    var upgrade = 0
     let slot: EquipSlot?
+
+    var gear: Gear? { item.map { Gear($0, upgrade: upgrade) } }
 }
 
 /// Glue between the world host (simulation), input, camera, and renderer.
@@ -126,6 +130,8 @@ final class GameSession {
     private(set) var panel: Panel?
     private(set) var selection = 0
     private(set) var shopTab = ShopTab.buy
+    /// At the blacksmith: spend a Ward Charm on risky upgrades.
+    private(set) var protectUpgrades = false
     private(set) var timeOfDay: Float = 0.4
     private(set) var debugText = ""
 
@@ -151,8 +157,9 @@ final class GameSession {
     @ObservationIgnored private var saveRequested = false
 
     static let floaterLifetime: Double = 1.1
-    /// Bag grid columns. The equipment slots form one extra column to its left.
+    /// Bag grid columns. The equipment slots form a small paper-doll grid to its left.
     static let inventoryColumns = 6
+    static let equipmentColumns = 2
     static let firstBagCell = EquipSlot.allCases.count
     static let autosaveInterval: Double = 20
 
@@ -273,6 +280,11 @@ final class GameSession {
     func setShopTab(_ tab: ShopTab) {
         shopTab = tab
         selection = 0
+    }
+
+    func setProtectUpgrades(_ protect: Bool) {
+        protectUpgrades = protect
+        renderer.sounds.playInterface(.uiMove)
     }
 
     func closePanel() {
@@ -428,9 +440,9 @@ final class GameSession {
         case .confirm:
             activateSelection()
         case .previousTab, .nextTab:
-            if case .npc(.chanterelle) = panel {
-                setShopTab(shopTab == .buy ? .sell : .buy)
-            }
+            guard case let .npc(npc) = panel else { return }
+            if npc.definition.isShopkeeper { setShopTab(shopTab == .buy ? .sell : .buy) }
+            if npc.definition.upgradesGear { setProtectUpgrades(!protectUpgrades) }
         case .up, .down, .left, .right:
             let before = selection
             moveSelection(input)
@@ -441,21 +453,24 @@ final class GameSession {
     private func moveSelection(_ direction: MenuInput) {
         switch panel {
         case .inventory:
-            // Grid of (1 + columns) x rows: column 0 is equipment, the rest is the bag.
+            // The equipment grid (row by row), then the bag grid to its right.
             let columns = Self.inventoryColumns
-            let slotRows = EquipSlot.allCases.count
+            let slotColumns = Self.equipmentColumns
+            let slotRows = Self.firstBagCell / slotColumns
             let bagRows = Inventory.capacity / columns
-            var column = selection < Self.firstBagCell ? 0 : 1 + (selection - Self.firstBagCell) % columns
-            var row = selection < Self.firstBagCell ? selection : (selection - Self.firstBagCell) / columns
+            let inSlots = selection < Self.firstBagCell
+            let bagIndex = selection - Self.firstBagCell
+            var column = inSlots ? selection % slotColumns : slotColumns + bagIndex % columns
+            var row = inSlots ? selection / slotColumns : bagIndex / columns
             switch direction {
             case .left: column = max(0, column - 1)
-            case .right: column = min(columns, column + 1)
+            case .right: column = min(slotColumns + columns - 1, column + 1)
             case .up: row = max(0, row - 1)
             case .down: row += 1
             default: break
             }
-            row = min(row, (column == 0 ? slotRows : bagRows) - 1)
-            selection = column == 0 ? row : Self.firstBagCell + row * columns + column - 1
+            row = min(row, (column < slotColumns ? slotRows : bagRows) - 1)
+            selection = column < slotColumns ? row * slotColumns + column : Self.firstBagCell + row * columns + column - slotColumns
         case .npc:
             let count = npcRows.count
             guard count > 0 else { return }
@@ -476,7 +491,8 @@ final class GameSession {
             }
             switch item.definition.kind {
             case .consumable: host.send(.useItem(item))
-            case .equipment: host.send(.equip(item))
+            case .equipment: host.send(.equip(item, upgrade: cell.upgrade))
+            case .material where item == .amberShard || item == .wardCharm: showToast("Bring it to Shiitake to upgrade gear")
             case .material: showToast("Sell materials to Chanterelle")
             case .glider:
                 closePanel()
@@ -488,7 +504,8 @@ final class GameSession {
             guard row.isEnabled else { return }
             switch row.action {
             case let .buy(item): host.send(.buy(item, from: npc))
-            case let .sell(item): host.send(.sell(item, count: 1, to: npc))
+            case let .sell(gear): host.send(.sell(gear.item, count: 1, upgrade: gear.upgrade, to: npc))
+            case let .upgrade(location): host.send(.upgrade(location, protect: protectUpgrades))
             case let .accept(quest): host.send(.acceptQuest(quest))
             case let .turnIn(quest): host.send(.completeQuest(quest))
             case let .chooseClass(playerClass): host.send(.chooseClass(playerClass))
@@ -503,12 +520,13 @@ final class GameSession {
     var inventoryCells: [InventoryCell] {
         guard let player = hud.player else { return [] }
         var cells = EquipSlot.allCases.enumerated().map { index, slot in
-            InventoryCell(id: index, item: player.equipment[slot], count: 1, slot: slot)
+            InventoryCell(id: index, item: player.equipment[slot]?.item, count: 1, upgrade: player.equipment[slot]?.upgrade ?? 0, slot: slot)
         }
         let stacks = player.inventory.stacks
         for index in 0..<Inventory.capacity {
             let stack = index < stacks.count ? stacks[index] : nil
-            cells.append(InventoryCell(id: Self.firstBagCell + index, item: stack?.item, count: stack?.count ?? 0, slot: nil))
+            cells.append(InventoryCell(id: Self.firstBagCell + index, item: stack?.item, count: stack?.count ?? 0,
+                                       upgrade: stack?.upgrade ?? 0, slot: nil))
         }
         return cells
     }
@@ -532,16 +550,17 @@ final class GameSession {
                 }
             case .sell:
                 return player.inventory.stacks.enumerated().map { index, stack in
-                    let definition = stack.item.definition
+                    let gear = stack.gear
                     return PanelRow(
                         id: "sell-\(index)-\(stack.item.rawValue)", symbol: stack.item.symbol, tint: stack.item.tint,
-                        title: stack.count > 1 ? "\(definition.name) ×\(stack.count)" : definition.name,
-                        subtitle: stack.item.statLine ?? "Material",
-                        trailing: "+\(definition.sellPrice)", detail: definition.description,
-                        isEnabled: true, action: .sell(stack.item))
+                        title: stack.count > 1 ? "\(gear.displayName) ×\(stack.count)" : gear.displayName,
+                        subtitle: gear.statLine ?? "Material",
+                        trailing: "+\(gear.sellPrice)", detail: gear.definition.description,
+                        isEnabled: true, action: .sell(gear))
                 }
             }
         }
+        if npc.definition.upgradesGear { return upgradeRows(player) }
         // Things to do first, finished business last.
         func priority(_ state: QuestState) -> Int {
             switch state {
@@ -593,6 +612,51 @@ final class GameSession {
             }
         }
         return rows
+    }
+
+    /// Everything the blacksmith can work on: worn gear first, then the bag.
+    private func upgradeRows(_ player: PlayerStatus) -> [PanelRow] {
+        let worn: [(GearLocation, Gear, String)] = EquipSlot.allCases.compactMap { slot in
+            player.equipment[slot].map { (.equipped(slot), $0, "Equipped") }
+        }
+        let carried: [(GearLocation, Gear, String)] = player.inventory.stacks
+            .filter { $0.item.definition.isUpgradable }
+            .map { (.bag($0.gear), $0.gear, "In bag") }
+        let amber = player.inventory.count(of: .amberShard)
+        let charms = player.inventory.count(of: .wardCharm)
+
+        return (worn + carried).enumerated().map { index, entry in
+            let (location, gear, place) = entry
+            let id = "upgrade-\(index)-\(gear.item.rawValue)-\(gear.upgrade)"
+            let target = gear.upgrade + 1
+            guard target <= Upgrade.maxLevel else {
+                return PanelRow(id: id, symbol: gear.item.symbol, tint: gear.item.tint, title: gear.displayName,
+                                subtitle: "\(place) · fully upgraded", trailing: "MAX",
+                                detail: "\(gear.statLine ?? "")\n\nThis can't get any better.", isEnabled: false, action: .none)
+            }
+            let chance = Upgrade.chance(toReach: target)
+            let stones = Upgrade.amberCost(toReach: target)
+            let caps = Upgrade.capsCost(of: gear.item, toReach: target)
+            let risk = Upgrade.risk(toReach: target)
+            let protected = protectUpgrades && risk != .none
+            let failure = switch (risk, protected) {
+            case (.none, _): "If it fails, only the materials are lost."
+            case (_, true): "If it fails, the Ward Charm keeps it at +\(gear.upgrade) (uses 1 of \(charms))."
+            case (.downgrade, false): "If it fails, it drops to +\(gear.upgrade - 1)."
+            case (.destroy, false): "If it fails, it is destroyed! Turn on the Ward Charm to prevent that."
+            }
+            let next = Gear(gear.item, upgrade: target)
+            let detail = """
+                \(gear.statLine ?? "") → \(next.statLine ?? "")
+                \(stones) Amber Shard\(stones == 1 ? "" : "s") (have \(amber)) · \(caps) caps · \(StatBonus.percent(chance)) chance
+                \(failure)
+                """
+            let affordable = amber >= stones && player.caps >= caps && (!protected || charms > 0)
+            return PanelRow(id: id, symbol: gear.item.symbol, tint: gear.item.tint, title: gear.displayName,
+                            subtitle: "\(place) · to +\(target): \(stones) amber, \(caps) caps",
+                            trailing: StatBonus.percent(chance), detail: detail,
+                            isEnabled: affordable, action: .upgrade(location))
+        }
     }
 
     /// Active quests for the HUD tracker.
@@ -764,6 +828,24 @@ final class GameSession {
 
         case let .itemUsed(player, _), let .equipmentChanged(player):
             if player == me { requestSave() }
+
+        case let .upgradeAttempted(player, item, result):
+            guard player == me else { return }
+            showToast(result.message(for: item))
+            requestSave()
+            if result.succeeded {
+                renderer.sounds.playInterface(.questDone, gain: -2)
+                rumble.play(.light)
+                if let position = renderer.renderedPosition(of: player) {
+                    let amber = UIColor(red: 1, green: 0.7, blue: 0.25, alpha: 1)
+                    renderer.effects.burst(at: position + [0, 0.6, 0], color: amber, count: 40, speed: 1.4,
+                                           size: 0.05, lifetime: 0.9, rise: 1.5, spread: 0.3, time: elapsed)
+                }
+            } else {
+                feedback.failures += 1
+                renderer.sounds.playInterface(.error)
+                rumble.play(result == .destroyed ? .heavy : .light)
+            }
 
         case let .questAccepted(player, quest):
             guard player == me else { return }
@@ -1027,7 +1109,7 @@ final class GameSession {
 #if DEBUG
 /// Debug-only launch arguments for testing and screenshots:
 /// `-autofight`, `-demo` (geared level 8 character), `-spawn village|glade|maze|barkfall|fen`,
-/// `-panel bag|morel|shop`, `-time 0...1` (0.5 = noon), `-level N`, `-class guardian|thornshot|sporecaster|dewkeeper`
+/// `-panel bag|morel|shop|smith`, `-time 0...1` (0.5 = noon), `-level N`, `-class guardian|thornshot|sporecaster|dewkeeper`
 /// (wielding the class weapon), `-weapon sword|axe|maul|bow|wand|staff` (plus a shield if one fits), `-owl` (summon the boss),
 /// `-resetSave`. Anything but `-resetSave` uses a throwaway save.
 private struct DebugLaunch {
@@ -1062,12 +1144,17 @@ private struct DebugLaunch {
         bag.add(.pebbleHatchet, count: 1)
         bag.add(.shellShield, count: 1)
         bag.add(.barkMail, count: 1)
-        var equipment: [EquipSlot: ItemID] = [.weapon: .twigSword, .hat: .acornCap, .body: .leafTunic, .boots: .mossBoots]
+        bag.add(.amberShard, count: 12)
+        bag.add(.wardCharm, count: 2)
+        bag.add(.dewleafGloves, count: 1)
+        bag.add(.dewleafVest, count: 1)
+        var equipment: [EquipSlot: Gear] = [.weapon: Gear(.twigSword, upgrade: 2), .hat: Gear(.dewleafCap), .body: Gear(.leafTunic),
+                                            .gloves: Gear(.grassMitts), .boots: Gear(.dewleafSlippers, upgrade: 1)]
         // The best weapon of the asked-for family (or the class's own) that this level can wield.
         if let family = weapon ?? playerClass.flatMap({ job in WeaponType.allCases.first { $0.playerClass == job } }),
            let pick = ItemID.allCases.last(where: { $0.definition.weaponType == family && $0.definition.requiredLevel <= level }) {
-            equipment[.weapon] = pick
-            if !family.isTwoHanded { equipment[.shield] = .barkBuckler }
+            equipment[.weapon] = Gear(pick)
+            if !family.isTwoHanded { equipment[.shield] = Gear(.barkBuckler) }
         }
         return PlayerProfile(level: level, caps: 420, inventory: bag, equipment: equipment,
                              activeQuests: [.slipperySituation: 0], completedQuests: [.shellShock],
@@ -1079,6 +1166,7 @@ private struct DebugLaunch {
         case "bag": .inventory
         case "morel": .npc(.elderMorel)
         case "shop": .npc(.chanterelle)
+        case "smith": .npc(.shiitake)
         default: nil
         }
     }

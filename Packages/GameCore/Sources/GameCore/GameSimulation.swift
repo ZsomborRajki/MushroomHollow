@@ -88,7 +88,7 @@ public struct GameSimulation: Sendable {
                     id: id, kind: e.kind, position: e.position, yaw: e.yaw, isMoving: e.isMoving,
                     pose: e.pose, level: e.stats.level, hp: e.stats.hp, maxHP: e.stats.maxHP,
                     target: e.combat.engaged ? e.combat.target : nil,
-                    gear: EquipSlot.allCases.compactMap { e.player?.equipment[$0] },
+                    gear: EquipSlot.allCases.compactMap { e.player?.equipment[$0]?.item },
                     playerClass: e.player?.playerClass, isFlying: e.isFlying)
             },
             hazards: hazardSnapshots,

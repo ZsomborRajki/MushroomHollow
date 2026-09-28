@@ -15,6 +15,8 @@ public struct CombatStats: Codable, Sendable, Equatable {
     public var reach: Float
     /// Chance (0...1) to block a mob's attack outright.
     public var blockChance: Float = 0
+    /// Chance (0...1) that a hit lands as a critical.
+    public var critChance: Float = 0.1
 
     public var isAlive: Bool { hp > 0 }
 }
@@ -87,8 +89,10 @@ public enum Progression {
         return CombatStats(level: level, maxHP: maxHP, hp: maxHP, maxMP: maxMP, mp: maxMP,
                            attack: scaled(9 + 3 * l, job?.attackScale) + bonus.attack,
                            defense: scaled(2 + l, job?.defenseScale) + bonus.defense,
-                           attackInterval: weapon?.attackInterval ?? 0.9, reach: reach(weapon: weapon, playerClass: playerClass),
-                           blockChance: bonus.block > 0 ? bonus.block + (job?.blockBonus ?? 0) : 0)
+                           attackInterval: (weapon?.attackInterval ?? 0.9) / (1 + bonus.attackSpeed),
+                           reach: reach(weapon: weapon, playerClass: playerClass),
+                           blockChance: bonus.block > 0 ? bonus.block + (job?.blockBonus ?? 0) : 0,
+                           critChance: 0.1 + bonus.critical)
     }
 
     /// Auto-attack reach: the weapon decides; bare-handed, the class does (thornshots fling thorns).

@@ -250,6 +250,7 @@ extension WorldMap {
             npcs: [
                 NPCPlacement(id: .elderMorel, position: villageCenter + Vec2(-3.2, -2.5), yaw: 0.6),
                 NPCPlacement(id: .chanterelle, position: villageCenter + Vec2(3.6, -1.5), yaw: -0.9),
+                NPCPlacement(id: .shiitake, position: villageCenter + Vec2(0.5, -6), yaw: 0.1),
             ],
             zones: [
                 Zone(name: "Capstone Village", center: villageCenter, radius: 17, levels: nil),

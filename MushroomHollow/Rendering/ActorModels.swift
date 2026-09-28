@@ -19,6 +19,7 @@ enum ActorModels {
         case .mob(.owl): buildOwl(into: model)
         case .npc(.elderMorel): buildElderMorel(into: model)
         case .npc(.chanterelle): buildChanterelle(into: model)
+        case .npc(.shiitake): buildShiitake(into: model)
         }
         return model
     }
@@ -123,6 +124,33 @@ enum ActorModels {
         e.addCylinder(orange, at: [0, 1.79, 0], radius: 0.5, height: 0.05)
         // A satchel of wares.
         e.addPart(Meshes.roundedBox, Materials.matte(Palette.door), at: [-0.33, 0.7, 0], scale: [0.14, 0.32, 0.3])
+    }
+
+    /// The blacksmith: stout, with a broad cracked shiitake cap, a leather apron, and a hammer.
+    private static func buildShiitake(into e: Entity) {
+        e.addCylinder(Materials.matte(Palette.stem), at: [0, 0.55, 0], radius: 0.36, height: 0.95)
+        let leather = Materials.matte(UIColor(red: 0.36, green: 0.22, blue: 0.14, alpha: 1), roughness: 0.9)
+        e.addCylinder(leather, at: [0, 0.5, 0.04], radius: 0.37, height: 0.7) // apron
+        e.addPart(Meshes.torus(radius: 0.37, tube: 0.025), Materials.matte(Palette.darkBark), at: [0, 0.82, 0], scale: .one)
+        e.addSphere(Materials.matte(Palette.skin), at: [0, 1.22, 0], radius: 0.26)
+        let eye = Materials.glossy(Palette.eye)
+        e.addSphere(eye, at: [-0.09, 1.25, 0.23], radius: 0.035)
+        e.addSphere(eye, at: [0.09, 1.25, 0.23], radius: 0.035)
+        e.addSphere(Materials.matte(Palette.darkBark), at: [0, 1.1, 0.2], radius: 0.13, squash: [1.4, 0.45, 0.6]) // moustache
+        // A wide, dark brown cap with pale cracks.
+        let cap = Materials.matte(UIColor(red: 0.42, green: 0.26, blue: 0.16, alpha: 1), roughness: 0.8)
+        e.addSphere(cap, at: [0, 1.5, 0], radius: 0.56, squash: [1, 0.42, 1])
+        let crack = Materials.matte(UIColor(red: 0.9, green: 0.82, blue: 0.68, alpha: 1))
+        for i in 0..<7 {
+            let a = Float(i) * 0.9
+            let r: Float = 0.2 + Float(i % 3) * 0.1
+            e.addSphere(crack, at: [sin(a) * r, 1.72 - r * 0.35, cos(a) * r], radius: 0.035, squash: [1.8, 0.4, 0.7])
+        }
+        // A smith's hammer, resting in the right hand.
+        let handle = Materials.matte(Palette.bark)
+        e.addCylinder(handle, at: [-0.45, 0.62, 0.12], radius: 0.03, height: 0.6)
+        e.addPart(Meshes.roundedBox, Materials.glossy(UIColor(white: 0.45, alpha: 1)), at: [-0.45, 0.95, 0.12], scale: [0.26, 0.13, 0.13])
+        e.addSphere(Materials.matte(Palette.skin), at: [-0.45, 0.7, 0.12], radius: 0.07)
     }
 
     /// Wing entities are named so the renderer can flap and spread them.

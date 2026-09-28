@@ -116,7 +116,7 @@ import Testing
         #expect(events.contains(.actionFailed(player: player, reason: .levelTooLow)))
         var status = try #require(sim.playerStatus(player))
         #expect(status.stats.attack == base.attack + 4)
-        #expect(status.equipment[.weapon] == .twigSword)
+        #expect(status.equipment[.weapon]?.item == .twigSword)
         #expect(status.inventory.count(of: .twigSword) == 0)
         #expect(sim.snapshot().entity(player)?.gear == [.twigSword])
 
@@ -166,12 +166,12 @@ import Testing
         bag.add(.shellShield, count: 1)
         var sim = GameSimulation(seed: 1)
         let player = sim.spawnPlayer(profile: PlayerProfile(level: 16, inventory: bag,
-                                                            equipment: [.weapon: .twigSword, .shield: .barkBuckler],
+                                                            equipment: [.weapon: Gear(.twigSword), .shield: Gear(.barkBuckler)],
                                                             playerClass: .guardian))
         sim.enqueue(.equip(.toadstoolMaul), from: player)
         _ = run(&sim, seconds: 0.1)
         var status = try #require(sim.playerStatus(player))
-        #expect(status.equipment[.weapon] == .toadstoolMaul)
+        #expect(status.equipment[.weapon]?.item == .toadstoolMaul)
         #expect(status.equipment[.shield] == nil)
         #expect(status.inventory.count(of: .twigSword) == 1)
         #expect(status.inventory.count(of: .barkBuckler) == 1)
@@ -180,7 +180,7 @@ import Testing
         sim.enqueue(.equip(.shellShield), from: player)
         _ = run(&sim, seconds: 0.1)
         status = try #require(sim.playerStatus(player))
-        #expect(status.equipment[.shield] == .shellShield)
+        #expect(status.equipment[.shield]?.item == .shellShield)
         #expect(status.equipment[.weapon] == nil, "the maul needs both hands")
         #expect(status.inventory.count(of: .toadstoolMaul) == 1)
         // Guards are better at blocking than anyone.
@@ -190,7 +190,7 @@ import Testing
     @Test func shieldsBlockMobAttacks() throws {
         func blocks(shield: Bool) throws -> (blocked: Int, hits: Int) {
             var sim = GameSimulation(seed: 3)
-            let player = sim.spawnPlayer(profile: PlayerProfile(level: 10, equipment: shield ? [.shield: .beetleAegis] : [:]))
+            let player = sim.spawnPlayer(profile: PlayerProfile(level: 10, equipment: shield ? [.shield: Gear(.beetleAegis)] : [:]))
             sim.entities[player]?.stats.maxHP = 100_000
             sim.entities[player]?.stats.hp = 100_000
             let slug = try #require(sim.snapshot().entities.first { $0.kind == .mob(.slug) })
@@ -335,7 +335,7 @@ import Testing
         bag.add(.dewPotion, count: 4)
         bag.add(.snailShell, count: 9)
         let original = PlayerProfile(level: 6, xp: 33, hp: 50, mp: 20, caps: 123, inventory: bag,
-                                     equipment: [.weapon: .thornRapier], activeQuests: [.slipperySituation: 0],
+                                     equipment: [.weapon: Gear(.thornRapier)], activeQuests: [.slipperySituation: 0],
                                      completedQuests: [.shellShock], position: Vec2(10, 40))
         let player = sim.spawnPlayer(profile: original)
         let saved = try #require(sim.profile(of: player))
@@ -344,7 +344,7 @@ import Testing
         #expect(decoded == saved)
         #expect(decoded.level == 6)
         #expect(decoded.caps == 123)
-        #expect(decoded.equipment[.weapon] == .thornRapier)
+        #expect(decoded.equipment[.weapon] == Gear(.thornRapier))
         #expect(decoded.inventory == bag)
         #expect(decoded.completedQuests == [.shellShock])
         #expect(sim.entity(player)?.stats.attack == Progression.playerStats(level: 6).attack + 9)

@@ -7,7 +7,8 @@ public struct PlayerProfile: Codable, Sendable, Equatable {
     public var mp: Int?
     public var caps: Int
     public var inventory: Inventory
-    public var equipment: [EquipSlot: ItemID]
+    /// Older saves stored bare `ItemID`s here; `Gear` decodes those as +0.
+    public var equipment: [EquipSlot: Gear]
     public var activeQuests: [QuestID: Int]
     public var completedQuests: Set<QuestID>
     public var position: Vec2?
@@ -15,7 +16,7 @@ public struct PlayerProfile: Codable, Sendable, Equatable {
     public var playerClass: PlayerClass?
 
     public init(level: Int = 1, xp: Int = 0, hp: Int? = nil, mp: Int? = nil, caps: Int = 0,
-                inventory: Inventory = Inventory(), equipment: [EquipSlot: ItemID] = [:],
+                inventory: Inventory = Inventory(), equipment: [EquipSlot: Gear] = [:],
                 activeQuests: [QuestID: Int] = [:], completedQuests: Set<QuestID> = [], position: Vec2? = nil,
                 playerClass: PlayerClass? = nil) {
         self.level = level
@@ -86,9 +87,10 @@ extension GameSimulation {
             position: e.position.xz, playerClass: data.playerClass)
     }
 
-    static func equipmentBonus(_ equipment: [EquipSlot: ItemID]) -> StatBonus {
-        EquipSlot.allCases.reduce(StatBonus()) { total, slot in
-            total + (equipment[slot]?.definition.bonus ?? StatBonus())
+    /// Worn gear (with upgrades) plus any set bonuses.
+    static func equipmentBonus(_ equipment: [EquipSlot: Gear]) -> StatBonus {
+        EquipSlot.allCases.reduce(ItemSet.bonus(for: equipment)) { total, slot in
+            total + (equipment[slot]?.bonus ?? StatBonus())
         }
     }
 

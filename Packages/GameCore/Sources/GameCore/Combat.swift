@@ -1,5 +1,4 @@
 extension GameSimulation {
-    static let criticalChance: Float = 0.1
     static let criticalMultiplier: Float = 1.6
 
     /// Rolls and applies one hit. Handles aggro, death, and XP for the attacker.
@@ -21,7 +20,7 @@ extension GameSimulation {
         defense *= Self.buffMultiplier(target) { if case let .defense(m) = $0 { m } else { nil } }
         let attack = Float(attacker.stats.attack) * Self.buffMultiplier(attacker) { if case let .attack(m) = $0 { m } else { nil } }
         var raw = attack * multiplier * random.float(in: 0.85...1.15) - defense * 0.6
-        let isCritical = random.unit() < Self.criticalChance
+        let isCritical = random.unit() < attacker.stats.critChance
         if isCritical { raw *= Self.criticalMultiplier }
         let amount = max(1, Int(raw.rounded()))
 

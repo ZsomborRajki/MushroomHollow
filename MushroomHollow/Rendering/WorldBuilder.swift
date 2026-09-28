@@ -19,6 +19,7 @@ enum WorldBuilder {
         addZoneDressing(map, to: world, random: &random)
         if let arena = map.bossArena { addBossArena(arena, to: world, random: &random) }
         addMarketStall(map, to: world)
+        addForge(map, to: world)
         if let grass = makeGrass(map, random: &random) { world.addChild(grass) }
         return world
     }
@@ -241,6 +242,33 @@ enum WorldBuilder {
         moonlight.light.attenuationRadius = 24
         moonlight.position = [arena.center.x, 8, arena.center.y]
         world.addChild(moonlight)
+    }
+
+    /// An anvil and a glowing ember pit beside the blacksmith.
+    private static func addForge(_ map: WorldMap, to world: Entity) {
+        guard let smith = map.npcs.first(where: { $0.id.definition.upgradesGear }) else { return }
+        let forge = Entity()
+        forge.position = [smith.position.x, 0, smith.position.y]
+        forge.orientation = simd_quatf(angle: smith.yaw, axis: [0, 1, 0])
+        let iron = Materials.glossy(UIColor(white: 0.32, alpha: 1))
+        forge.addPart(Meshes.roundedBox, Materials.matte(Palette.darkBark), at: [0.95, 0.2, 0.2], scale: [0.36, 0.4, 0.36]) // stump
+        forge.addPart(Meshes.roundedBox, iron, at: [0.95, 0.47, 0.2], scale: [0.44, 0.14, 0.22])
+        forge.addPart(Meshes.cone, iron, at: [1.25, 0.49, 0.2], scale: [0.07, 0.18, 0.07],
+                      rotation: simd_quatf(angle: -.pi / 2, axis: [0, 0, 1]))
+        let stone = Materials.matte(UIColor(white: 0.5, alpha: 1), roughness: 1)
+        for i in 0..<8 {
+            let a = Float(i) / 8 * 2 * .pi
+            forge.addSphere(stone, at: [-1 + sin(a) * 0.38, 0.1, -0.2 + cos(a) * 0.38], radius: 0.13)
+        }
+        let ember = Materials.glow(UIColor(red: 1, green: 0.55, blue: 0.15, alpha: 1))
+        forge.addSphere(ember, at: [-1, 0.08, -0.2], radius: 0.28, squash: [1, 0.35, 1])
+        let light = PointLight()
+        light.light.color = UIColor(red: 1, green: 0.6, blue: 0.25, alpha: 1)
+        light.light.intensity = 6000
+        light.light.attenuationRadius = 5
+        light.position = [-1, 0.6, -0.2]
+        forge.addChild(light)
+        world.addChild(forge)
     }
 
     /// Crates and a little sign next to the trader.

@@ -212,7 +212,7 @@ final class WorldRenderer {
     // MARK: - Quest markers
 
     /// Floating "!" over quest givers (yellow: new quest, green: ready to turn in),
-    /// and a spinning coin over shopkeepers.
+    /// a spinning coin over shopkeepers, and an amber gem over the blacksmith.
     func updateQuestMarkers(_ wanted: [NPCID: QuestMarker]) {
         for (npc, view) in npcActors {
             let kind = wanted[npc]
@@ -227,6 +227,12 @@ final class WorldRenderer {
             } else if npc.definition.isShopkeeper {
                 let gold = Materials.glossy(UIColor(red: 1, green: 0.8, blue: 0.25, alpha: 1))
                 marker.addCylinder(gold, at: .zero, radius: 0.2, height: 0.05, rotation: simd_quatf(angle: .pi / 2, axis: [1, 0, 0]))
+            } else if npc.definition.upgradesGear {
+                // An amber gem: bring shards here.
+                let amber = Materials.glow(UIColor(red: 1, green: 0.62, blue: 0.18, alpha: 1))
+                marker.addPart(Meshes.cone, amber, at: [0, 0.1, 0], scale: [0.16, 0.2, 0.16])
+                marker.addPart(Meshes.cone, amber, at: [0, -0.1, 0], scale: [0.16, 0.2, 0.16],
+                               rotation: simd_quatf(angle: .pi, axis: [1, 0, 0]))
             }
             marker.position = [0, view.kind.headHeight + 0.5, 0]
             marker.components.set(DynamicLightShadowComponent(castsShadow: false))

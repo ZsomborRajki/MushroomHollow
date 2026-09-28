@@ -244,6 +244,8 @@ final class PlayerRig {
         var cuffs = Materials.matte(SproutLook.bootCuff)
         var cap = Materials.matte(Palette.capRed, roughness: 0.5)
         var showSpots = true
+        // A complete set makes its trim glow.
+        let fullSet = ItemSet.allCases.first { $0.definition.pieces.allSatisfy(items.contains) }
 
         for item in items {
             if let type = item.definition.weaponType {
@@ -314,8 +316,40 @@ final class PlayerRig {
             case .mossBoots:
                 boots = Materials.matte(Palette.darkMoss, roughness: 1)
                 cuffs = Materials.matte(Palette.moss, roughness: 1)
+            case .barkTreads:
+                boots = Materials.matte(Palette.bark, roughness: 1)
+                cuffs = Materials.matte(Palette.darkBark, roughness: 1)
+            case .grassMitts:
+                addGloves(Materials.matte(Palette.leaf, roughness: 0.8), cuff: Materials.matte(Palette.darkMoss))
+            case .chitinGauntlets:
+                addGloves(Materials.glossy(Palette.beetleShell), cuff: Materials.matte(Palette.darkBark))
             default:
-                break
+                guard let set = item.definition.set, let slot = item.definition.equipSlot else { break }
+                let look = Self.look(of: set)
+                let main = Materials.matte(look.main, roughness: 0.7)
+                let trim = fullSet == set ? Materials.glow(look.trim) : Materials.matte(look.trim, roughness: 0.6)
+                switch slot {
+                case .hat:
+                    cap = main
+                    showSpots = false
+                    let crest = Entity()
+                    crest.addPart(Meshes.teardrop, trim, at: [0.12, 0.16, 0.12], scale: [0.045, 0.09, 0.014],
+                                  rotation: simd_quatf(angle: .pi / 4, axis: [0, 1, 0]) * simd_quatf(angle: -0.5, axis: [1, 0, 0]))
+                    attach(crest, to: hat)
+                case .body:
+                    outfit = main
+                    let sash = Entity()
+                    sash.addPart(Meshes.torus(radius: 0.19, tube: 0.02), trim, at: [0, 0.03, 0], scale: .one)
+                    sash.addSphere(trim, at: [0, 0.03, 0.19], radius: 0.035)
+                    attach(sash, to: torso)
+                case .gloves:
+                    addGloves(main, cuff: trim)
+                case .boots:
+                    boots = main
+                    cuffs = trim
+                case .weapon, .shield:
+                    break
+                }
             }
         }
 
@@ -364,6 +398,27 @@ final class PlayerRig {
             self.halo = halo
         case .guardian, nil:
             break
+        }
+    }
+
+    /// Mittens over both fists, with a cuff at the wrist.
+    private func addGloves(_ material: any RealityKit.Material, cuff: any RealityKit.Material) {
+        for hand in hands {
+            let glove = Entity()
+            glove.addSphere(material, at: .zero, radius: 0.057)
+            glove.addPart(Meshes.torus(radius: 0.045, tube: 0.016), cuff, at: [0, 0.045, 0], scale: .one)
+            attach(glove, to: hand)
+        }
+    }
+
+    /// Each set's cloth color and its trim.
+    private static func look(of set: ItemSet) -> (main: UIColor, trim: UIColor) {
+        switch set {
+        case .dewleaf: (UIColor(red: 0.42, green: 0.76, blue: 0.48, alpha: 1), UIColor(red: 0.72, green: 0.94, blue: 1, alpha: 1))
+        case .heartwood: (UIColor(red: 0.5, green: 0.32, blue: 0.18, alpha: 1), SproutLook.gold)
+        case .briar: (UIColor(red: 0.33, green: 0.48, blue: 0.2, alpha: 1), UIColor(red: 0.88, green: 0.32, blue: 0.3, alpha: 1))
+        case .mycelium: (UIColor(red: 0.5, green: 0.38, blue: 0.66, alpha: 1), UIColor(red: 0.86, green: 0.76, blue: 1, alpha: 1))
+        case .rainpetal: (UIColor(red: 0.55, green: 0.78, blue: 0.95, alpha: 1), UIColor(red: 1, green: 0.78, blue: 0.9, alpha: 1))
         }
     }
 

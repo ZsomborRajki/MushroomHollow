@@ -25,8 +25,19 @@ extension ItemID {
         case .dewdropStaff, .raincallerStaff: "drop.fill"
         case .acornCap, .beetleHelm: "crown.fill"
         case .leafTunic, .barkMail: "tshirt.fill"
-        case .mossBoots: "shoeprints.fill"
+        case .mossBoots, .barkTreads: "shoeprints.fill"
+        case .grassMitts, .chitinGauntlets: "hand.raised.fill"
+        case .amberShard: "diamond.fill"
+        case .wardCharm: "seal.fill"
         case .dandelionSeed: "wind"
+        default:
+            // Set pieces: one icon per slot.
+            switch definition.equipSlot {
+            case .hat: "crown.fill"
+            case .body: "tshirt.fill"
+            case .gloves: "hand.raised.fill"
+            default: "shoeprints.fill"
+            }
         }
     }
 
@@ -56,6 +67,12 @@ extension ItemID {
         case .puffballWand: Color(red: 0.8, green: 0.55, blue: 1)
         case .glowcapScepter: Color(red: 0.45, green: 0.95, blue: 0.85)
         case .dewdropStaff, .raincallerStaff: Color(red: 0.55, green: 0.9, blue: 1)
+        case .grassMitts: .green
+        case .chitinGauntlets: Color(red: 0.4, green: 0.55, blue: 0.95)
+        case .barkTreads: .brown
+        case .amberShard: Color(red: 1, green: 0.66, blue: 0.2)
+        case .wardCharm: Color(red: 0.45, green: 0.95, blue: 0.85)
+        default: definition.set?.tint ?? .white
         }
     }
 
@@ -71,22 +88,80 @@ extension ItemID {
     }
 
     /// One-line stat summary for tooltips, e.g. "+4 ATK · +10 HP".
+    var statLine: String? { Gear(self).statLine }
+}
+
+extension Gear {
+    /// "Twig Sword +3".
+    var displayName: String { upgrade > 0 ? "\(definition.name) +\(upgrade)" : definition.name }
+
+    /// One-line stat summary including the upgrade, e.g. "+6 ATK · +10 HP".
     var statLine: String? {
-        let definition = definition
         switch definition.kind {
-        case let .consumable(.restoreHP(amount)): return "Restores \(amount) HP"
-        case let .consumable(.restoreMP(amount)): return "Restores \(amount) MP"
-        case .material: return nil
-        case .glider: return "Lets you fly" 
-        case let .equipment(_, bonus):
-            var parts: [String] = []
-            if bonus.attack > 0 { parts.append("+\(bonus.attack) ATK") }
-            if bonus.defense > 0 { parts.append("+\(bonus.defense) DEF") }
-            if bonus.maxHP > 0 { parts.append("+\(bonus.maxHP) HP") }
-            if bonus.maxMP > 0 { parts.append("+\(bonus.maxMP) MP") }
-            if bonus.block > 0 { parts.append("\(Int((bonus.block * 100).rounded()))% Block") }
-            return parts.joined(separator: " · ")
+        case let .consumable(.restoreHP(amount)): "Restores \(amount) HP"
+        case let .consumable(.restoreMP(amount)): "Restores \(amount) MP"
+        case .material: nil
+        case .glider: "Lets you fly"
+        case .equipment: bonus.summary
         }
+    }
+}
+
+extension StatBonus {
+    /// "+4 ATK · +10 HP · +15% Speed".
+    var summary: String {
+        var parts: [String] = []
+        if attack > 0 { parts.append("+\(attack) ATK") }
+        if defense > 0 { parts.append("+\(defense) DEF") }
+        if maxHP > 0 { parts.append("+\(maxHP) HP") }
+        if maxMP > 0 { parts.append("+\(maxMP) MP") }
+        if block > 0 { parts.append("\(Self.percent(block)) Block") }
+        if attackSpeed > 0 { parts.append("+\(Self.percent(attackSpeed)) Speed") }
+        if critical > 0 { parts.append("+\(Self.percent(critical)) Crit") }
+        return parts.joined(separator: " · ")
+    }
+
+    static func percent(_ value: Float) -> String { "\(Int((value * 100).rounded()))%" }
+}
+
+extension Rarity {
+    /// Name color: white for standard gear, green for sets, gold for boss drops.
+    var color: Color {
+        switch self {
+        case .common: .primary
+        case .set: Color(red: 0.4, green: 0.95, blue: 0.45)
+        case .unique: Color(red: 1, green: 0.78, blue: 0.3)
+        }
+    }
+}
+
+extension ItemSet {
+    var tint: Color {
+        switch self {
+        case .dewleaf: Color(red: 0.45, green: 0.9, blue: 0.55)
+        case .heartwood: Color(red: 0.75, green: 0.5, blue: 0.3)
+        case .briar: Color(red: 0.55, green: 0.75, blue: 0.3)
+        case .mycelium: Color(red: 0.8, green: 0.6, blue: 1)
+        case .rainpetal: Color(red: 0.55, green: 0.85, blue: 1)
+        }
+    }
+}
+
+extension UpgradeResult {
+    func message(for item: ItemID) -> String {
+        let name = item.definition.name
+        return switch self {
+        case let .succeeded(level): "Success! \(name) is now +\(level)"
+        case let .failed(level): "The upgrade failed. \(name) stays +\(level)"
+        case let .protected(level): "Failed, but the Ward Charm held. \(name) stays +\(level)"
+        case let .downgraded(level): "Failed! \(name) dropped to +\(level)"
+        case .destroyed: "Failed! \(name) shattered"
+        }
+    }
+
+    var succeeded: Bool {
+        if case .succeeded = self { return true }
+        return false
     }
 }
 
@@ -97,6 +172,7 @@ extension EquipSlot {
         case .shield: "Shield"
         case .hat: "Hat"
         case .body: "Body"
+        case .gloves: "Gloves"
         case .boots: "Boots"
         }
     }
@@ -107,6 +183,7 @@ extension EquipSlot {
         case .shield: "shield"
         case .hat: "crown"
         case .body: "tshirt"
+        case .gloves: "hand.raised"
         case .boots: "shoeprints.fill"
         }
     }
@@ -117,6 +194,7 @@ extension NPCID {
         switch self {
         case .elderMorel: "text.book.closed.fill"
         case .chanterelle: "bag.fill"
+        case .shiitake: "hammer.fill"
         }
     }
 }
@@ -133,6 +211,8 @@ extension ActionFailure {
         case .notAvailable: "Not available"
         case .itemCooldown: "Not ready yet"
         case .wrongClass: "Your class can't use that"
+        case .missingMaterials: "You need more Amber Shards"
+        case .maxUpgrade: "Already +10"
         }
     }
 }

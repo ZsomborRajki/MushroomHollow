@@ -93,7 +93,7 @@ struct PlayerData: Codable, Sendable {
     var xp = 0
     var caps = 0
     var inventory = Inventory()
-    var equipment: [EquipSlot: ItemID] = [:]
+    var equipment: [EquipSlot: Gear] = [:]
     /// Active quests and their kill counts (collect quests count the bag instead).
     var activeQuests: [QuestID: Int] = [:]
     var completedQuests: Set<QuestID> = []

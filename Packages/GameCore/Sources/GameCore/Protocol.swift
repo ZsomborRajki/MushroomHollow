@@ -12,12 +12,16 @@ public enum PlayerCommand: Codable, Sendable, Equatable {
 
     // Items
     case useItem(ItemID)
-    case equip(ItemID)
+    /// Equips `item` at `upgrade` from the bag.
+    case equip(ItemID, upgrade: Int = 0)
     case unequip(EquipSlot)
 
     // NPCs (must be within `NPCID.interactionRange`)
     case buy(ItemID, from: NPCID)
-    case sell(ItemID, count: Int, to: NPCID)
+    case sell(ItemID, count: Int, upgrade: Int = 0, to: NPCID)
+    /// At a blacksmith: try to raise one piece of gear by +1. `protect` spends a Ward Charm
+    /// on risky attempts so a failure can't cost a level or the item.
+    case upgrade(GearLocation, protect: Bool)
     case acceptQuest(QuestID)
     case completeQuest(QuestID)
     /// First job change at level 15, at Elder Morel.
@@ -38,8 +42,12 @@ public enum ActionFailure: String, Codable, Sendable {
     case notUsable
     case notAvailable
     case itemCooldown
-    /// Another class's weapon.
+    /// Another class's weapon or set.
     case wrongClass
+    /// Not enough Amber Shards (or no Ward Charm).
+    case missingMaterials
+    /// Already +10.
+    case maxUpgrade
 }
 
 public enum MobAbility: String, Codable, Sendable {
@@ -67,6 +75,7 @@ public enum WorldEvent: Codable, Sendable, Equatable {
     case itemReceived(player: EntityID, item: ItemID, count: Int)
     case itemUsed(player: EntityID, item: ItemID)
     case equipmentChanged(player: EntityID)
+    case upgradeAttempted(player: EntityID, item: ItemID, result: UpgradeResult)
     case questAccepted(player: EntityID, quest: QuestID)
     case questProgress(player: EntityID, quest: QuestID, progress: Int, goal: Int)
     case questCompleted(player: EntityID, quest: QuestID)
@@ -152,7 +161,7 @@ public struct PlayerStatus: Codable, Sendable, Equatable {
     public let skills: [SkillStatus]
     public let caps: Int
     public let inventory: Inventory
-    public let equipment: [EquipSlot: ItemID]
+    public let equipment: [EquipSlot: Gear]
     public let quests: [QuestStatus]
     /// Seconds until potions can be used again.
     public let itemCooldown: Float

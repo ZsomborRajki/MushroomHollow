@@ -49,12 +49,12 @@ extension GameSimulation {
         case let .useItem(item):
             if let failure = useItem(item, player: &player) { fail(failure, player) }
 
-        case let .equip(item):
-            if let failure = equip(item, player: &player) { fail(failure, player) }
+        case let .equip(item, upgrade):
+            if let failure = equip(Gear(item, upgrade: upgrade), player: &player) { fail(failure, player) }
 
         case let .unequip(slot):
-            guard var data = player.player, let item = data.equipment[slot] else { return }
-            guard data.inventory.add(item, count: 1) == 0 else { return fail(.inventoryFull, player) }
+            guard var data = player.player, let gear = data.equipment[slot] else { return }
+            guard data.inventory.add(gear.item, count: 1, upgrade: gear.upgrade) == 0 else { return fail(.inventoryFull, player) }
             data.equipment[slot] = nil
             player.player = data
             refreshStats(&player)
@@ -63,8 +63,11 @@ extension GameSimulation {
         case let .buy(item, npc):
             if let failure = buy(item, from: npc, player: &player) { fail(failure, player) }
 
-        case let .sell(item, count, npc):
-            if let failure = sell(item, count: count, to: npc, player: &player) { fail(failure, player) }
+        case let .sell(item, count, upgrade, npc):
+            if let failure = sell(Gear(item, upgrade: upgrade), count: count, to: npc, player: &player) { fail(failure, player) }
+
+        case let .upgrade(location, protect):
+            if let failure = upgrade(location, protect: protect, player: &player) { fail(failure, player) }
 
         case let .acceptQuest(quest):
             if let failure = acceptQuest(quest, player: &player) { fail(failure, player) }
@@ -265,7 +268,7 @@ extension GameSimulation {
 
     // MARK: - Items
 
-    private mutating func fail(_ reason: ActionFailure, _ player: WorldEntity) {
+    mutating func fail(_ reason: ActionFailure, _ player: WorldEntity) {
         events.append(.actionFailed(player: player.id, reason: reason))
     }
 
@@ -293,10 +296,10 @@ extension GameSimulation {
         return nil
     }
 
-    private mutating func equip(_ item: ItemID, player: inout WorldEntity) -> ActionFailure? {
-        let definition = item.definition
+    private mutating func equip(_ gear: Gear, player: inout WorldEntity) -> ActionFailure? {
+        let definition = gear.definition
         guard var data = player.player, let slot = definition.equipSlot else { return .notUsable }
-        guard data.inventory.count(of: item) > 0 else { return .missingItem }
+        guard data.inventory.count(of: gear.item, upgrade: gear.upgrade) > 0 else { return .missingItem }
         guard player.stats.level >= definition.requiredLevel else { return .levelTooLow }
         if let required = definition.requiredClass, data.playerClass != required { return .wrongClass }
 
@@ -305,13 +308,13 @@ extension GameSimulation {
         if definition.weaponType?.isTwoHanded == true { freed.append(.shield) }
         if slot == .shield, data.equipment[.weapon]?.definition.weaponType?.isTwoHanded == true { freed.append(.weapon) }
 
-        data.inventory.remove(item, count: 1)
+        data.inventory.remove(gear.item, count: 1, upgrade: gear.upgrade)
         for freedSlot in freed {
             guard let previous = data.equipment[freedSlot] else { continue }
-            guard data.inventory.add(previous, count: 1) == 0 else { return .inventoryFull }
+            guard data.inventory.add(previous.item, count: 1, upgrade: previous.upgrade) == 0 else { return .inventoryFull }
             data.equipment[freedSlot] = nil
         }
-        data.equipment[slot] = item
+        data.equipment[slot] = gear
         player.player = data
         refreshStats(&player)
         events.append(.equipmentChanged(player: player.id))
@@ -340,13 +343,13 @@ extension GameSimulation {
         return nil
     }
 
-    private mutating func sell(_ item: ItemID, count: Int, to npc: NPCID, player: inout WorldEntity) -> ActionFailure? {
+    private mutating func sell(_ gear: Gear, count: Int, to npc: NPCID, player: inout WorldEntity) -> ActionFailure? {
         guard var data = player.player, count > 0 else { return .notAvailable }
         guard isNear(npc, player) else { return .tooFar }
         guard npc.definition.isShopkeeper else { return .notAvailable }
-        guard data.inventory.remove(item, count: count) else { return .missingItem }
+        guard data.inventory.remove(gear.item, count: count, upgrade: gear.upgrade) else { return .missingItem }
 
-        let earned = item.definition.sellPrice * count
+        let earned = gear.sellPrice * count
         data.caps += earned
         player.player = data
         events.append(.capsChanged(player: player.id, delta: earned))
