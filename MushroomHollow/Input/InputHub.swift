@@ -2,6 +2,29 @@ import CoreGraphics
 import GameController
 import GameCore
 
+/// Navigation inside an open panel (controller / keyboard).
+enum MenuInput: Equatable {
+    case up, down, left, right
+    case confirm, back
+    case previousTab, nextTab
+}
+
+/// Discrete things the player asked for this frame (button presses, taps).
+enum InputAction: Equatable {
+    /// Attack the current/nearest target, talk to a nearby NPC, or get up after fainting.
+    case primary
+    case cycleTarget(Int)
+    case clearTarget
+    /// Index into the skill bar.
+    case skill(Int)
+    /// Tapped a specific entity in the world.
+    case select(EntityID)
+    case toggleInventory
+    /// 0 = HP potion, 1 = MP potion.
+    case quickItem(Int)
+    case menu(MenuInput)
+}
+
 /// One frame of player intent, merged from every input device.
 struct InputFrame {
     /// Movement stick: x right, y forward, length <= 1.
@@ -10,6 +33,19 @@ struct InputFrame {
     var look: SIMD2<Float> = .zero
     /// Camera zoom this frame in meters (positive = further away).
     var zoom: Float = 0
+    var actions: [InputAction] = []
+}
+
+/// SF Symbols for the connected controller's buttons, so prompts match the pad in hand
+/// (A/B/X/Y on Xbox, shapes on PlayStation...).
+struct ControllerGlyphs: Equatable {
+    var primary = "a.circle"
+    var back = "b.circle"
+    var skills = ["x.circle", "y.circle", "b.circle"]
+    var previousTarget = "lb.rectangle.roundedbottom"
+    var nextTarget = "rb.rectangle.roundedbottom"
+    var menu = "line.3.horizontal.circle"
+    var quickItems = ["dpad.left.filled", "dpad.right.filled"]
 }
 
 /// Merges game controllers, a hardware keyboard, and touch into an `InputFrame`.
@@ -19,13 +55,32 @@ final class InputHub {
     var touchMove: SIMD2<Float> = .zero
     private var pendingTouchLook: SIMD2<Float> = .zero
     private var pendingZoom: Float = 0
+    private var queuedActions: [InputAction] = []
+    /// Buttons held last frame, for press edge detection.
+    private var held: Set<String> = []
 
     static let stickLookSpeed: Float = 2.6 // rad/s at full deflection
     static let touchLookPerPoint: Float = 0.006
     static let stickDeadZone: Float = 0.12
 
-    var isGamepadConnected: Bool {
-        GCController.controllers().contains { $0.extendedGamepad != nil }
+    private var gamepad: GCExtendedGamepad? {
+        GCController.current?.extendedGamepad ?? GCController.controllers().lazy.compactMap(\.extendedGamepad).first
+    }
+
+    var isGamepadConnected: Bool { gamepad != nil }
+
+    var glyphs: ControllerGlyphs? {
+        guard let pad = gamepad else { return nil }
+        var glyphs = ControllerGlyphs()
+        glyphs.primary = pad.buttonA.sfSymbolsName ?? glyphs.primary
+        glyphs.back = pad.buttonB.sfSymbolsName ?? glyphs.back
+        glyphs.skills = [pad.buttonX, pad.buttonY, pad.buttonB].enumerated().map { index, button in
+            button.sfSymbolsName ?? glyphs.skills[index]
+        }
+        glyphs.previousTarget = pad.leftShoulder.sfSymbolsName ?? glyphs.previousTarget
+        glyphs.nextTarget = pad.rightShoulder.sfSymbolsName ?? glyphs.nextTarget
+        glyphs.menu = pad.buttonMenu.sfSymbolsName ?? glyphs.menu
+        return glyphs
     }
 
     func addTouchLook(translation: CGSize) {
@@ -36,39 +91,115 @@ final class InputHub {
         pendingZoom += meters
     }
 
-    func poll(deltaTime: Float) -> InputFrame {
-        var frame = InputFrame()
-        frame.move = touchMove
-        frame.look = pendingTouchLook
-        frame.zoom = pendingZoom
-        pendingTouchLook = .zero
-        pendingZoom = 0
+    /// Touch buttons and taps feed actions in here.
+    func enqueue(_ action: InputAction) {
+        queuedActions.append(action)
+    }
 
-        if let pad = GCController.current?.extendedGamepad ?? GCController.controllers().lazy.compactMap(\.extendedGamepad).first {
+    /// `menuOpen` switches buttons from gameplay meanings to panel navigation.
+    func poll(deltaTime: Float, menuOpen: Bool) -> InputFrame {
+        var frame = InputFrame()
+        var actions = queuedActions
+        queuedActions.removeAll()
+        var pressedNow: Set<String> = []
+        func button(_ name: String, _ isPressed: Bool, _ action: InputAction) {
+            guard isPressed else { return }
+            pressedNow.insert(name)
+            if !held.contains(name) { actions.append(action) }
+        }
+
+        if menuOpen {
+            pendingTouchLook = .zero
+            pendingZoom = 0
+            pollMenu(button)
+        } else {
+            frame.move = touchMove
+            frame.look = pendingTouchLook
+            frame.zoom = pendingZoom
+            pendingTouchLook = .zero
+            pendingZoom = 0
+            pollGameplay(&frame, deltaTime: deltaTime, button)
+        }
+
+        held = pressedNow
+        frame.actions = actions
+        frame.move = frame.move.clampedLength(1)
+        return frame
+    }
+
+    private func pollGameplay(_ frame: inout InputFrame, deltaTime: Float, _ button: (String, Bool, InputAction) -> Void) {
+        if let pad = gamepad {
             let left = Self.deadZoned(SIMD2(pad.leftThumbstick.xAxis.value, pad.leftThumbstick.yAxis.value))
             let right = Self.deadZoned(SIMD2(pad.rightThumbstick.xAxis.value, pad.rightThumbstick.yAxis.value))
             frame.move += left
             frame.look += right * Self.stickLookSpeed * deltaTime
             if pad.dpad.up.isPressed { frame.zoom -= 8 * deltaTime }
             if pad.dpad.down.isPressed { frame.zoom += 8 * deltaTime }
+
+            button("pad.a", pad.buttonA.isPressed, .primary)
+            button("pad.x", pad.buttonX.isPressed, .skill(0))
+            button("pad.y", pad.buttonY.isPressed, .skill(1))
+            button("pad.b", pad.buttonB.isPressed, .skill(2))
+            button("pad.lb", pad.leftShoulder.isPressed, .cycleTarget(-1))
+            button("pad.rb", pad.rightShoulder.isPressed, .cycleTarget(1))
+            button("pad.lt", pad.leftTrigger.isPressed, .clearTarget)
+            button("pad.left", pad.dpad.left.isPressed, .quickItem(0))
+            button("pad.right", pad.dpad.right.isPressed, .quickItem(1))
+            button("pad.menu", pad.buttonMenu.isPressed, .toggleInventory)
         }
 
         if let keys = GCKeyboard.coalesced?.keyboardInput {
-            func held(_ code: GCKeyCode) -> Bool { keys.button(forKeyCode: code)?.isPressed ?? false }
+            func down(_ code: GCKeyCode) -> Bool { keys.button(forKeyCode: code)?.isPressed ?? false }
             var wasd = SIMD2<Float>.zero
-            if held(.keyW) { wasd.y += 1 }
-            if held(.keyS) { wasd.y -= 1 }
-            if held(.keyD) { wasd.x += 1 }
-            if held(.keyA) { wasd.x -= 1 }
+            if down(.keyW) { wasd.y += 1 }
+            if down(.keyS) { wasd.y -= 1 }
+            if down(.keyD) { wasd.x += 1 }
+            if down(.keyA) { wasd.x -= 1 }
             frame.move += wasd
-            if held(.keyE) || held(.rightArrow) { frame.look.x += Self.stickLookSpeed * deltaTime }
-            if held(.keyQ) || held(.leftArrow) { frame.look.x -= Self.stickLookSpeed * deltaTime }
-            if held(.upArrow) { frame.look.y += Self.stickLookSpeed * 0.6 * deltaTime }
-            if held(.downArrow) { frame.look.y -= Self.stickLookSpeed * 0.6 * deltaTime }
+            if down(.keyE) || down(.rightArrow) { frame.look.x += Self.stickLookSpeed * deltaTime }
+            if down(.keyQ) || down(.leftArrow) { frame.look.x -= Self.stickLookSpeed * deltaTime }
+            if down(.upArrow) { frame.look.y += Self.stickLookSpeed * 0.6 * deltaTime }
+            if down(.downArrow) { frame.look.y -= Self.stickLookSpeed * 0.6 * deltaTime }
+
+            button("key.space", down(.spacebar) || down(.keyF), .primary)
+            button("key.tab", down(.tab), .cycleTarget(1))
+            button("key.esc", down(.escape), .clearTarget)
+            button("key.1", down(.one), .skill(0))
+            button("key.2", down(.two), .skill(1))
+            button("key.3", down(.three), .skill(2))
+            button("key.4", down(.four), .quickItem(0))
+            button("key.5", down(.five), .quickItem(1))
+            button("key.i", down(.keyI), .toggleInventory)
+        }
+    }
+
+    private func pollMenu(_ button: (String, Bool, InputAction) -> Void) {
+        if let pad = gamepad {
+            let stick = SIMD2(pad.leftThumbstick.xAxis.value, pad.leftThumbstick.yAxis.value)
+            let horizontal = abs(stick.x) > abs(stick.y)
+            button("menu.up", pad.dpad.up.isPressed || (!horizontal && stick.y > 0.6), .menu(.up))
+            button("menu.down", pad.dpad.down.isPressed || (!horizontal && stick.y < -0.6), .menu(.down))
+            button("menu.left", pad.dpad.left.isPressed || (horizontal && stick.x < -0.6), .menu(.left))
+            button("menu.right", pad.dpad.right.isPressed || (horizontal && stick.x > 0.6), .menu(.right))
+            button("pad.a", pad.buttonA.isPressed, .menu(.confirm))
+            button("pad.b", pad.buttonB.isPressed, .menu(.back))
+            button("pad.lb", pad.leftShoulder.isPressed, .menu(.previousTab))
+            button("pad.rb", pad.rightShoulder.isPressed, .menu(.nextTab))
+            button("pad.menu", pad.buttonMenu.isPressed, .toggleInventory)
         }
 
-        frame.move = frame.move.clampedLength(1)
-        return frame
+        if let keys = GCKeyboard.coalesced?.keyboardInput {
+            func down(_ code: GCKeyCode) -> Bool { keys.button(forKeyCode: code)?.isPressed ?? false }
+            button("key.up", down(.upArrow) || down(.keyW), .menu(.up))
+            button("key.down", down(.downArrow) || down(.keyS), .menu(.down))
+            button("key.left", down(.leftArrow) || down(.keyA), .menu(.left))
+            button("key.right", down(.rightArrow) || down(.keyD), .menu(.right))
+            button("key.space", down(.spacebar) || down(.returnOrEnter) || down(.keyF), .menu(.confirm))
+            button("key.esc", down(.escape) || down(.deleteOrBackspace), .menu(.back))
+            button("key.q", down(.keyQ), .menu(.previousTab))
+            button("key.e", down(.keyE), .menu(.nextTab))
+            button("key.i", down(.keyI), .toggleInventory)
+        }
     }
 
     /// Radial dead zone, rescaled so movement starts smoothly from zero.

@@ -11,6 +11,8 @@ public protocol WorldHost: AnyObject {
 
     func send(_ command: PlayerCommand)
     func advance(by deltaTime: Double)
+    /// Events since the last call, oldest first.
+    func drainEvents() -> [WorldEvent]
 }
 
 /// Offline host: runs the simulation in-process on a fixed timestep.
@@ -22,15 +24,16 @@ public final class LocalWorldHost: WorldHost {
     public private(set) var interpolationAlpha: Float = 0
 
     private var accumulator: Double = 0
+    private var pendingEvents: [WorldEvent] = []
     private static let maxTicksPerAdvance = 5
 
     public var map: WorldMap { simulation.map }
 
-    public init(seed: UInt64 = 0x4D55_5348) {
+    public init(profile: PlayerProfile = .newCharacter, seed: UInt64 = 0x4D55_5348) {
         var simulation = GameSimulation(seed: seed)
-        localPlayerID = simulation.spawnPlayer()
+        localPlayerID = simulation.spawnPlayer(profile: profile)
         self.simulation = simulation
-        currentSnapshot = simulation.snapshot()
+        currentSnapshot = simulation.snapshot(for: localPlayerID)
         previousSnapshot = currentSnapshot
     }
 
@@ -50,10 +53,22 @@ public final class LocalWorldHost: WorldHost {
                 accumulator = 0
                 break
             }
-            simulation.step()
+            pendingEvents.append(contentsOf: simulation.step())
             previousSnapshot = currentSnapshot
-            currentSnapshot = simulation.snapshot()
+            currentSnapshot = simulation.snapshot(for: localPlayerID)
         }
         interpolationAlpha = Float(accumulator / tickDuration)
+    }
+
+    /// Debug / game-master tool.
+    public func teleportPlayer(to point: Vec2) {
+        simulation.teleport(localPlayerID, to: point)
+        currentSnapshot = simulation.snapshot(for: localPlayerID)
+        previousSnapshot = currentSnapshot
+    }
+
+    public func drainEvents() -> [WorldEvent] {
+        defer { pendingEvents.removeAll(keepingCapacity: true) }
+        return pendingEvents
     }
 }

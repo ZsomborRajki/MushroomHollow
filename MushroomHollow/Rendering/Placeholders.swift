@@ -46,6 +46,28 @@ enum Meshes {
     static let cone = MeshResource.generateCone(height: 1, radius: 1)
     static let box = MeshResource.generateBox(size: 1)
     static let roundedBox = MeshResource.generateBox(size: 1, cornerRadius: 0.25)
+    /// Flat annulus in the XZ plane, outer radius 1.
+    static let ring = makeRing(inner: 0.82, outer: 1, segments: 64)
+
+    private static func makeRing(inner: Float, outer: Float, segments: Int) -> MeshResource {
+        var positions: [SIMD3<Float>] = []
+        var indices: [UInt32] = []
+        for i in 0...segments {
+            let a = Float(i) / Float(segments) * 2 * .pi
+            let d = SIMD3<Float>(sin(a), 0, cos(a))
+            positions.append(d * inner)
+            positions.append(d * outer)
+        }
+        for i in 0..<UInt32(segments) {
+            let v = i * 2
+            indices += [v, v + 1, v + 2, v + 1, v + 3, v + 2]
+        }
+        var descriptor = MeshDescriptor(name: "ring")
+        descriptor.positions = MeshBuffers.Positions(positions)
+        descriptor.normals = MeshBuffers.Normals(Array(repeating: [0, 1, 0], count: positions.count))
+        descriptor.primitives = .triangles(indices)
+        return try! MeshResource.generate(from: [descriptor])
+    }
 }
 
 @MainActor

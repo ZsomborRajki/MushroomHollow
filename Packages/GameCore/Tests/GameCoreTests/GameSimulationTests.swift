@@ -62,7 +62,7 @@ import Testing
         let later = sim.snapshot()
 
         let spawnCount = sim.map.mobSpawns.reduce(0) { $0 + $1.count }
-        #expect(later.entities.count == spawnCount)
+        #expect(later.entities.filter(\.kind.isMob).count == spawnCount)
 
         var movedCount = 0
         for mob in later.entities {

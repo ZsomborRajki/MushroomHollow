@@ -16,6 +16,8 @@ enum WorldBuilder {
         for root in map.roots { addRoot(root, to: world) }
         for house in map.houses { world.addChild(makeHouse(house, random: &random)) }
         addDecorations(map, to: world, random: &random)
+        addZoneDressing(map, to: world, random: &random)
+        addMarketStall(map, to: world)
         if let grass = makeGrass(map, random: &random) { world.addChild(grass) }
         addLights(map, to: world)
         return world
@@ -170,6 +172,70 @@ enum WorldBuilder {
             let s = random.float(in: 0.15...0.5)
             world.addSphere(pebble, at: [p.x, s * 0.25, p.y], radius: s, squash: [1, 0.6, random.float(in: 0.8...1.3)])
         }
+    }
+
+    /// Each hunting ground gets its own look: bark litter for the beetles, a glowing purple fen for the spore beasts.
+    private static func addZoneDressing(_ map: WorldMap, to world: Entity, random: inout SeededRandom) {
+        for area in map.mobSpawns {
+            switch area.kind {
+            case .beetle:
+                let chunk = Materials.matte(Palette.darkBark, roughness: 1)
+                let litter = Materials.matte(Palette.dirt, roughness: 1)
+                for _ in 0..<6 {
+                    let p = random.point(inDiscAt: area.center, radius: area.radius)
+                    world.addCylinder(litter, at: [p.x, 0.008, p.y], radius: random.float(in: 3...6), height: 0.01)
+                }
+                for _ in 0..<16 {
+                    let p = random.point(inDiscAt: area.center, radius: area.radius + 3)
+                    guard !map.isBlocked(p, radius: 1) else { continue }
+                    let rotation = simd_quatf(angle: random.float(in: 0...(2 * .pi)), axis: [0, 1, 0])
+                        * simd_quatf(angle: random.float(in: -0.3...0.3), axis: [1, 0, 0])
+                    world.addPart(Meshes.roundedBox, chunk, at: [p.x, 0.1, p.y],
+                                  scale: [random.float(in: 0.6...1.4), 0.25, random.float(in: 1.5...3)], rotation: rotation)
+                }
+            case .sporeBeast:
+                let fen = Materials.matte(UIColor(red: 0.28, green: 0.2, blue: 0.3, alpha: 1), roughness: 1)
+                for _ in 0..<8 {
+                    let p = random.point(inDiscAt: area.center, radius: area.radius)
+                    world.addCylinder(fen, at: [p.x, 0.009, p.y], radius: random.float(in: 3...7), height: 0.01)
+                }
+                let glow = Materials.glow(UIColor(red: 0.75, green: 0.45, blue: 1, alpha: 1))
+                let stem = Materials.matte(Palette.stem)
+                for _ in 0..<24 {
+                    let p = random.point(inDiscAt: area.center, radius: area.radius + 4)
+                    guard !map.isBlocked(p, radius: 0.4) else { continue }
+                    let s = random.float(in: 0.4...1.2)
+                    world.addCylinder(stem, at: [p.x, s * 0.35, p.y], radius: s * 0.08, height: s * 0.7)
+                    world.addSphere(glow, at: [p.x, s * 0.7, p.y], radius: s * 0.3, squash: [1, 0.45, 1])
+                }
+                let light = PointLight()
+                light.light.color = UIColor(red: 0.7, green: 0.4, blue: 1, alpha: 1)
+                light.light.intensity = 9000
+                light.light.attenuationRadius = 20
+                light.position = [area.center.x, 3, area.center.y]
+                world.addChild(light)
+            default:
+                break
+            }
+        }
+    }
+
+    /// Crates and a little sign next to the trader.
+    private static func addMarketStall(_ map: WorldMap, to world: Entity) {
+        guard let trader = map.npcs.first(where: { $0.id.definition.isShopkeeper }) else { return }
+        let stall = Entity()
+        stall.position = [trader.position.x, 0, trader.position.y]
+        stall.orientation = simd_quatf(angle: trader.yaw, axis: [0, 1, 0])
+        let wood = Materials.matte(Palette.bark, roughness: 0.9)
+        stall.addPart(Meshes.roundedBox, wood, at: [0.95, 0.25, -0.3], scale: [0.5, 0.5, 0.5])
+        stall.addPart(Meshes.roundedBox, wood, at: [1.05, 0.7, -0.3], scale: [0.4, 0.4, 0.4])
+        stall.addPart(Meshes.roundedBox, wood, at: [-0.9, 0.22, -0.4], scale: [0.45, 0.45, 0.45])
+        for (index, color) in [UIColor.systemRed, .systemBlue, .systemRed].enumerated() {
+            stall.addCylinder(Materials.glossy(color), at: [0.85 + Float(index) * 0.12, 0.6, -0.2], radius: 0.05, height: 0.16)
+        }
+        stall.addCylinder(wood, at: [-1.2, 0.6, 0.2], radius: 0.04, height: 1.2)
+        stall.addPart(Meshes.roundedBox, Materials.matte(Palette.capSpot), at: [-1.2, 1.15, 0.24], scale: [0.6, 0.35, 0.05])
+        world.addChild(stall)
     }
 
     /// All grass as one mesh (one draw call); the Metal geometry modifier animates it.

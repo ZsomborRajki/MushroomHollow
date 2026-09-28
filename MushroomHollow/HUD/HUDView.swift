@@ -1,51 +1,259 @@
+import GameCore
 import SwiftUI
 
-/// Minimal heads-up display. Phase 1 adds health, target frame, and the skill bar.
+/// Read-only heads-up display: player and target frames, quests, loot feed, XP, banners.
 struct HUDView: View {
     let session: GameSession
 
     var body: some View {
-        VStack {
-            HStack(alignment: .top) {
-                PlayerPlate()
-                Spacer()
-                if session.isGamepadConnected {
-                    Image(systemName: "gamecontroller.fill")
-                        .font(.title3)
-                        .padding(10)
-                        .glassEffect(.regular, in: .circle)
-                        .transition(.scale.combined(with: .opacity))
+        VStack(spacing: 0) {
+            HStack(alignment: .top, spacing: 12) {
+                if let player = session.hud.player {
+                    PlayerFrame(status: player, zone: session.zone)
                 }
+                if let target = session.hud.target {
+                    TargetFrame(target: target)
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                }
+                Spacer()
+                QuestTracker(quests: session.trackedQuests)
+            }
+            if let banner = session.banner {
+                BannerView(banner: banner)
+                    .padding(.top, 24)
+                    .transition(.scale(scale: 0.6).combined(with: .opacity))
             }
             Spacer()
+            HStack(alignment: .bottom) {
+                LootFeed(lines: session.feed)
+                Spacer()
+            }
+            if let toast = session.toast {
+                Text(toast)
+                    .font(.callout.weight(.semibold))
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+                    .glassEffect(.regular.tint(.red.opacity(0.25)), in: .capsule)
+                    .transition(.opacity)
+                    .padding(.bottom, 8)
+            }
+            if let player = session.hud.player {
+                XPBar(status: player)
+            }
             #if DEBUG
             Text(session.debugText)
                 .font(.caption2.monospacedDigit())
-                .foregroundStyle(.white.opacity(0.7))
-                .frame(maxWidth: .infinity, alignment: .trailing)
+                .foregroundStyle(.white.opacity(0.5))
+                .frame(maxWidth: .infinity, alignment: .leading)
             #endif
         }
         .padding()
-        .animation(.snappy, value: session.isGamepadConnected)
+        .animation(.snappy, value: session.hud.target?.id)
+        .animation(.bouncy, value: session.banner)
+        .animation(.easeOut(duration: 0.2), value: session.toast)
+        .animation(.snappy, value: session.feed)
         .allowsHitTesting(false)
     }
 }
 
-private struct PlayerPlate: View {
+// MARK: - Frames
+
+private struct PlayerFrame: View {
+    let status: PlayerStatus
+    let zone: Zone?
+
     var body: some View {
-        HStack(spacing: 10) {
-            Text("🍄")
-                .font(.title2)
-            VStack(alignment: .leading, spacing: 2) {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Text("🍄")
                 Text("Sprout")
                     .font(.headline)
-                Text("Lv 1 · Capstone Village")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                Text("Lv \(status.stats.level)")
+                    .font(.caption.weight(.bold))
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 2)
+                    .background(.white.opacity(0.18), in: .capsule)
+                Spacer(minLength: 0)
+                Label("\(status.caps)", systemImage: "circle.circle.fill")
+                    .font(.caption.weight(.semibold).monospacedDigit())
+                    .foregroundStyle(.yellow)
+                    .contentTransition(.numericText())
+            }
+            StatBar(value: status.stats.hp, max: status.stats.maxHP, color: .red, label: "HP")
+            StatBar(value: status.stats.mp, max: status.stats.maxMP, color: .blue, label: "MP")
+            if let zone {
+                HStack(spacing: 4) {
+                    Image(systemName: status.isSlowed ? "tortoise.fill" : "location.fill")
+                    Text(zone.name)
+                    if let levels = zone.levels {
+                        Text("Lv \(levels.lowerBound)–\(levels.upperBound)")
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .font(.caption2.weight(.medium))
+                .foregroundStyle(status.isSlowed ? .yellow : .primary)
             }
         }
+        .frame(width: 220)
+        .padding(12)
+        .glassEffect(.regular, in: .rect(cornerRadius: 20))
+        .animation(.snappy, value: status.caps)
+    }
+}
+
+private struct TargetFrame: View {
+    let target: TargetInfo
+
+    /// Classic MMO con colors: grey is trivial, red is dangerous.
+    private var levelColor: Color {
+        switch target.levelDelta {
+        case ...(-3): .gray
+        case -2...1: .white
+        case 2...3: .yellow
+        default: .red
+        }
+    }
+
+    var body: some View {
+        VStack(spacing: 6) {
+            HStack(spacing: 6) {
+                if target.isFightingYou {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.red)
+                        .font(.caption)
+                }
+                Text(target.name)
+                    .font(.headline)
+                Text("Lv \(target.level)")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(levelColor)
+            }
+            StatBar(value: target.hp, max: target.maxHP, color: .red, label: nil)
+        }
+        .frame(width: 220)
         .padding(.horizontal, 14)
-        .padding(.vertical, 8)
+        .padding(.vertical, 10)
+        .glassEffect(.regular, in: .rect(cornerRadius: 18))
+    }
+}
+
+private struct QuestTracker: View {
+    let quests: [(quest: QuestDefinition, text: String, ready: Bool)]
+
+    var body: some View {
+        if !quests.isEmpty {
+            VStack(alignment: .trailing, spacing: 6) {
+                ForEach(quests, id: \.quest.id) { entry in
+                    VStack(alignment: .trailing, spacing: 1) {
+                        Text(entry.quest.title)
+                            .font(.caption.weight(.bold))
+                        Label(entry.text, systemImage: entry.ready ? "checkmark.seal.fill" : "scope")
+                            .font(.caption2.monospacedDigit())
+                            .foregroundStyle(entry.ready ? .green : .secondary)
+                    }
+                }
+            }
+            .padding(10)
+            .glassEffect(.regular, in: .rect(cornerRadius: 14))
+            .padding(.trailing, 56) // clear of the bag button
+        }
+    }
+}
+
+private struct LootFeed: View {
+    let lines: [FeedLine]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            ForEach(lines) { line in
+                Label(line.text, systemImage: line.symbol)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(line.tint)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 4)
+                    .glassEffect(.regular, in: .capsule)
+                    .transition(.move(edge: .leading).combined(with: .opacity))
+            }
+        }
+        .padding(.leading, 190) // clear of the joystick
+        .padding(.bottom, 6)
+    }
+}
+
+private struct BannerView: View {
+    let banner: Banner
+
+    var body: some View {
+        VStack(spacing: 2) {
+            Text(banner.title)
+                .font(.system(.title, design: .rounded, weight: .heavy))
+                .foregroundStyle(.linearGradient(colors: [.yellow, .orange], startPoint: .top, endPoint: .bottom))
+            Text(banner.subtitle)
+                .font(.subheadline.weight(.medium))
+        }
+        .padding(.horizontal, 24)
+        .padding(.vertical, 12)
+        .glassEffect(.regular.tint(.yellow.opacity(0.2)), in: .capsule)
+    }
+}
+
+private struct XPBar: View {
+    let status: PlayerStatus
+
+    private var fraction: Double {
+        guard status.xpToNextLevel > 0 else { return 1 }
+        return min(1, Double(status.xp) / Double(status.xpToNextLevel))
+    }
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Text("XP")
+                .font(.caption2.weight(.bold))
+            GeometryReader { geometry in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(.black.opacity(0.35))
+                    Capsule()
+                        .fill(.linearGradient(colors: [.yellow, .orange], startPoint: .leading, endPoint: .trailing))
+                        .frame(width: geometry.size.width * fraction)
+                }
+            }
+            .frame(height: 6)
+            Text(fraction, format: .percent.precision(.fractionLength(1)))
+                .font(.caption2.monospacedDigit())
+        }
+        .frame(maxWidth: 340)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 6)
         .glassEffect(.regular, in: .capsule)
+        .animation(.easeOut(duration: 0.4), value: fraction)
+    }
+}
+
+struct StatBar: View {
+    let value: Int
+    let max: Int
+    let color: Color
+    let label: String?
+
+    private var fraction: Double { max > 0 ? Double(value) / Double(max) : 0 }
+
+    var body: some View {
+        GeometryReader { geometry in
+            ZStack(alignment: .leading) {
+                Capsule().fill(.black.opacity(0.4))
+                Capsule()
+                    .fill(color.gradient)
+                    .frame(width: geometry.size.width * fraction)
+                HStack {
+                    if let label { Text(label).font(.caption2.weight(.bold)) }
+                    Spacer()
+                    Text("\(value) / \(max)").font(.caption2.monospacedDigit())
+                }
+                .padding(.horizontal, 8)
+                .shadow(radius: 1)
+            }
+        }
+        .frame(height: 16)
+        .animation(.easeOut(duration: 0.25), value: fraction)
     }
 }

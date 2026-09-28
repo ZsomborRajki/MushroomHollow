@@ -2,6 +2,8 @@ import Foundation
 
 /// The authoritative, fixed-timestep game world. Deterministic for a given seed and
 /// command stream. Offline it runs inside the app; online it will run on the server.
+///
+/// Behaviour lives in extensions: `PlayerLogic`, `MobAI`, `Combat`.
 public struct GameSimulation: Sendable {
     public static let tickRate = 20
     public static let tickDuration: Float = 1 / Float(tickRate)
@@ -9,26 +11,50 @@ public struct GameSimulation: Sendable {
     public static let playerRadius: Float = 0.35
     public static let playerSpeed: Float = 5.0
     static let playerTurnRate: Float = 14 // rad/s
-    static let mobTurnRate: Float = 5
+    static let mobTurnRate: Float = 6
+    /// How long a dead mob's body stays before despawning.
+    static let corpseTicks = ticks(1.5)
 
     public let map: WorldMap
-    public private(set) var tick: UInt64 = 0
+    public internal(set) var tick: UInt64 = 0
 
-    private var entities: [EntityID: WorldEntity] = [:]
+    var entities: [EntityID: WorldEntity] = [:]
     /// Sorted IDs, so iteration order is deterministic (dictionary order is not).
-    private var order: [EntityID] = []
-    private var nextID: UInt32 = 1
-    private var random: SeededRandom
-    private var pendingCommands: [(EntityID, PlayerCommand)] = []
+    var order: [EntityID] = []
+    var nextID: UInt32 = 1
+    var random: SeededRandom
+    var pendingCommands: [(EntityID, PlayerCommand)] = []
+    var respawnQueue: [PendingRespawn] = []
+    var hazards: [Hazard] = []
+    var nextHazardID: UInt32 = 0
+    /// Events produced by the tick in progress.
+    var events: [WorldEvent] = []
+
+    struct PendingRespawn: Sendable {
+        let areaIndex: Int
+        var ticksLeft: Int
+    }
 
     public init(map: WorldMap = .mushroomHollow, seed: UInt64) {
         self.map = map
         self.random = SeededRandom(seed: seed)
-        for area in map.mobSpawns {
+        for placement in map.npcs {
+            insert(WorldEntity(
+                id: makeID(), kind: .npc(placement.id),
+                position: Vec3(placement.position.x, 0, placement.position.y), yaw: placement.yaw,
+                radius: 0.45, moveSpeed: 0,
+                stats: CombatStats(level: 0, maxHP: 1, hp: 1, maxMP: 0, mp: 0, attack: 0, defense: 0,
+                                   attackInterval: 1, reach: 0)))
+        }
+        for (index, area) in map.mobSpawns.enumerated() {
             for _ in 0..<area.count {
-                spawnMob(area.kind, in: area)
+                spawnMob(areaIndex: index)
             }
         }
+    }
+
+    static func ticks(_ seconds: Float) -> Int {
+        Int((seconds * Float(tickRate)).rounded())
     }
 
     // MARK: - Queries
@@ -37,32 +63,44 @@ public struct GameSimulation: Sendable {
 
     public var entityCount: Int { order.count }
 
-    public func snapshot() -> WorldSnapshot {
+    public func snapshot(for viewer: EntityID? = nil) -> WorldSnapshot {
         WorldSnapshot(
             tick: tick,
             entities: order.compactMap { id in
                 guard let e = entities[id] else { return nil }
-                return EntitySnapshot(id: id, kind: e.kind, position: e.position, yaw: e.yaw, isMoving: e.isMoving)
-            }
+                return EntitySnapshot(
+                    id: id, kind: e.kind, position: e.position, yaw: e.yaw, isMoving: e.isMoving,
+                    pose: e.pose, level: e.stats.level, hp: e.stats.hp, maxHP: e.stats.maxHP,
+                    target: e.combat.engaged ? e.combat.target : nil,
+                    gear: EquipSlot.allCases.compactMap { e.player?.equipment[$0] })
+            },
+            hazards: hazardSnapshots,
+            viewer: viewer.flatMap(playerStatus)
         )
     }
 
-    // MARK: - Mutations
-
-    @discardableResult
-    public mutating func spawnPlayer() -> EntityID {
-        let id = makeID()
-        let spawn = map.resolve(map.playerSpawn, radius: Self.playerRadius)
-        insert(WorldEntity(
-            id: id,
-            kind: .player,
-            position: Vec3(spawn.x, 0, spawn.y),
-            yaw: AngleMath.yaw(facing: -spawn), // face the trunk
-            radius: Self.playerRadius,
-            moveSpeed: Self.playerSpeed
-        ))
-        return id
+    public func playerStatus(_ id: EntityID) -> PlayerStatus? {
+        guard let e = entities[id], let data = e.player else { return nil }
+        let skills = SkillID.allCases.map { skill in
+            let definition = skill.definition
+            return SkillStatus(
+                id: skill,
+                isUnlocked: e.stats.level >= definition.requiredLevel,
+                canAfford: e.stats.mp >= definition.manaCost,
+                cooldownRemaining: Float(data.cooldowns[skill] ?? 0) * Self.tickDuration,
+                cooldownTotal: definition.cooldown)
+        }
+        return PlayerStatus(
+            id: id, stats: e.stats, xp: data.xp,
+            xpToNextLevel: Progression.xpToNextLevel(e.stats.level),
+            target: e.combat.target, isEngaged: e.combat.engaged, skills: skills,
+            caps: data.caps, inventory: data.inventory, equipment: data.equipment,
+            quests: QuestID.allCases.map { QuestStatus(id: $0, state: questState($0, for: e)) },
+            itemCooldown: Float(data.itemCooldown) * Self.tickDuration,
+            isSlowed: isInSlime(e))
     }
+
+    // MARK: - Mutations
 
     public mutating func removeEntity(_ id: EntityID) {
         entities[id] = nil
@@ -74,36 +112,49 @@ public struct GameSimulation: Sendable {
         pendingCommands.append((player, command))
     }
 
-    public mutating func step() {
+    /// Advances one tick and returns what happened during it.
+    @discardableResult
+    public mutating func step() -> [WorldEvent] {
         tick += 1
+        events.removeAll(keepingCapacity: true)
         applyCommands()
-        let dt = Self.tickDuration
         for id in order {
             guard var entity = entities[id] else { continue }
             switch entity.kind {
-            case .player:
-                stepPlayer(&entity, dt: dt)
-            case .mob:
-                stepMob(&entity, dt: dt)
+            case .player: stepPlayer(&entity)
+            case .mob: stepMob(&entity)
+            case .npc: continue
             }
             entities[id] = entity
         }
+        stepHazards()
+        removeCorpses()
+        processRespawns()
+        return events
     }
 
     // MARK: - Internals
 
-    private mutating func makeID() -> EntityID {
+    mutating func makeID() -> EntityID {
         defer { nextID += 1 }
         return EntityID(nextID)
     }
 
-    private mutating func insert(_ entity: WorldEntity) {
+    mutating func insert(_ entity: WorldEntity) {
         entities[entity.id] = entity
         order.append(entity.id)
         order.sort()
     }
 
-    private mutating func spawnMob(_ kind: MobKind, in area: MobSpawnArea) {
+    /// Debug / game-master tool: instantly moves an entity (collision-resolved).
+    public mutating func teleport(_ id: EntityID, to point: Vec2) {
+        guard let radius = entities[id]?.radius else { return }
+        entities[id]?.position.xz = map.resolve(point, radius: radius)
+    }
+
+    mutating func spawnMob(areaIndex: Int) {
+        let area = map.mobSpawns[areaIndex]
+        let kind = area.kind
         var spot = area.center
         for _ in 0..<16 {
             let candidate = random.point(inDiscAt: area.center, radius: area.radius)
@@ -120,9 +171,11 @@ public struct GameSimulation: Sendable {
             yaw: random.float(in: -.pi...(.pi)),
             radius: kind.radius,
             moveSpeed: kind.wanderSpeed,
+            stats: kind.stats.combatStats,
             brain: MobBrain(
                 home: area.center,
                 leashRadius: area.radius,
+                spawnArea: areaIndex,
                 state: .idle(ticksLeft: random.int(in: 0...(Self.tickRate * 4)))
             )
         ))
@@ -131,75 +184,50 @@ public struct GameSimulation: Sendable {
     private mutating func applyCommands() {
         for (id, command) in pendingCommands {
             guard var entity = entities[id], entity.kind == .player else { continue }
-            switch command {
-            case let .move(direction):
-                entity.moveIntent = direction.clampedLength(1)
-            }
+            apply(command, to: &entity)
             entities[id] = entity
         }
         pendingCommands.removeAll(keepingCapacity: true)
     }
 
-    private func stepPlayer(_ entity: inout WorldEntity, dt: Float) {
-        let intent = entity.moveIntent
-        let velocity = intent * entity.moveSpeed
-        if intent.length > 0.05 {
-            entity.yaw = AngleMath.moveToward(
-                entity.yaw, AngleMath.yaw(facing: intent), maxDelta: Self.playerTurnRate * dt)
+    private mutating func removeCorpses() {
+        let expired = order.filter { id in
+            guard let e = entities[id] else { return false }
+            return e.kind.isMob && !e.stats.isAlive && e.deathTicks >= Self.corpseTicks
         }
-        move(&entity, velocity: velocity, dt: dt)
+        for id in expired {
+            if let area = entities[id]?.brain?.spawnArea, case let .mob(kind) = entities[id]?.kind {
+                respawnQueue.append(PendingRespawn(areaIndex: area, ticksLeft: Self.ticks(kind.stats.respawnSeconds)))
+            }
+            removeEntity(id)
+        }
     }
 
-    private mutating func stepMob(_ entity: inout WorldEntity, dt: Float) {
-        guard var brain = entity.brain else { return }
-        var velocity = Vec2.zero
-
-        switch brain.state {
-        case let .idle(ticksLeft):
-            if ticksLeft > 0 {
-                brain.state = .idle(ticksLeft: ticksLeft - 1)
-            } else {
-                brain.state = .wander(target: pickWanderTarget(for: entity, brain: brain), stuckTicks: 0)
-            }
-
-        case let .wander(target, stuckTicks):
-            let toTarget = target - entity.position.xz
-            if toTarget.length < 0.3 || stuckTicks > Self.tickRate {
-                brain.state = .idle(ticksLeft: random.int(in: (Self.tickRate * 2)...(Self.tickRate * 6)))
-            } else {
-                let direction = toTarget.normalizedOrZero
-                velocity = direction * entity.moveSpeed
-                entity.yaw = AngleMath.moveToward(
-                    entity.yaw, AngleMath.yaw(facing: direction), maxDelta: Self.mobTurnRate * dt)
-                let before = entity.position.xz
-                move(&entity, velocity: velocity, dt: dt)
-                let progress = entity.position.xz.distance(to: before)
-                let stuck = progress < entity.moveSpeed * dt * 0.3
-                brain.state = .wander(target: target, stuckTicks: stuck ? stuckTicks + 1 : 0)
-                entity.brain = brain
-                return
-            }
-        }
-
-        entity.brain = brain
-        move(&entity, velocity: velocity, dt: dt)
+    private mutating func processRespawns() {
+        guard !respawnQueue.isEmpty else { return }
+        for i in respawnQueue.indices { respawnQueue[i].ticksLeft -= 1 }
+        let ready = respawnQueue.filter { $0.ticksLeft <= 0 }
+        respawnQueue.removeAll { $0.ticksLeft <= 0 }
+        for respawn in ready { spawnMob(areaIndex: respawn.areaIndex) }
     }
 
-    private mutating func pickWanderTarget(for entity: WorldEntity, brain: MobBrain) -> Vec2 {
-        for _ in 0..<6 {
-            let candidate = random.point(inDiscAt: brain.home, radius: brain.leashRadius)
-            if !map.isBlocked(candidate, radius: entity.radius) {
-                return candidate
-            }
-        }
-        return brain.home
-    }
-
-    private func move(_ entity: inout WorldEntity, velocity: Vec2, dt: Float) {
+    /// Moves along the ground, sliding around colliders, and records the actual velocity.
+    func move(_ entity: inout WorldEntity, velocity: Vec2) {
+        let dt = Self.tickDuration
         let start = entity.position.xz
-        let resolved = map.resolve(start + velocity * dt, radius: entity.radius)
+        let resolved = velocity == .zero ? start : map.resolve(start + velocity * dt, radius: entity.radius)
         entity.position.xz = resolved
         let actual = (resolved - start) / dt
         entity.velocity = Vec3(actual.x, 0, actual.y)
+    }
+
+    func turn(_ entity: inout WorldEntity, toward direction: Vec2, rate: Float) {
+        guard direction.length > 1e-4 else { return }
+        entity.yaw = AngleMath.moveToward(entity.yaw, AngleMath.yaw(facing: direction), maxDelta: rate * Self.tickDuration)
+    }
+
+    /// Edge-to-edge distance on the ground plane.
+    func gap(_ a: WorldEntity, _ b: WorldEntity) -> Float {
+        a.position.xz.distance(to: b.position.xz) - a.radius - b.radius
     }
 }

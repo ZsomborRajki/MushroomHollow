@@ -4,44 +4,230 @@ import Observation
 import RealityKit
 import SwiftUI
 
+/// What the HUD shows about the current target.
+struct TargetInfo: Equatable {
+    let id: EntityID
+    let name: String
+    let level: Int
+    let hp: Int
+    let maxHP: Int
+    /// Mob level relative to the player's: drives the name color.
+    let levelDelta: Int
+    let isFightingYou: Bool
+}
+
+struct HUDState: Equatable {
+    var player: PlayerStatus?
+    var target: TargetInfo?
+    var isFainted: Bool { player.map { !$0.stats.isAlive } ?? false }
+}
+
+/// A damage number or similar label floating up from a point in the world.
+struct FloatingText: Identifiable {
+    enum Style { case dealt, critical, taken, heal, mana, xp, info }
+
+    let id: Int
+    let text: String
+    let style: Style
+    let worldPosition: SIMD3<Float>
+    let born: Double
+    var screenPosition: CGPoint?
+    var progress: Double = 0
+}
+
+/// A line in the loot / progress feed.
+struct FeedLine: Identifiable, Equatable {
+    let id: Int
+    let symbol: String
+    let text: String
+    let tint: Color
+    let expiry: Double
+}
+
+struct Banner: Equatable {
+    let title: String
+    let subtitle: String
+}
+
+/// Counters the SwiftUI layer watches to fire haptics.
+struct FeedbackTriggers: Equatable {
+    var hitsTaken = 0
+    var kills = 0
+    var levelUps = 0
+    var failures = 0
+    var fainted = 0
+    var loot = 0
+    var danger = 0
+}
+
+enum Panel: Equatable {
+    case inventory
+    case npc(NPCID)
+}
+
+enum ShopTab: Int, CaseIterable {
+    case buy, sell
+}
+
+/// One row in an NPC panel.
+struct PanelRow: Identifiable, Equatable {
+    enum Action: Equatable {
+        case buy(ItemID)
+        case sell(ItemID)
+        case accept(QuestID)
+        case turnIn(QuestID)
+        case none
+    }
+
+    let id: String
+    let symbol: String
+    let tint: Color
+    let title: String
+    let subtitle: String
+    let trailing: String
+    let detail: String
+    let isEnabled: Bool
+    let action: Action
+}
+
+/// One cell in the inventory grid. Row 0 holds the four equipment slots.
+struct InventoryCell: Identifiable, Equatable {
+    let id: Int
+    let item: ItemID?
+    let count: Int
+    let slot: EquipSlot?
+}
+
 /// Glue between the world host (simulation), input, camera, and renderer.
 /// Driven once per rendered frame by RealityKit's scene update event.
 @Observable
 final class GameSession {
     // HUD-facing state. Only written when it changes, to keep SwiftUI quiet.
-    private(set) var isGamepadConnected = false
+    private(set) var hud = HUDState()
+    private(set) var glyphs: ControllerGlyphs?
+    private(set) var floatingTexts: [FloatingText] = []
+    private(set) var feed: [FeedLine] = []
+    private(set) var toast: String?
+    private(set) var banner: Banner?
+    private(set) var feedback = FeedbackTriggers()
+    private(set) var zone: Zone?
+    private(set) var nearbyNPC: NPCID?
+    private(set) var panel: Panel?
+    private(set) var selection = 0
+    private(set) var shopTab = ShopTab.buy
     private(set) var debugText = ""
+
+    var isGamepadConnected: Bool { glyphs != nil }
 
     @ObservationIgnored let host: LocalWorldHost
     @ObservationIgnored let input = InputHub()
     @ObservationIgnored let renderer: WorldRenderer
+    @ObservationIgnored private let store: SaveStore?
     @ObservationIgnored private var camera = OrbitCamera()
+    @ObservationIgnored private var projector: RealityViewCameraContent?
     @ObservationIgnored private var updateSubscription: EventSubscription?
     @ObservationIgnored private var elapsed: Double = 0
-    @ObservationIgnored private var debugRefresh: Double = 0
+    @ObservationIgnored private var slowRefresh: Double = 0
+    @ObservationIgnored private var nextID = 0
+    @ObservationIgnored private var toastExpiry: Double = 0
+    @ObservationIgnored private var bannerExpiry: Double = 0
+    @ObservationIgnored private var nextAutosave: Double = 20
+    @ObservationIgnored private var saveRequested = false
+
+    static let floaterLifetime: Double = 1.1
+    /// Bag grid columns. The equipment slots form one extra column to its left.
+    static let inventoryColumns = 6
+    static let firstBagCell = EquipSlot.allCases.count
+    static let autosaveInterval: Double = 20
+
+    #if DEBUG
+    /// `-autofight` launch argument: start in the snail glade and fight automatically.
+    @ObservationIgnored private let autoFight = ProcessInfo.processInfo.arguments.contains("-autofight")
+    @ObservationIgnored private var autoFightClock: Double = 0
+    #endif
 
     init() {
-        host = LocalWorldHost()
+        #if DEBUG
+        let debug = DebugLaunch()
+        let throwaway = debug.isThrowaway
+        #else
+        let throwaway = false
+        #endif
+        store = try? SaveStore(inMemory: throwaway)
+        #if DEBUG
+        if debug.resetSave { store?.deleteAll() }
+        let profile = debug.profile ?? store?.load() ?? .newCharacter
+        #else
+        let profile = store?.load() ?? .newCharacter
+        #endif
+
+        host = LocalWorldHost(profile: profile)
         renderer = WorldRenderer(map: host.map)
         // Start behind the player, looking at the giant trunk.
         if let player = host.currentSnapshot.entity(host.localPlayerID) {
             camera.yaw = player.yaw + .pi
         }
+        #if DEBUG
+        if let spot = debug.spawnPoint(in: host.map) {
+            host.teleportPlayer(to: spot)
+        }
+        panel = debug.panel
+        if panel == .inventory { selection = Self.firstBagCell }
+        #endif
     }
 
     func attach(to content: inout RealityViewCameraContent) {
         content.camera = .virtual
         content.add(renderer.root)
+        projector = content
         updateSubscription = content.subscribe(to: SceneEvents.Update.self) { [weak self] event in
             self?.frame(deltaTime: event.deltaTime)
         }
     }
 
-    // MARK: - Touch input from the SwiftUI overlay
+    func saveNow() {
+        guard let profile = host.simulation.profile(of: host.localPlayerID) else { return }
+        store?.save(profile)
+        saveRequested = false
+        nextAutosave = elapsed + Self.autosaveInterval
+    }
+
+    // MARK: - Input from the SwiftUI overlay
 
     func setTouchMove(_ stick: SIMD2<Float>) { input.touchMove = stick }
     func touchLook(_ translation: CGSize) { input.addTouchLook(translation: translation) }
     func zoom(by meters: Float) { input.addZoom(meters) }
+    func perform(_ action: InputAction) { input.enqueue(action) }
+
+    func tapped(_ entity: Entity) {
+        var current: Entity? = entity
+        while let e = current {
+            if let link = e.components[SimEntityComponent.self] {
+                input.enqueue(.select(link.id))
+                return
+            }
+            current = e.parent
+        }
+    }
+
+    /// Touch: pick a row/cell; tapping the selected one again activates it.
+    func tapSelection(_ index: Int) {
+        if selection == index {
+            activateSelection()
+        } else {
+            selection = index
+        }
+    }
+
+    func setShopTab(_ tab: ShopTab) {
+        shopTab = tab
+        selection = 0
+    }
+
+    func closePanel() {
+        panel = nil
+        selection = 0
+    }
 
     // MARK: - Frame
 
@@ -49,35 +235,554 @@ final class GameSession {
         let dt = Float(min(deltaTime, 0.1))
         elapsed += deltaTime
 
-        let frameInput = input.poll(deltaTime: dt)
+        #if DEBUG
+        if autoFight { driveAutoFight(deltaTime: deltaTime) }
+        #endif
+        let frameInput = input.poll(deltaTime: dt, menuOpen: panel != nil)
         camera.apply(look: frameInput.look, zoom: frameInput.zoom)
+        for action in frameInput.actions { handle(action) }
         host.send(.move(camera.worldDirection(forStick: frameInput.move)))
 
         host.advance(by: deltaTime)
         renderer.render(host: host, time: elapsed)
+        for event in host.drainEvents() { handle(event) }
 
         if let player = renderer.renderedPosition(of: host.localPlayerID) {
             camera.follow(player, deltaTime: dt)
         }
         renderer.placeCamera(at: camera.position(avoidingTrunkRadius: host.map.trunkCollisionRadius), lookingAt: camera.focus)
 
-        updateHUD(deltaTime: deltaTime)
+        updateHUD()
+        updateFloatingTexts()
+        updateSlowState(deltaTime: deltaTime)
     }
 
-    private func updateHUD(deltaTime: TimeInterval) {
-        debugRefresh -= deltaTime
-        guard debugRefresh <= 0 else { return }
-        debugRefresh = 0.25
+    #if DEBUG
+    private func driveAutoFight(deltaTime: TimeInterval) {
+        autoFightClock += deltaTime
+        guard autoFightClock > 0.5, let me = host.currentSnapshot.viewer else { return }
+        autoFightClock = 0
+        if !me.isEngaged || !me.stats.isAlive { input.enqueue(.primary) }
+        if let ready = SkillID.barOrder.firstIndex(where: { skill in me.skills.first { $0.id == skill }?.isReady == true }) {
+            input.enqueue(.skill(ready))
+        }
+        if me.stats.hp * 3 < me.stats.maxHP { input.enqueue(.quickItem(0)) }
+    }
+    #endif
 
-        let connected = input.isGamepadConnected
-        if connected != isGamepadConnected { isGamepadConnected = connected }
+    // MARK: - Actions → commands
+
+    private func handle(_ action: InputAction) {
+        let snapshot = host.currentSnapshot
+        guard let me = snapshot.viewer, let myPosition = snapshot.entity(me.id)?.position else { return }
+
+        switch action {
+        case .primary:
+            let fighting = me.isEngaged && me.target.flatMap { snapshot.entity($0)?.isAlive } == true
+            if !me.stats.isAlive {
+                host.send(.respawn)
+            } else if let npc = nearbyNPC, !fighting {
+                panel = .npc(npc)
+                selection = 0
+                shopTab = .buy
+            } else if let target = me.target, snapshot.entity(target)?.isAlive == true {
+                host.send(.target(target, engage: true))
+            } else if let nearest = snapshot.nearestHostile(to: myPosition) {
+                host.send(.target(nearest, engage: true))
+            }
+
+        case let .cycleTarget(step):
+            if let next = snapshot.cycleTarget(from: myPosition, current: me.target, step: step) {
+                host.send(.target(next, engage: false))
+            }
+
+        case .clearTarget:
+            host.send(.target(nil, engage: false))
+
+        case let .skill(index):
+            guard SkillID.barOrder.indices.contains(index) else { return }
+            let skill = SkillID.barOrder[index]
+            // Flyff-friendly: a targeted skill with nothing selected picks the nearest mob.
+            if skill.definition.needsTarget, me.target == nil, let nearest = snapshot.nearestHostile(to: myPosition) {
+                host.send(.target(nearest, engage: false))
+            }
+            host.send(.useSkill(skill))
+
+        case let .select(id):
+            guard id != me.id, let entity = snapshot.entity(id) else { return }
+            if case let .npc(npc) = entity.kind {
+                if entity.position.xz.distance(to: myPosition.xz) <= NPCID.interactionRange {
+                    panel = .npc(npc)
+                    selection = 0
+                    shopTab = .buy
+                } else {
+                    showToast("Walk closer to talk to \(npc.definition.name)")
+                }
+            } else {
+                host.send(.target(id, engage: true))
+            }
+
+        case .toggleInventory:
+            if panel == .inventory {
+                closePanel()
+            } else {
+                panel = .inventory
+                selection = Self.firstBagCell
+            }
+
+        case let .quickItem(index):
+            host.send(.useItem(index == 0 ? .dewPotion : .nectarVial))
+
+        case let .menu(input):
+            handleMenu(input)
+        }
+    }
+
+    // MARK: - Panels
+
+    private func handleMenu(_ input: MenuInput) {
+        switch input {
+        case .back:
+            closePanel()
+        case .confirm:
+            activateSelection()
+        case .previousTab, .nextTab:
+            if case .npc(.chanterelle) = panel {
+                setShopTab(shopTab == .buy ? .sell : .buy)
+            }
+        case .up, .down, .left, .right:
+            moveSelection(input)
+        }
+    }
+
+    private func moveSelection(_ direction: MenuInput) {
+        switch panel {
+        case .inventory:
+            // Grid of (1 + columns) x rows: column 0 is equipment, the rest is the bag.
+            let columns = Self.inventoryColumns
+            let rows = EquipSlot.allCases.count
+            var column = selection < Self.firstBagCell ? 0 : 1 + (selection - Self.firstBagCell) % columns
+            var row = selection < Self.firstBagCell ? selection : (selection - Self.firstBagCell) / columns
+            switch direction {
+            case .left: column = max(0, column - 1)
+            case .right: column = min(columns, column + 1)
+            case .up: row = max(0, row - 1)
+            case .down: row = min(rows - 1, row + 1)
+            default: break
+            }
+            selection = column == 0 ? row : Self.firstBagCell + row * columns + column - 1
+        case .npc:
+            let count = npcRows.count
+            guard count > 0 else { return }
+            if direction == .up { selection = max(0, selection - 1) }
+            if direction == .down { selection = min(count - 1, selection + 1) }
+        case nil:
+            break
+        }
+    }
+
+    private func activateSelection() {
+        switch panel {
+        case .inventory:
+            guard let cell = inventoryCells.first(where: { $0.id == selection }), let item = cell.item else { return }
+            if let slot = cell.slot {
+                host.send(.unequip(slot))
+                return
+            }
+            switch item.definition.kind {
+            case .consumable: host.send(.useItem(item))
+            case .equipment: host.send(.equip(item))
+            case .material: showToast("Sell materials to Chanterelle")
+            }
+        case let .npc(npc):
+            guard npcRows.indices.contains(selection) else { return }
+            let row = npcRows[selection]
+            guard row.isEnabled else { return }
+            switch row.action {
+            case let .buy(item): host.send(.buy(item, from: npc))
+            case let .sell(item): host.send(.sell(item, count: 1, to: npc))
+            case let .accept(quest): host.send(.acceptQuest(quest))
+            case let .turnIn(quest): host.send(.completeQuest(quest))
+            case .none: break
+            }
+        case nil:
+            break
+        }
+    }
+
+    /// Four equipment cells, then the bag.
+    var inventoryCells: [InventoryCell] {
+        guard let player = hud.player else { return [] }
+        var cells = EquipSlot.allCases.enumerated().map { index, slot in
+            InventoryCell(id: index, item: player.equipment[slot], count: 1, slot: slot)
+        }
+        let stacks = player.inventory.stacks
+        for index in 0..<Inventory.capacity {
+            let stack = index < stacks.count ? stacks[index] : nil
+            cells.append(InventoryCell(id: Self.firstBagCell + index, item: stack?.item, count: stack?.count ?? 0, slot: nil))
+        }
+        return cells
+    }
+
+    var npcRows: [PanelRow] {
+        guard case let .npc(npc) = panel, let player = hud.player else { return [] }
+        if npc.definition.isShopkeeper {
+            switch shopTab {
+            case .buy:
+                return npc.definition.shopStock.map { item in
+                    let definition = item.definition
+                    let price = definition.buyPrice ?? 0
+                    return PanelRow(
+                        id: "buy-\(item.rawValue)", symbol: item.symbol, tint: item.tint,
+                        title: definition.name,
+                        subtitle: [item.statLine, definition.requiredLevel > 1 ? "Lv \(definition.requiredLevel)" : nil]
+                            .compactMap { $0 }.joined(separator: " · "),
+                        trailing: "\(price) caps", detail: definition.description,
+                        isEnabled: player.caps >= price, action: .buy(item))
+                }
+            case .sell:
+                return player.inventory.stacks.enumerated().map { index, stack in
+                    let definition = stack.item.definition
+                    return PanelRow(
+                        id: "sell-\(index)-\(stack.item.rawValue)", symbol: stack.item.symbol, tint: stack.item.tint,
+                        title: stack.count > 1 ? "\(definition.name) ×\(stack.count)" : definition.name,
+                        subtitle: stack.item.statLine ?? "Material",
+                        trailing: "+\(definition.sellPrice)", detail: definition.description,
+                        isEnabled: true, action: .sell(stack.item))
+                }
+            }
+        }
+        // Things to do first, finished business last.
+        func priority(_ state: QuestState) -> Int {
+            switch state {
+            case .readyToTurnIn: 0
+            case .available: 1
+            case .active: 2
+            case .tooLowLevel: 3
+            case .completed, .hidden: 4
+            }
+        }
+        let quests = player.quests.sorted { priority($0.state) < priority($1.state) }
+        let rows: [PanelRow] = quests.compactMap { status in
+            guard status.id.definition.giver == npc else { return nil }
+            let quest = status.id.definition
+            let detail = "\(quest.story)\n\n\(quest.objective.summary)\nReward: \(quest.rewardLine)"
+            func row(_ symbol: String, _ tint: Color, _ trailing: String, _ enabled: Bool, _ action: PanelRow.Action) -> PanelRow {
+                PanelRow(id: quest.id.rawValue, symbol: symbol, tint: tint, title: quest.title,
+                         subtitle: quest.objective.summary, trailing: trailing, detail: detail,
+                         isEnabled: enabled, action: action)
+            }
+            switch status.state {
+            case .hidden: return nil
+            case let .tooLowLevel(required): return row("lock.fill", .gray, "Lv \(required)", false, .none)
+            case .available: return row("exclamationmark.circle.fill", .yellow, "Accept", true, .accept(quest.id))
+            case let .active(progress, goal): return row("hourglass", .orange, "\(progress)/\(goal)", false, .none)
+            case .readyToTurnIn: return row("checkmark.seal.fill", .green, "Turn in", true, .turnIn(quest.id))
+            case .completed: return row("checkmark.circle", .secondary, "Done", false, .none)
+            }
+        }
+        return rows
+    }
+
+    /// Active quests for the HUD tracker.
+    var trackedQuests: [(quest: QuestDefinition, text: String, ready: Bool)] {
+        (hud.player?.quests ?? []).compactMap { status in
+            switch status.state {
+            case let .active(progress, goal): (status.id.definition, "\(progress)/\(goal)", false)
+            case .readyToTurnIn: (status.id.definition, "Return to \(status.id.definition.giver.definition.name)", true)
+            default: nil
+            }
+        }
+    }
+
+    // MARK: - Events → presentation
+
+    private func handle(_ event: WorldEvent) {
+        let me = host.localPlayerID
+        switch event {
+        case let .damage(source, target, amount, isCritical, skill):
+            renderer.playAttack(source: source, target: target, time: elapsed)
+            let style: FloatingText.Style = target == me ? .taken : (isCritical ? .critical : .dealt)
+            float(isCritical ? "\(amount)!" : "\(amount)", style: style, above: target)
+            if let hit = renderer.headPosition(of: target) {
+                let color = skill?.effectColor ?? (isCritical ? UIColor.systemYellow : UIColor(white: 1, alpha: 1))
+                renderer.effects.burst(at: hit - [0, 0.5, 0], color: color, count: isCritical ? 26 : 12,
+                                       speed: isCritical ? 2.4 : 1.6, size: 0.05, lifetime: 0.45, time: elapsed)
+            }
+            if target == me { feedback.hitsTaken += 1 }
+
+        case let .heal(target, amount, _):
+            if amount > 0 { float("+\(amount)", style: .heal, above: target) }
+
+        case let .manaRestored(target, amount):
+            if amount > 0 { float("+\(amount) MP", style: .mana, above: target) }
+
+        case let .skillCast(caster, skill, target):
+            playSkillEffect(skill, caster: caster, target: target)
+
+        case let .skillFailed(caster, skill, reason):
+            guard caster == me else { return }
+            showToast(reason.message(for: skill))
+            feedback.failures += 1
+
+        case let .mobAbility(entity, ability):
+            switch ability {
+            case .hide:
+                float("Hides!", style: .info, above: entity)
+            case .charge:
+                if host.currentSnapshot.entity(entity)?.target == me { feedback.danger += 1 }
+            case .split:
+                if let position = renderer.renderedPosition(of: entity) {
+                    renderer.effects.burst(at: position + [0, 0.6, 0], color: Palette.sporeGlow, count: 50,
+                                           speed: 2.5, size: 0.08, lifetime: 0.8, spread: 0.6, time: elapsed)
+                }
+            case .sporeCloud:
+                break
+            }
+
+        case let .died(entity, killer):
+            if entity == me {
+                feedback.fainted += 1
+                requestSave()
+            } else if let position = renderer.renderedPosition(of: entity) {
+                renderer.effects.burst(at: position + [0, 0.3, 0], color: UIColor(red: 0.8, green: 0.7, blue: 0.5, alpha: 1),
+                                       count: 24, speed: 1.2, size: 0.09, lifetime: 0.9, rise: 0.6, spread: 0.4, time: elapsed)
+                if killer == me { feedback.kills += 1 }
+            }
+
+        case let .xpGained(player, amount):
+            if player == me { float("+\(amount) XP", style: .xp, above: player) }
+
+        case let .levelUp(player, level):
+            guard player == me else { return }
+            showBanner(Banner(title: "Level Up!", subtitle: "You are now level \(level)"))
+            feedback.levelUps += 1
+            requestSave()
+            if let position = renderer.renderedPosition(of: player) {
+                let gold = UIColor(red: 1, green: 0.82, blue: 0.3, alpha: 1)
+                renderer.effects.burst(at: position + [0, 0.2, 0], color: gold, count: 90, speed: 1.2,
+                                       size: 0.07, lifetime: 1.6, rise: 2.5, spread: 0.6, time: elapsed)
+                renderer.effects.shockwave(at: position, radius: 3, color: gold, duration: 0.7, time: elapsed)
+            }
+
+        case .respawned:
+            break
+
+        case let .capsChanged(player, delta):
+            guard player == me, delta > 0 else { return }
+            addFeed(symbol: "circle.circle.fill", text: "+\(delta) caps", tint: .yellow)
+
+        case let .itemReceived(player, item, count):
+            guard player == me else { return }
+            addFeed(symbol: item.symbol, text: count > 1 ? "\(item.definition.name) ×\(count)" : item.definition.name, tint: item.tint)
+            feedback.loot += 1
+            requestSave()
+
+        case let .itemUsed(player, _), let .equipmentChanged(player):
+            if player == me { requestSave() }
+
+        case let .questAccepted(player, quest):
+            guard player == me else { return }
+            showBanner(Banner(title: "New Quest", subtitle: quest.definition.title))
+            requestSave()
+
+        case let .questProgress(player, quest, progress, goal):
+            guard player == me else { return }
+            addFeed(symbol: progress >= goal ? "checkmark.seal.fill" : "scroll.fill",
+                    text: "\(quest.definition.title) \(progress)/\(goal)", tint: progress >= goal ? .green : .orange)
+
+        case let .questCompleted(player, quest):
+            guard player == me else { return }
+            showBanner(Banner(title: "Quest Complete", subtitle: quest.definition.title))
+            feedback.levelUps += 1
+            requestSave()
+
+        case let .actionFailed(player, reason):
+            guard player == me else { return }
+            showToast(reason.message)
+            feedback.failures += 1
+        }
+    }
+
+    private func playSkillEffect(_ skill: SkillID, caster: EntityID, target: EntityID?) {
+        guard let casterPosition = renderer.renderedPosition(of: caster) else { return }
+        let color = skill.effectColor
+        switch skill.definition.effect {
+        case .strike:
+            if let target, let position = renderer.renderedPosition(of: target) {
+                renderer.effects.shockwave(at: position, radius: 1.4, color: color, duration: 0.3, time: elapsed)
+            }
+        case let .burst(radius, _):
+            renderer.effects.shockwave(at: casterPosition, radius: radius, color: color, time: elapsed)
+            renderer.effects.burst(at: casterPosition + [0, 0.4, 0], color: color, count: 70, speed: 3.5,
+                                   size: 0.08, lifetime: 0.8, spread: 0.5, time: elapsed)
+        case .heal:
+            renderer.effects.burst(at: casterPosition + [0, 0.3, 0], color: color, count: 50, speed: 0.6,
+                                   size: 0.06, lifetime: 1.3, rise: 1.8, spread: 0.7, time: elapsed)
+        }
+    }
+
+    private func float(_ text: String, style: FloatingText.Style, above id: EntityID) {
+        guard var position = renderer.headPosition(of: id) else { return }
+        nextID += 1
+        // Spread stacked numbers a little so they don't overlap.
+        position.x += Float(nextID % 5 - 2) * 0.12
+        floatingTexts.append(FloatingText(id: nextID, text: text, style: style, worldPosition: position, born: elapsed))
+    }
+
+    private func addFeed(symbol: String, text: String, tint: Color) {
+        nextID += 1
+        feed.append(FeedLine(id: nextID, symbol: symbol, text: text, tint: tint, expiry: elapsed + 4))
+        if feed.count > 5 { feed.removeFirst(feed.count - 5) }
+    }
+
+    private func showToast(_ message: String) {
+        toast = message
+        toastExpiry = elapsed + 1.6
+    }
+
+    private func showBanner(_ banner: Banner) {
+        self.banner = banner
+        bannerExpiry = elapsed + 2.8
+    }
+
+    private func requestSave() {
+        saveRequested = true
+    }
+
+    // MARK: - HUD
+
+    private func updateHUD() {
+        let snapshot = host.currentSnapshot
+        var state = HUDState(player: snapshot.viewer)
+        if let viewer = snapshot.viewer, let targetID = viewer.target, let target = snapshot.entity(targetID) {
+            state.target = TargetInfo(
+                id: targetID, name: target.kind.displayName, level: target.level,
+                hp: target.hp, maxHP: target.maxHP,
+                levelDelta: target.level - viewer.stats.level,
+                isFightingYou: target.target == viewer.id)
+        }
+        if state != hud { hud = state }
+    }
+
+    private func updateFloatingTexts() {
+        guard !floatingTexts.isEmpty else { return }
+        floatingTexts = floatingTexts.compactMap { text in
+            var text = text
+            text.progress = (elapsed - text.born) / Self.floaterLifetime
+            guard text.progress < 1 else { return nil }
+            text.screenPosition = projector?.project(point: text.worldPosition, to: .global)
+            return text
+        }
+    }
+
+    /// Things that don't need to update every frame.
+    private func updateSlowState(deltaTime: TimeInterval) {
+        if toast != nil, elapsed > toastExpiry { toast = nil }
+        if banner != nil, elapsed > bannerExpiry { banner = nil }
+        if feed.contains(where: { $0.expiry < elapsed }) { feed.removeAll { $0.expiry < elapsed } }
+
+        slowRefresh -= deltaTime
+        guard slowRefresh <= 0 else { return }
+        slowRefresh = 0.25
+
+        let glyphs = input.glyphs
+        if glyphs != self.glyphs { self.glyphs = glyphs }
+
+        let snapshot = host.currentSnapshot
+        if let me = snapshot.entity(host.localPlayerID) {
+            let position = me.position.xz
+            let zone = host.map.zone(at: position)
+            if zone?.name != self.zone?.name { self.zone = zone }
+
+            let nearby = me.isAlive ? host.map.npcs
+                .filter { $0.position.distance(to: position) <= NPCID.interactionRange }
+                .min { $0.position.distance(to: position) < $1.position.distance(to: position) }?.id : nil
+            if nearby != nearbyNPC { nearbyNPC = nearby }
+            if case let .npc(npc) = panel, npc != nearby { closePanel() }
+        }
+        renderer.updateQuestMarkers(questMarkers(for: snapshot.viewer))
+
+        if saveRequested || elapsed > nextAutosave { saveNow() }
 
         #if DEBUG
-        if let p = host.currentSnapshot.entity(host.localPlayerID)?.position {
+        if let p = snapshot.entity(host.localPlayerID)?.position {
             let fps = deltaTime > 0 ? Int((1 / deltaTime).rounded()) : 0
-            let text = String(format: "tick %llu · %.1f, %.1f · %d fps", host.currentSnapshot.tick, p.x, p.z, fps)
+            let text = String(format: "tick %llu · %.1f, %.1f · %d fps", snapshot.tick, p.x, p.z, fps)
             if text != debugText { debugText = text }
         }
         #endif
     }
+
+    private func questMarkers(for viewer: PlayerStatus?) -> [NPCID: QuestMarker] {
+        var markers: [NPCID: QuestMarker] = [:]
+        for status in viewer?.quests ?? [] {
+            let giver = status.id.definition.giver
+            switch status.state {
+            case .readyToTurnIn: markers[giver] = .turnIn
+            case .available where markers[giver] != .turnIn: markers[giver] = .available
+            default: break
+            }
+        }
+        return markers
+    }
 }
+
+#if DEBUG
+/// Debug-only launch arguments for testing and screenshots:
+/// `-autofight`, `-demo` (geared level 8 character), `-spawn village|glade|maze|barkfall|fen`,
+/// `-panel bag|morel|shop`, `-resetSave`. Anything but `-resetSave` uses a throwaway save.
+private struct DebugLaunch {
+    let arguments = ProcessInfo.processInfo.arguments
+
+    var resetSave: Bool { arguments.contains("-resetSave") }
+    var isThrowaway: Bool { ["-autofight", "-demo", "-spawn", "-panel"].contains { arguments.contains($0) } }
+
+    func value(after flag: String) -> String? {
+        guard let index = arguments.firstIndex(of: flag), arguments.indices.contains(index + 1) else { return nil }
+        return arguments[index + 1]
+    }
+
+    var profile: PlayerProfile? {
+        guard arguments.contains("-demo") else { return nil }
+        var bag = Inventory()
+        bag.add(.dewPotion, count: 8)
+        bag.add(.nectarVial, count: 4)
+        bag.add(.snailShell, count: 12)
+        bag.add(.slugSlime, count: 3)
+        bag.add(.beetleHorn, count: 2)
+        bag.add(.thornRapier, count: 1)
+        bag.add(.barkMail, count: 1)
+        return PlayerProfile(level: 8, caps: 420, inventory: bag,
+                             equipment: [.weapon: .twigSword, .hat: .acornCap, .body: .leafTunic, .boots: .mossBoots],
+                             activeQuests: [.slipperySituation: 0], completedQuests: [.shellShock])
+    }
+
+    var panel: Panel? {
+        switch value(after: "-panel") {
+        case "bag": .inventory
+        case "morel": .npc(.elderMorel)
+        case "shop": .npc(.chanterelle)
+        default: nil
+        }
+    }
+
+    func spawnPoint(in map: WorldMap) -> Vec2? {
+        switch panel {
+        case let .npc(npc): return map.placement(of: npc).map { $0.position + Vec2(0.6, 1.4) }
+        default: break
+        }
+        let kind: MobKind? = switch value(after: "-spawn") ?? (arguments.contains("-autofight") ? "glade" : nil) {
+        case "glade": .snail
+        case "maze": .slug
+        case "barkfall": .beetle
+        case "fen": .sporeBeast
+        case "village": nil
+        default: nil
+        }
+        if value(after: "-spawn") == "village" { return map.villageCenter + Vec2(0, 3) }
+        guard let kind, let area = map.mobSpawns.first(where: { $0.kind == kind }) else { return nil }
+        return area.center + Vec2(-4, 4)
+    }
+}
+#endif

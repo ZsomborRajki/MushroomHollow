@@ -43,6 +43,21 @@ public struct MushroomHouse: Codable, Sendable {
     public let capRadius: Float
 }
 
+public struct NPCPlacement: Codable, Sendable {
+    public let id: NPCID
+    public let position: Vec2
+    public let yaw: Float
+}
+
+/// A named region, shown in the HUD.
+public struct Zone: Codable, Sendable {
+    public let name: String
+    public let center: Vec2
+    public let radius: Float
+    /// Suggested level range, for the HUD.
+    public let levels: ClosedRange<Int>?
+}
+
 public struct MobSpawnArea: Codable, Sendable {
     public let kind: MobKind
     public let center: Vec2
@@ -63,6 +78,8 @@ public struct WorldMap: Codable, Sendable {
     public let villageRadius: Float
     public let playerSpawn: Vec2
     public let mobSpawns: [MobSpawnArea]
+    public let npcs: [NPCPlacement]
+    public let zones: [Zone]
     public let colliders: [Collider]
 
     public init(
@@ -74,7 +91,9 @@ public struct WorldMap: Codable, Sendable {
         villageCenter: Vec2,
         villageRadius: Float,
         playerSpawn: Vec2,
-        mobSpawns: [MobSpawnArea]
+        mobSpawns: [MobSpawnArea],
+        npcs: [NPCPlacement],
+        zones: [Zone]
     ) {
         self.boundaryRadius = boundaryRadius
         self.trunkRadius = trunkRadius
@@ -85,6 +104,8 @@ public struct WorldMap: Codable, Sendable {
         self.villageRadius = villageRadius
         self.playerSpawn = playerSpawn
         self.mobSpawns = mobSpawns
+        self.npcs = npcs
+        self.zones = zones
 
         var colliders: [Collider] = [.circle(center: .zero, radius: trunkCollisionRadius)]
         for root in roots {
@@ -95,6 +116,9 @@ public struct WorldMap: Codable, Sendable {
         }
         for house in houses {
             colliders.append(.circle(center: house.position, radius: house.stemRadius + 0.15))
+        }
+        for npc in npcs {
+            colliders.append(.circle(center: npc.position, radius: 0.45))
         }
         self.colliders = colliders
     }
@@ -114,6 +138,15 @@ public struct WorldMap: Codable, Sendable {
             p = p.normalizedOrZero * limit
         }
         return p
+    }
+
+    /// The named zone containing `point`, if any (smallest wins, so the village beats the forest).
+    public func zone(at point: Vec2) -> Zone? {
+        zones.filter { $0.center.distance(to: point) <= $0.radius }.min { $0.radius < $1.radius }
+    }
+
+    public func placement(of npc: NPCID) -> NPCPlacement? {
+        npcs.first { $0.id == npc }
     }
 
     public func isBlocked(_ point: Vec2, radius: Float) -> Bool {
@@ -169,6 +202,11 @@ extension WorldMap {
             AngleMath.direction(forYaw: degrees * .pi / 180) * distance
         }
 
+        let glade = areaCenter(degrees: 60, distance: 44)
+        let maze = areaCenter(degrees: 120, distance: 46)
+        let barkfall = areaCenter(degrees: 176, distance: 47)
+        let fen = areaCenter(degrees: 233, distance: 48)
+
         return WorldMap(
             boundaryRadius: 85,
             trunkRadius: trunkRadius,
@@ -178,11 +216,24 @@ extension WorldMap {
             villageCenter: villageCenter,
             villageRadius: 17,
             playerSpawn: Vec2(0, 37),
+            // Zones run clockwise around the trunk, getting tougher as you go.
             mobSpawns: [
-                // Dewleaf Glade, between the village and the east root.
-                MobSpawnArea(kind: .snail, center: areaCenter(degrees: 60, distance: 44), radius: 12, count: 8),
-                // Root Maze, further round to the east.
-                MobSpawnArea(kind: .slug, center: areaCenter(degrees: 120, distance: 46), radius: 12, count: 6),
+                MobSpawnArea(kind: .snail, center: glade, radius: 12, count: 8),
+                MobSpawnArea(kind: .slug, center: maze, radius: 12, count: 6),
+                MobSpawnArea(kind: .beetle, center: barkfall, radius: 12, count: 6),
+                MobSpawnArea(kind: .sporeBeast, center: fen, radius: 12, count: 5),
+            ],
+            npcs: [
+                NPCPlacement(id: .elderMorel, position: villageCenter + Vec2(-3.2, -2.5), yaw: 0.6),
+                NPCPlacement(id: .chanterelle, position: villageCenter + Vec2(3.6, -1.5), yaw: -0.9),
+            ],
+            zones: [
+                Zone(name: "Capstone Village", center: villageCenter, radius: 17, levels: nil),
+                Zone(name: "Dewleaf Glade", center: glade, radius: 17, levels: 1...4),
+                Zone(name: "Root Maze", center: maze, radius: 17, levels: 3...7),
+                Zone(name: "Barkfall Hollow", center: barkfall, radius: 17, levels: 7...11),
+                Zone(name: "Spore Fen", center: fen, radius: 17, levels: 10...15),
+                Zone(name: "The Forest Floor", center: .zero, radius: 200, levels: nil),
             ]
         )
     }()

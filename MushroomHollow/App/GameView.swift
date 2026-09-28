@@ -5,6 +5,7 @@ struct GameView: View {
     @State private var session = GameSession()
     @State private var lastDrag: CGSize = .zero
     @State private var lastMagnification: CGFloat = 1
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
         let session = session
@@ -15,23 +16,88 @@ struct GameView: View {
             .ignoresSafeArea()
             .gesture(cameraOrbit)
             .simultaneousGesture(cameraZoom)
+            .simultaneousGesture(tapToTarget)
 
-            if !session.isGamepadConnected {
-                HStack(spacing: 0) {
-                    FloatingJoystick { session.setTouchMove($0) }
-                        .containerRelativeFrame(.horizontal) { width, _ in width * 0.4 }
-                    Spacer(minLength: 0)
-                        .allowsHitTesting(false)
+            FloatingTextLayer(texts: session.floatingTexts)
+
+            if session.panel == nil {
+                if !session.isGamepadConnected {
+                    HStack(spacing: 0) {
+                        FloatingJoystick { session.setTouchMove($0) }
+                            .containerRelativeFrame(.horizontal) { width, _ in width * 0.4 }
+                        Spacer(minLength: 0)
+                            .allowsHitTesting(false)
+                    }
+                    .ignoresSafeArea()
+                    .transition(.opacity)
+                }
+
+                HUDView(session: session)
+                gameplayControls(session)
+            }
+
+            switch session.panel {
+            case .inventory:
+                InventoryPanel(session: session)
+                    .transition(.scale(scale: 0.95).combined(with: .opacity))
+            case let .npc(npc):
+                NPCPanel(session: session, npc: npc)
+                    .transition(.scale(scale: 0.95).combined(with: .opacity))
+            case nil:
+                EmptyView()
+            }
+
+            if session.hud.isFainted {
+                FaintedOverlay(glyph: session.glyphs?.primary) {
+                    session.perform(.primary)
                 }
                 .ignoresSafeArea()
                 .transition(.opacity)
             }
-
-            HUDView(session: session)
         }
         .animation(.easeInOut(duration: 0.25), value: session.isGamepadConnected)
+        .animation(.easeInOut(duration: 0.4), value: session.hud.isFainted)
+        .animation(.snappy(duration: 0.25), value: session.panel)
+        .animation(.snappy, value: session.nearbyNPC)
+        .sensoryFeedback(.impact(weight: .light), trigger: session.feedback.hitsTaken)
+        .sensoryFeedback(.impact(weight: .medium), trigger: session.feedback.kills)
+        .sensoryFeedback(.success, trigger: session.feedback.levelUps)
+        .sensoryFeedback(.error, trigger: session.feedback.failures)
+        .sensoryFeedback(.warning, trigger: session.feedback.fainted)
+        .sensoryFeedback(.warning, trigger: session.feedback.danger)
+        .sensoryFeedback(.selection, trigger: session.feedback.loot)
+        .sensoryFeedback(.selection, trigger: session.selection)
+        .onChange(of: scenePhase) { _, phase in
+            if phase != .active { session.saveNow() }
+        }
         .persistentSystemOverlays(.hidden)
         .statusBarHidden()
+    }
+
+    @ViewBuilder
+    private func gameplayControls(_ session: GameSession) -> some View {
+        if !session.hud.isFainted {
+            ActionBar(session: session)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+                .ignoresSafeArea()
+                .transition(.opacity)
+
+            RoundButton(symbol: "bag.fill", size: 48, glyph: session.glyphs?.menu) {
+                session.perform(.toggleInventory)
+            }
+            .accessibilityLabel("Bag")
+            .padding()
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+
+            if let npc = session.nearbyNPC {
+                InteractPrompt(npc: npc, glyph: session.glyphs?.primary) {
+                    session.perform(.primary)
+                }
+                .padding(.bottom, 70)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+        }
     }
 
     /// One-finger drag on the world orbits the camera.
@@ -56,5 +122,12 @@ struct GameView: View {
                 session.zoom(by: Float((1 - ratio) * 12))
             }
             .onEnded { _ in lastMagnification = 1 }
+    }
+
+    /// Tap a mob to target it and start auto-attacking; tap an NPC to talk.
+    private var tapToTarget: some Gesture {
+        SpatialTapGesture()
+            .targetedToAnyEntity()
+            .onEnded { value in session.tapped(value.entity) }
     }
 }
