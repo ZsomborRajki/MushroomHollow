@@ -41,6 +41,8 @@ final class WorldRenderer {
     private var npcActors: [NPCID: ActorView] = [:]
     private var hazards: [UInt32: Entity] = [:]
     private var drops: [UInt32: Entity] = [:]
+    /// Pets out in the world, by owner.
+    private var pets: [EntityID: PetView] = [:]
     private var markers: [NPCID: (kind: QuestMarker?, entity: Entity)] = [:]
     private var time: Double = 0
     private var timeOfDay: Float = 0.4
@@ -73,6 +75,17 @@ final class WorldRenderer {
             self.entity = entity
             self.model = model
             self.kind = kind
+        }
+    }
+
+    private final class PetView {
+        let entity = Entity()
+        let rig: PetRig
+
+        init(kind: PetKind) {
+            rig = PetRig(kind)
+            entity.name = "Pet \(kind)"
+            entity.addChild(rig.root)
         }
     }
 
@@ -188,6 +201,7 @@ final class WorldRenderer {
         renderHazards(host.currentSnapshot.hazards)
         renderTelegraphs(host.currentSnapshot.telegraphs)
         renderDrops(host.currentSnapshot.drops)
+        renderPets(host: host, alpha: alpha, time: time)
         animateMarkers(time: time)
         updateSelection(host.currentSnapshot.viewer, time: time)
         effects.update(time: time)
@@ -683,6 +697,65 @@ final class WorldRenderer {
             entity.removeFromParent()
             drops[id] = nil
         }
+    }
+
+    // MARK: - Pets
+
+    /// Pets pop in with a puff when summoned (or when you land) and pop out when they leave.
+    private func renderPets(host: some WorldHost, alpha: Float, time: Double) {
+        let previous = Dictionary(uniqueKeysWithValues: host.previousSnapshot.pets.map { ($0.id, $0) })
+        var seen = Set<EntityID>()
+        for current in host.currentSnapshot.pets {
+            seen.insert(current.id)
+            let from = previous[current.id] ?? current
+            let position = simd_mix(from.position, current.position, SIMD3(repeating: alpha))
+            let visible = simd_distance_squared(position, camera.position) < Self.mobDrawDistance * Self.mobDrawDistance
+            let view = pets[current.id] ?? makePet(current, at: position)
+            if view.entity.isEnabled != visible { view.entity.isEnabled = visible }
+            guard visible else { continue }
+            let normal = map.terrain.normal(at: position.xz, step: 0.4)
+            let rotation = simd_quatf(from: [0, 1, 0], to: normal)
+                * simd_quatf(angle: AngleMath.lerp(from.yaw, current.yaw, alpha), axis: [0, 1, 0])
+            view.entity.transform = Transform(scale: .one, rotation: rotation,
+                                              translation: position + [0, standingHeight(at: position.xz), 0])
+            view.rig.animate(PetRig.Motion(moving: current.isMoving, hungry: current.isHungry, fetching: current.isFetching),
+                             time: time, seed: Float(current.id.rawValue))
+        }
+        for (id, view) in pets where !seen.contains(id) {
+            if view.entity.isEnabled { puff(at: view.entity.position, time: time) }
+            view.entity.removeFromParent()
+            pets[id] = nil
+        }
+    }
+
+    private func makePet(_ pet: PetSnapshot, at position: SIMD3<Float>) -> PetView {
+        let view = PetView(kind: pet.kind)
+        if ArtStyle.isInk {
+            view.rig.root.addInkHulls(width: 0.012, minimumSize: 0.03)
+            if let shadow = Entity.makeBlobShadow(radius: 0.24) { view.entity.addChild(shadow) }
+        }
+        actorsRoot.addChild(view.entity)
+        pets[pet.id] = view
+        puff(at: position + [0, standingHeight(at: position.xz), 0], time: time)
+        return view
+    }
+
+    private func puff(at position: SIMD3<Float>, time: Double) {
+        effects.burst(at: position + [0, 0.25, 0], color: UIColor(red: 1, green: 0.95, blue: 0.85, alpha: 1), count: 16,
+                      speed: 1.1, size: 0.07, lifetime: 0.5, rise: 0.6, spread: 0.12, time: time)
+    }
+
+    /// The pet hops and sparkles after fetching a drop for `owner`.
+    func playPetFetch(owner: EntityID, time: Double) {
+        guard let view = pets[owner] else { return }
+        view.rig.playHop(at: time)
+        effects.burst(at: view.entity.position + [0, 0.45, 0], color: PetRig.tint, count: 8, speed: 0.8, size: 0.05,
+                      lifetime: 0.45, rise: 0.8, time: time)
+    }
+
+    /// Where a player's pet is drawn, if it's out.
+    func petPosition(of owner: EntityID) -> SIMD3<Float>? {
+        pets[owner]?.entity.position
     }
 
     private func makeDrop(_ drop: GroundDropSnapshot, at position: SIMD3<Float>) -> Entity {

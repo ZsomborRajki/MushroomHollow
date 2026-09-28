@@ -38,6 +38,8 @@ enum ActorModels {
         case .npc(.elderMorel): buildElderMorel(into: model)
         case .npc(.chanterelle): buildChanterelle(into: model)
         case .npc(.shiitake): buildShiitake(into: model)
+        case .npc(.truffle): buildTruffle(into: model)
+        case .npc(.porcini): buildPorcini(into: model)
         }
         return model
     }
@@ -169,6 +171,38 @@ enum ActorModels {
         e.addCylinder(handle, at: [-0.45, 0.62, 0.12], radius: 0.03, height: 0.6)
         e.addPart(Meshes.roundedBox, Materials.glossy(UIColor(white: 0.45, alpha: 1)), at: [-0.45, 0.95, 0.12], scale: [0.26, 0.13, 0.13])
         e.addSphere(Materials.matte(Palette.skin), at: [-0.45, 0.7, 0.12], radius: 0.07)
+    }
+
+    /// The naturalist: a fat porcini with a bulbous stem, round spectacles, and a field notebook.
+    private static func buildPorcini(into e: Entity) {
+        let stem = Materials.matte(UIColor(red: 0.93, green: 0.88, blue: 0.76, alpha: 1))
+        e.addSphere(stem, at: [0, 0.42, 0], radius: 0.4, squash: [1, 1.05, 1]) // a porcini's belly of a stem
+        e.addCylinder(stem, at: [0, 0.85, 0], radius: 0.27, height: 0.45)
+        let vest = Materials.matte(UIColor(red: 0.36, green: 0.46, blue: 0.3, alpha: 1), roughness: 0.9)
+        e.addCylinder(vest, at: [0, 0.62, 0.03], radius: 0.36, height: 0.4)
+        e.addSphere(Materials.matte(Palette.skin), at: [0, 1.2, 0], radius: 0.25)
+        let eye = Materials.glossy(Palette.eye)
+        e.addSphere(eye, at: [-0.08, 1.23, 0.22], radius: 0.03)
+        e.addSphere(eye, at: [0.08, 1.23, 0.22], radius: 0.03)
+        // Round spectacles.
+        let wire = Materials.glossy(UIColor(red: 0.75, green: 0.6, blue: 0.3, alpha: 1))
+        for side: Float in [-1, 1] {
+            e.addPart(Meshes.torus(radius: 0.065, tube: 0.01), wire, at: [side * 0.08, 1.23, 0.235], scale: .one,
+                      rotation: simd_quatf(angle: .pi / 2, axis: [1, 0, 0]))
+        }
+        // A plump, glossy chestnut cap, paler at the rim.
+        let cap = Materials.glossy(UIColor(red: 0.55, green: 0.33, blue: 0.17, alpha: 1))
+        e.addSphere(cap, at: [0, 1.52, 0], radius: 0.5, squash: [1, 0.55, 1])
+        e.addPart(Meshes.torus(radius: 0.45, tube: 0.06), Materials.matte(UIColor(red: 0.78, green: 0.6, blue: 0.4, alpha: 1)),
+                  at: [0, 1.4, 0], scale: .one)
+        // A field notebook in one hand, a pencil in the other.
+        let hand = Materials.matte(Palette.skin)
+        e.addPart(Meshes.roundedBox, Materials.matte(UIColor(red: 0.62, green: 0.25, blue: 0.2, alpha: 1)),
+                  at: [0.3, 0.78, 0.3], scale: [0.2, 0.26, 0.05], rotation: simd_quatf(angle: -0.5, axis: [0, 1, 0]))
+        e.addSphere(hand, at: [0.36, 0.72, 0.26], radius: 0.07)
+        e.addCylinder(Materials.matte(UIColor(red: 0.95, green: 0.8, blue: 0.3, alpha: 1)), at: [-0.34, 0.8, 0.28],
+                      radius: 0.018, height: 0.22)
+        e.addSphere(hand, at: [-0.34, 0.74, 0.28], radius: 0.07)
     }
 
     /// Named wing pivots, so the renderer can flap and spread them (the owl, bees, moths).

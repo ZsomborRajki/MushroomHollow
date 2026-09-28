@@ -56,6 +56,12 @@ enum DropModels {
                 case .glider:
                     root.addRod(Materials.matte(Palette.dandelionStem), from: [0, 0.08, 0], to: [0, 0.42, 0], radius: 0.025)
                     root.addSphere(material, at: [0, 0.45, 0], radius: 0.18)
+                case .pet:
+                    root.addSphere(material, at: [0, 0.2, 0], radius: 0.2)
+                case .petFood:
+                    // A little sack of kibble.
+                    root.addSphere(material, at: [0, 0.17, 0], radius: 0.2, squash: [1, 0.85, 0.9])
+                    root.addCylinder(Materials.matte(Palette.bark), at: [0, 0.34, 0], radius: 0.07, height: 0.08)
                 }
             }
             if item.definition.rarity != .common {

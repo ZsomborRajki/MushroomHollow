@@ -16,6 +16,11 @@ import Testing
         sim.teleport(player, to: placement.position + Vec2(0, 1.2))
     }
 
+    /// Every main-story quest before `quest`, done.
+    private func storyBefore(_ quest: QuestID) -> Set<QuestID> {
+        Set(QuestID.mainStory.prefix { $0 != quest })
+    }
+
     private func setLevel(_ level: Int, _ player: EntityID, in sim: inout GameSimulation) {
         sim.entities[player]?.stats = Progression.playerStats(level: level)
     }
@@ -294,7 +299,7 @@ import Testing
         var sim = GameSimulation(seed: 3)
         let player = sim.spawnPlayer(profile: .newCharacter)
         #expect(sim.playerStatus(player)?.quests.first { $0.id == .shellShock }?.state == .available)
-        #expect(sim.playerStatus(player)?.quests.first { $0.id == .slipperySituation }?.state == .hidden)
+        #expect(sim.playerStatus(player)?.quests.first { $0.id == .spotsBeforeYourEyes }?.state == .hidden)
 
         try standNear(.elderMorel, player, in: &sim)
         sim.enqueue(.acceptQuest(.shellShock), from: player)
@@ -311,14 +316,15 @@ import Testing
         let status = try #require(sim.playerStatus(player))
         #expect(status.inventory.count(of: .twigSword) >= 1)
         #expect(status.quests.first { $0.id == .shellShock }?.state == .completed)
-        #expect(status.quests.first { $0.id == .slipperySituation }?.state == .available)
+        #expect(status.quests.first { $0.id == .spotsBeforeYourEyes }?.state == .available, "the story moves on")
+        #expect(status.quests.first { $0.id == .slipperySituation }?.state == .hidden)
     }
 
     @Test func collectQuestCountsTheBagAndConsumesItems() throws {
         var sim = GameSimulation(seed: 3)
         var bag = Inventory()
         bag.add(.slugSlime, count: 7)
-        let player = sim.spawnPlayer(profile: PlayerProfile(level: 3, inventory: bag, completedQuests: [.shellShock]))
+        let player = sim.spawnPlayer(profile: PlayerProfile(level: 4, inventory: bag, completedQuests: storyBefore(.slipperySituation)))
         try standNear(.elderMorel, player, in: &sim)
 
         sim.enqueue(.acceptQuest(.slipperySituation), from: player)
@@ -334,7 +340,7 @@ import Testing
 
     @Test func questLevelGate() throws {
         var sim = GameSimulation(seed: 3)
-        let player = sim.spawnPlayer(profile: PlayerProfile(level: 5, completedQuests: [.shellShock, .slipperySituation]))
+        let player = sim.spawnPlayer(profile: PlayerProfile(level: 5, completedQuests: storyBefore(.barkBeetles)))
         #expect(sim.playerStatus(player)?.quests.first { $0.id == .barkBeetles }?.state == .tooLowLevel(required: 7))
     }
 
@@ -351,7 +357,7 @@ import Testing
         var sim = GameSimulation(seed: 8)
         let player = sim.spawnPlayer(profile: PlayerProfile())
         setLevel(12, player, in: &sim)
-        let beetle = try #require(sim.snapshot().entities.first { $0.kind == .mob(.beetle) })
+        let beetle = try #require(sim.snapshot().entities.first { $0.kind == .mob(.beetle) && $0.isAggressive })
         sim.teleport(player, to: beetle.position.xz + Vec2(5, 0)) // inside aggro, in charge range
 
         var sawWindup = false, sawCharge = false

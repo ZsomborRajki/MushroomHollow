@@ -2,6 +2,8 @@ public enum NPCID: String, Codable, Sendable, CaseIterable {
     case elderMorel
     case chanterelle
     case shiitake
+    case truffle
+    case porcini
 }
 
 public struct NPCDefinition: Sendable {
@@ -13,6 +15,10 @@ public struct NPCDefinition: Sendable {
     public let shopStock: [ItemID]
     /// A blacksmith: upgrades gear.
     public var upgradesGear = false
+    /// A pet keeper: turns mob materials into Kibble.
+    public var makesPetFood = false
+    /// A naturalist: buys mob materials for XP and caps (see `Bounties.swift`).
+    public var buysMaterials = false
 
     public var isShopkeeper: Bool { !shopStock.isEmpty }
     public var givesQuests: Bool { QuestID.allCases.contains { $0.definition.giver == id } }
@@ -41,6 +47,16 @@ extension NPCID {
                 id: self, name: "Shiitake", title: "Blacksmith",
                 greeting: "Bring me amber from the wilds and I'll make that gear sing. Past +5 it gets dicey, mind.",
                 shopStock: [], upgradesGear: true)
+        case .truffle:
+            NPCDefinition(
+                id: self, name: "Truffle", title: "Pet Keeper",
+                greeting: "Mind the tail! Bring me whatever the critters drop and I'll bake it into kibble. Hungry pets are slow pets.",
+                shopStock: [], makesPetFood: true)
+        case .porcini:
+            NPCDefinition(
+                id: self, name: "Porcini", title: "Naturalist",
+                greeting: "Specimens! Every critter under the tree leaves something behind, and I'm cataloguing the lot. Bring me what they drop and I'll pay you in caps and know-how.",
+                shopStock: [], buysMaterials: true)
         }
     }
 }

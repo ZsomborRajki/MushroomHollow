@@ -290,6 +290,8 @@ extension WorldMap {
             NPCPlacement(id: .elderMorel, position: villageCenter + Vec2(-3.2, -2.5), yaw: 0.6),
             NPCPlacement(id: .chanterelle, position: villageCenter + Vec2(3.6, -1.5), yaw: -0.9),
             NPCPlacement(id: .shiitake, position: villageCenter + Vec2(0.5, -6), yaw: 0.1),
+            NPCPlacement(id: .truffle, position: villageCenter + Vec2(-3.5, 4.5), yaw: AngleMath.yaw(facing: Vec2(3.5, -4.5))),
+            NPCPlacement(id: .porcini, position: villageCenter + Vec2(4, 5), yaw: AngleMath.yaw(facing: Vec2(-4, -5))),
         ]
 
         func at(_ degrees: Float, _ distance: Float) -> Vec2 {

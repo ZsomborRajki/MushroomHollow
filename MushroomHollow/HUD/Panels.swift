@@ -82,9 +82,12 @@ struct InventoryPanel: View {
                             ForEach(slots[(row * slotColumns)..<((row + 1) * slotColumns)]) { cell($0) }
                         }
                     }
+                    if let pet = cells.last, pet.isPetSlot {
+                        GridRow { cell(pet).gridCellColumns(slotColumns) }
+                    }
                 }
                 Divider()
-                let bag = Array(cells.dropFirst(GameSession.firstBagCell))
+                let bag = Array(cells.dropFirst(GameSession.firstBagCell).prefix(Inventory.capacity))
                 Grid(horizontalSpacing: 6, verticalSpacing: 6) {
                     ForEach(0..<(bag.count / columns), id: \.self) { row in
                         GridRow {
@@ -92,7 +95,7 @@ struct InventoryPanel: View {
                         }
                     }
                 }
-                ItemDetail(cell: selected, player: player, glyph: session.glyphs?.primary) {
+                ItemDetail(cell: selected, player: player, glyph: session.glyphs?.primary, onUnslotPet: session.unslotPet) {
                     session.perform(.menu(.confirm))
                 }
             }
@@ -122,8 +125,8 @@ struct InventoryPanel: View {
                             .padding(3)
                             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                     }
-                } else if let slot = cell.slot {
-                    Image(systemName: slot.placeholderSymbol)
+                } else if cell.isPetSlot || cell.slot != nil {
+                    Image(systemName: cell.slot?.placeholderSymbol ?? "pawprint")
                         .font(.system(size: 18))
                         .foregroundStyle(.white.opacity(0.2))
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -134,6 +137,15 @@ struct InventoryPanel: View {
                 RoundedRectangle(cornerRadius: 12)
                     .strokeBorder(isSelected ? Color.yellow : border(cell), lineWidth: isSelected ? 3 : 1)
             }
+            .overlay(alignment: .topTrailing) {
+                // Out and following: a green dot (red while hungry).
+                if cell.isPetSlot, let pet = session.hud.player?.pet, pet.isSummoned || pet.awaitingFood {
+                    Circle()
+                        .fill(pet.isHungry || pet.awaitingFood ? Color.red : Color.green)
+                        .frame(width: 9, height: 9)
+                        .padding(4)
+                }
+            }
         }
         .buttonStyle(.plain)
     }
@@ -142,7 +154,7 @@ struct InventoryPanel: View {
     private func border(_ cell: InventoryCell) -> Color {
         switch cell.item?.definition.rarity {
         case .set, .unique: cell.item!.definition.rarity.color.opacity(0.8)
-        default: cell.slot != nil ? .white.opacity(0.35) : .clear
+        default: cell.slot != nil || cell.isPetSlot ? .white.opacity(0.35) : .clear
         }
     }
 }
@@ -151,6 +163,7 @@ private struct ItemDetail: View {
     let cell: InventoryCell?
     let player: PlayerStatus?
     let glyph: String?
+    let onUnslotPet: () -> Void
     let action: () -> Void
 
     var body: some View {
@@ -191,18 +204,41 @@ private struct ItemDetail: View {
                         if let set = definition.set {
                             SetSummary(set: set, worn: player.map { set.worn(in: $0.equipment) } ?? 0)
                         }
-                        Text("Sells for \(gear.sellPrice) caps").font(.caption).foregroundStyle(.secondary)
+                        if let pet = player?.pet, cell.isPetSlot || item == .kibble {
+                            PetSummary(pet: pet)
+                        }
+                        if gear.sellPrice > 0 {
+                            Text("Sells for \(gear.sellPrice) caps").font(.caption).foregroundStyle(.secondary)
+                        }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .scrollIndicators(.hidden)
+                if cell.isPetSlot {
+                    let pet = player?.pet
+                    HStack(spacing: 8) {
+                        ActionButton(title: pet?.isSummoned == true || pet?.awaitingFood == true ? "Dismiss" : "Summon",
+                                     glyph: glyph, isEnabled: true, action: action)
+                        ActionButton(title: "Put away", glyph: nil, isEnabled: true, action: onUnslotPet)
+                    }
+                } else {
                 switch (cell.slot, definition.kind) {
                 case (.some, _): ActionButton(title: "Unequip", glyph: glyph, isEnabled: true, action: action)
                 case (nil, .equipment): ActionButton(title: "Equip", glyph: glyph, isEnabled: true, action: action)
                 case (nil, .consumable): ActionButton(title: "Use", glyph: glyph, isEnabled: true, action: action)
                 case (nil, .glider): ActionButton(title: "Fly", glyph: glyph, isEnabled: true, action: action)
                 case (nil, .material): EmptyView()
+                case (nil, .pet): ActionButton(title: "Summon", glyph: glyph, isEnabled: true, action: action)
+                case (nil, .petFood): ActionButton(title: "Feed", glyph: glyph, isEnabled: player?.pet.slot != nil, action: action)
                 }
+                }
+            } else if cell?.isPetSlot == true {
+                Text("Pet slot").font(.headline)
+                Text("No pet yet. Truffle, the pet keeper in the village, knows a pup looking for a friend.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer()
             } else {
                 Text(cell?.slot.map { "No \($0.displayName.lowercased()) equipped" } ?? "Empty slot")
                     .font(.callout)
@@ -237,6 +273,34 @@ private struct ItemDetail: View {
         VStack(spacing: 0) {
             Text(name).font(.caption2.weight(.bold)).foregroundStyle(.secondary)
             Text(value).font(.callout.weight(.semibold).monospacedDigit())
+        }
+    }
+}
+
+/// How full the slotted pet is, and what that means.
+private struct PetSummary: View {
+    let pet: PetStatus
+
+    var body: some View {
+        if let name = pet.slot?.definition.name {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack {
+                    Text("\(name)'s belly").font(.caption.weight(.semibold))
+                    Spacer()
+                    Text(pet.fullness > 0 ? "\(pet.minutesLeft) min" : "Empty")
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
+                ProgressView(value: Double(pet.fullness))
+                    .tint(pet.isHungry || pet.awaitingFood ? .red : .green)
+                Text(pet.awaitingFood ? "Starving at home. Feed Kibble to bring \(name) back."
+                     : pet.isHungry ? "Hungry: slows down. Feed Kibble soon."
+                     : pet.isOut ? "Following you and fetching your drops."
+                     : pet.isSummoned ? "Waits while you fly." : "Resting at home.")
+                    .font(.caption)
+                    .foregroundStyle(pet.isHungry || pet.awaitingFood ? .red : .secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
     }
 }
@@ -306,7 +370,10 @@ struct NPCPanel: View {
                             VStack(spacing: 6) {
                                 if rows.isEmpty {
                                     Text(definition.isShopkeeper ? "Nothing to sell."
-                                         : definition.upgradesGear ? "No gear to upgrade." : "No tasks right now. Come back later!")
+                                         : definition.upgradesGear ? "No gear to upgrade."
+                                         : definition.makesPetFood ? "Bring me critter drops and I'll bake them into Kibble."
+                                         : definition.buysMaterials ? "Bring me whatever the critters drop. Every species has something!"
+                                         : "No tasks right now. Come back later!")
                                         .foregroundStyle(.secondary)
                                         .frame(maxWidth: .infinity, alignment: .leading)
                                 }
@@ -357,6 +424,8 @@ struct NPCPanel: View {
         case .accept: "Accept"
         case .turnIn: "Turn in"
         case .chooseClass: "Choose this path"
+        case .makePetFood: "Bake"
+        case .trade: "Hand in all"
         case .none: ""
         }
     }
@@ -413,6 +482,169 @@ private struct RowView: View {
         }
         .opacity(row.isEnabled ? 1 : 0.6)
         .contentShape(Rectangle())
+    }
+}
+
+// MARK: - Character
+
+/// Flyff's character window: the four attributes, points to spend, and what they'd change.
+/// Points are picked first (+/−, or left/right) and only spent on Confirm.
+struct CharacterPanel: View {
+    let session: GameSession
+
+    var body: some View {
+        let player = session.hud.player
+        let subtitle = player.map { status in
+            ["Lv \(status.stats.level)", status.playerClass?.definition.name].compactMap { $0 }.joined(separator: " · ")
+        }
+        PanelChrome(title: "Character", subtitle: subtitle, glyphs: session.glyphs, onClose: session.closePanel) {
+            if let player {
+                HStack(alignment: .top, spacing: 16) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        header(player)
+                        ForEach(Array(Attribute.allCases.enumerated()), id: \.element) { index, attribute in
+                            AttributeRow(attribute: attribute, value: player.attributes.value(attribute),
+                                         pending: session.pendingPoints[attribute],
+                                         canAdd: session.pointsLeftToPick > 0,
+                                         isSelected: session.selection == index,
+                                         onTap: { session.tapSelection(index) },
+                                         onStep: { session.adjustPendingPoint(attribute, by: $0) })
+                        }
+                        HStack(spacing: 10) {
+                            ActionButton(title: "Confirm", glyph: session.selection == Attribute.allCases.count ? session.glyphs?.primary : nil,
+                                         isEnabled: session.pendingPoints.spent > 0) {
+                                session.confirmPendingPoints()
+                            }
+                            .overlay {
+                                Capsule().strokeBorder(session.selection == Attribute.allCases.count ? Color.yellow : .clear, lineWidth: 2)
+                            }
+                            if session.pendingPoints.spent > 0 {
+                                Button("Reset", action: session.clearPendingPoints)
+                                    .buttonStyle(.plain)
+                                    .font(.callout.weight(.semibold))
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                        }
+                        .padding(.top, 4)
+                    }
+                    .frame(maxWidth: .infinity)
+                    Divider()
+                    if let preview = session.previewStats {
+                        StatPreview(current: player.stats, preview: preview)
+                            .frame(width: 210, alignment: .leading)
+                    }
+                }
+            }
+        }
+    }
+
+    private func header(_ player: PlayerStatus) -> some View {
+        HStack(spacing: 8) {
+            let left = session.pointsLeftToPick
+            Label(left == 1 ? "1 point to spend" : "\(left) points to spend", systemImage: "plus.circle.fill")
+                .font(.callout.weight(.semibold))
+                .foregroundStyle(left > 0 ? .mint : .secondary)
+            Spacer()
+            if let previous = session.glyphs?.previousTarget, let next = session.glyphs?.nextTarget {
+                Image(systemName: previous)
+                Text("Bag").font(.caption).foregroundStyle(.secondary)
+                Image(systemName: next)
+            }
+        }
+    }
+}
+
+private struct AttributeRow: View {
+    let attribute: Attribute
+    let value: Int
+    let pending: Int
+    let canAdd: Bool
+    let isSelected: Bool
+    let onTap: () -> Void
+    let onStep: (Int) -> Void
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: attribute.symbol)
+                .font(.title3)
+                .foregroundStyle(attribute.tint)
+                .frame(width: 28)
+            VStack(alignment: .leading, spacing: 1) {
+                HStack(spacing: 6) {
+                    Text(attribute.abbreviation).font(.subheadline.weight(.heavy))
+                    Text(attribute.name).font(.caption).foregroundStyle(.secondary)
+                }
+                Text(attribute.perPoint + " per point").font(.caption2).foregroundStyle(.secondary)
+            }
+            Spacer()
+            HStack(spacing: 2) {
+                Text("\(value)").font(.headline.monospacedDigit())
+                if pending > 0 {
+                    Text("+\(pending)").font(.headline.monospacedDigit()).foregroundStyle(.mint)
+                }
+            }
+            step("minus", enabled: pending > 0) { onStep(-1) }
+            step("plus", enabled: canAdd) { onStep(1) }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .background(.black.opacity(isSelected ? 0.35 : 0.15), in: .rect(cornerRadius: 12))
+        .overlay {
+            RoundedRectangle(cornerRadius: 12).strokeBorder(isSelected ? Color.yellow : .clear, lineWidth: 2)
+        }
+        .contentShape(Rectangle())
+        .onTapGesture(perform: onTap)
+    }
+
+    private func step(_ symbol: String, enabled: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.caption.weight(.bold))
+                .frame(width: 30, height: 30)
+        }
+        .buttonStyle(.plain)
+        .glassEffect(.regular.interactive(), in: .circle)
+        .opacity(enabled ? 1 : 0.35)
+        .disabled(!enabled)
+    }
+}
+
+/// Each stat now, and what it would become (green) with the picked points spent.
+private struct StatPreview: View {
+    let current: CombatStats
+    let preview: CombatStats
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            line("Attack", "\(current.attack)", "\(preview.attack)")
+            line("Defense", "\(current.defense)", "\(preview.defense)")
+            line("Max HP", "\(current.maxHP)", "\(preview.maxHP)")
+            line("Max MP", "\(current.maxMP)", "\(preview.maxMP)")
+            line("Attacks/s", perSecond(current.attackInterval), perSecond(preview.attackInterval))
+            line("Critical", StatBonus.percent(current.critChance), StatBonus.percent(preview.critChance))
+            line("Skill power", StatBonus.percent(current.skillPower), StatBonus.percent(preview.skillPower))
+            if current.blockChance > 0 {
+                line("Block", StatBonus.percent(current.blockChance), StatBonus.percent(preview.blockChance))
+            }
+        }
+        .font(.callout)
+    }
+
+    private func perSecond(_ interval: Float) -> String {
+        String(format: "%.2f", 1 / max(interval, 0.01))
+    }
+
+    private func line(_ name: String, _ now: String, _ then: String) -> some View {
+        HStack(spacing: 6) {
+            Text(name).foregroundStyle(.secondary)
+            Spacer()
+            Text(now).monospacedDigit()
+            if then != now {
+                Image(systemName: "arrow.right").font(.caption2).foregroundStyle(.secondary)
+                Text(then).monospacedDigit().foregroundStyle(.green).fontWeight(.semibold)
+            }
+        }
     }
 }
 

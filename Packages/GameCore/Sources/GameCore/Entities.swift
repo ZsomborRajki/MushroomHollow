@@ -176,6 +176,9 @@ struct PlayerData: Codable, Sendable {
     var buffs: [ActiveBuff] = []
     var hpRegen: Float = 0
     var mpRegen: Float = 0
+    var pet = PetData()
+    /// Stat points spent (see `Attributes.swift`).
+    var attributes = Attributes()
 }
 
 struct ActiveBuff: Codable, Sendable {
@@ -206,6 +209,8 @@ struct MobBrain: Codable, Sendable {
     /// nil for mobs that shouldn't respawn (e.g. sporelings).
     var spawnArea: Int?
     var state: State
+    /// Attacks players who come within its kind's `aggroRadius`. Most mobs aren't: they only fight back.
+    var aggressive = false
     /// Ticks until the mob's special ability is ready again.
     var abilityTimer = 0
     var hasHidden = false

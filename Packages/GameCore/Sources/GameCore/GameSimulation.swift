@@ -91,7 +91,8 @@ public struct GameSimulation: Sendable {
                     pose: e.pose, level: e.stats.level, hp: e.stats.hp, maxHP: e.stats.maxHP,
                     target: e.combat.engaged ? e.combat.target : nil,
                     gear: EquipSlot.allCases.compactMap { e.player?.equipment[$0]?.item },
-                    playerClass: e.player?.playerClass, isFlying: e.isFlying)
+                    playerClass: e.player?.playerClass, isFlying: e.isFlying,
+                    isAggressive: e.brain?.aggressive ?? false)
             },
             hazards: hazardSnapshots,
             drops: drops.filter { viewer == nil || $0.owner == viewer }.map {
@@ -99,7 +100,8 @@ public struct GameSimulation: Sendable {
             },
             viewer: viewer.flatMap(playerStatus),
             timeOfDay: timeOfDay,
-            telegraphs: telegraphSnapshots
+            telegraphs: telegraphSnapshots,
+            pets: petSnapshots
         )
     }
 
@@ -129,7 +131,10 @@ public struct GameSimulation: Sendable {
             },
             canFly: data.inventory.count(of: .dandelionSeed) > 0 && e.stats.level >= ItemID.dandelionSeed.definition.requiredLevel,
             isFlying: e.isFlying,
-            altitude: e.position.y)
+            altitude: e.position.y,
+            pet: petStatus(data.pet),
+            attributes: data.attributes,
+            unspentStatPoints: data.attributes.unspent(atLevel: e.stats.level))
     }
 
     /// The three base skills, plus the class's two once a class is chosen.
@@ -165,6 +170,7 @@ public struct GameSimulation: Sendable {
             entities[id] = entity
         }
         separateMobs()
+        stepPets()
         stepHazards()
         stepDrops()
         removeCorpses()
@@ -196,9 +202,12 @@ public struct GameSimulation: Sendable {
     static let mobLeashRadius: Float = 12
     /// How far it strolls from its spot when nobody's around.
     static let mobWanderRadius: Float = 5
+    /// Roughly one mob in this many comes after players on its own; the rest only fight back.
+    static let aggressiveShare = 5
 
     /// Spawns a mob somewhere in its area, as far from everyone else as a few tries can find,
     /// so hunting grounds stay spread out and fights are usually one on one.
+    /// Only about one in `aggressiveShare` of an area's mobs is aggressive.
     mutating func spawnMob(areaIndex: Int) {
         let area = map.mobSpawns[areaIndex]
         let kind = area.kind
@@ -210,6 +219,12 @@ public struct GameSimulation: Sendable {
             if best == nil || room > best!.room { best = (candidate, room) }
         }
         let spot = map.resolve(best?.spot ?? area.center, radius: kind.radius)
+        // Each pack keeps its quota of aggressive mobs: when one dies, the next to respawn takes its place.
+        let quota = kind.stats.aggroRadius > 0 ? max(1, area.count / Self.aggressiveShare) : 0
+        let aggressiveNow = order.count { id in
+            guard let e = entities[id], e.stats.isAlive, let brain = e.brain else { return false }
+            return brain.spawnArea == areaIndex && brain.aggressive
+        }
         insert(WorldEntity(
             id: makeID(),
             kind: .mob(kind),
@@ -223,7 +238,8 @@ public struct GameSimulation: Sendable {
                 leashRadius: Self.mobLeashRadius,
                 wanderRadius: Self.mobWanderRadius,
                 spawnArea: areaIndex,
-                state: .idle(ticksLeft: random.int(in: 0...(Self.tickRate * 4)))
+                state: .idle(ticksLeft: random.int(in: 0...(Self.tickRate * 4))),
+                aggressive: aggressiveNow < quota
             )
         ))
     }

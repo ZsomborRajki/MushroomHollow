@@ -60,7 +60,7 @@ extension GameSimulation {
             radius: kind.radius, moveSpeed: kind.wanderSpeed,
             stats: kind.stats.combatStats,
             brain: MobBrain(home: arena.center, leashRadius: arena.radius, spawnArea: nil,
-                            state: .idle(ticksLeft: Self.ticks(3)),
+                            state: .idle(ticksLeft: Self.ticks(3)), aggressive: true,
                             boss: BossBrain(swoopTimer: Self.ticks(4), gustTimer: Self.ticks(6)))))
         bossID = id
         lastBossNight = nightIndex
@@ -195,7 +195,7 @@ extension GameSimulation {
                 position: Vec3(spot.x, 0, spot.y), yaw: angle,
                 radius: MobKind.mouse.radius, moveSpeed: MobKind.mouse.wanderSpeed,
                 stats: MobKind.mouse.stats.combatStats,
-                brain: MobBrain(home: center, leashRadius: 16, spawnArea: nil, state: .engaged))
+                brain: MobBrain(home: center, leashRadius: 16, spawnArea: nil, state: .engaged, aggressive: true))
             mouse.combat.target = target
             mouse.combat.engaged = true
             insert(mouse)

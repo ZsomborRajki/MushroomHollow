@@ -25,6 +25,10 @@ enum InputAction: Equatable {
     /// 0 = HP potion, 1 = MP potion.
     case quickItem(Int)
     case toggleFlight
+    /// Call your pet out or send it home.
+    case togglePet
+    /// The character panel: stats and stat points.
+    case toggleCharacter
     case menu(MenuInput)
 }
 
@@ -198,6 +202,8 @@ final class InputHub {
             button("key.i", down(.keyI), .toggleInventory)
             button("key.m", down(.keyM), .toggleMap)
             button("key.g", down(.keyG), .toggleFlight)
+            button("key.p", down(.keyP), .togglePet)
+            button("key.t", down(.keyT), .toggleCharacter)
             if down(.keyR) { frame.climb += 1 }
             if down(.keyC) { frame.climb -= 1 }
         }
@@ -232,6 +238,7 @@ final class InputHub {
             button("key.e", down(.keyE), .menu(.nextTab))
             button("key.i", down(.keyI), .toggleInventory)
             button("key.m", down(.keyM), .toggleMap)
+            button("key.t", down(.keyT), .toggleCharacter)
         }
     }
 

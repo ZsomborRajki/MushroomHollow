@@ -125,23 +125,25 @@ extension GameSimulation {
         caster.player?.cooldowns[skill] = Self.ticks(definition.cooldown)
         caster.combat.attackTimer = max(caster.combat.attackTimer, Self.ticks(caster.stats.attackInterval * 0.5))
         events.append(.skillCast(caster: caster.id, skill: skill, target: targetID))
+        // Intelligence makes every skill hit (and heal) harder.
+        let power = caster.stats.skillPower
 
         switch definition.effect {
         case let .strike(multiplier):
             if let targetID {
-                dealDamage(from: &caster, to: targetID, multiplier: multiplier, skill: skill)
+                dealDamage(from: &caster, to: targetID, multiplier: multiplier * power, skill: skill)
             }
 
         case let .burst(radius, multiplier):
             for id in mobs(near: caster.position.xz, within: radius) {
-                dealDamage(from: &caster, to: id, multiplier: multiplier, skill: skill)
+                dealDamage(from: &caster, to: id, multiplier: multiplier * power, skill: skill)
             }
             caster.combat.lastCombatTick = tick
 
         case let .blast(radius, multiplier):
             guard let targetID, let center = entities[targetID]?.position.xz else { break }
             for id in mobs(near: center, within: radius) {
-                dealDamage(from: &caster, to: id, multiplier: multiplier, skill: skill)
+                dealDamage(from: &caster, to: id, multiplier: multiplier * power, skill: skill)
             }
 
         case let .volley(multiplier, extraTargets, radius):
@@ -150,7 +152,7 @@ extension GameSimulation {
                 .filter { $0 != targetID }
                 .sorted { entities[$0]!.position.xz.distance(to: center) < entities[$1]!.position.xz.distance(to: center) }
             for id in [targetID] + others.prefix(extraTargets) {
-                dealDamage(from: &caster, to: id, multiplier: multiplier, skill: skill)
+                dealDamage(from: &caster, to: id, multiplier: multiplier * power, skill: skill)
             }
 
         case let .buff(effect, seconds):
@@ -159,7 +161,7 @@ extension GameSimulation {
             caster.player?.buffs.append(ActiveBuff(skill: skill, effect: effect, totalTicks: ticks, ticksLeft: ticks))
 
         case let .heal(fraction):
-            let amount = min(caster.stats.maxHP - caster.stats.hp, Int(Float(caster.stats.maxHP) * fraction))
+            let amount = min(caster.stats.maxHP - caster.stats.hp, Int(Float(caster.stats.maxHP) * fraction * power))
             caster.stats.hp += amount
             events.append(.heal(target: caster.id, amount: amount, skill: skill))
         }
@@ -176,7 +178,7 @@ extension GameSimulation {
                 position: Vec3(spot.x, 0, spot.y), yaw: random.float(in: -.pi...(.pi)),
                 radius: kind.radius, moveSpeed: kind.wanderSpeed,
                 stats: kind.stats.combatStats,
-                brain: MobBrain(home: position, leashRadius: 10, spawnArea: nil, state: .engaged))
+                brain: MobBrain(home: position, leashRadius: 10, spawnArea: nil, state: .engaged, aggressive: true))
             offspring.combat.target = attacker
             offspring.combat.engaged = true
             offspring.combat.attackTimer = Self.ticks(0.6)

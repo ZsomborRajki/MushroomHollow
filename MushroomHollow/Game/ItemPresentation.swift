@@ -50,6 +50,8 @@ extension ItemID {
         case .amberShard: "diamond.fill"
         case .wardCharm: "seal.fill"
         case .dandelionSeed: "wind"
+        case .pip: "dog.fill"
+        case .kibble: "pawprint.circle.fill"
         default:
             // Set pieces: one icon per slot.
             switch definition.equipSlot {
@@ -108,6 +110,8 @@ extension ItemID {
         case .stagMandible, .stagjawAxe, .stagCrusher: Color(red: 0.55, green: 0.35, blue: 0.22)
         case .amberShard: Color(red: 1, green: 0.66, blue: 0.2)
         case .wardCharm: Color(red: 0.45, green: 0.95, blue: 0.85)
+        case .pip: Color(red: 1, green: 0.85, blue: 0.6)
+        case .kibble: Color(red: 0.85, green: 0.55, blue: 0.3)
         default: definition.set?.tint ?? .white
         }
     }
@@ -138,6 +142,8 @@ extension Gear {
         case let .consumable(.restoreMP(amount)): "Restores \(amount) MP"
         case .material: nil
         case .glider: "Lets you fly"
+        case .pet: "Pet · fetches your drops"
+        case .petFood: "Fills up your pet"
         case .equipment: bonus.summary
         }
     }
@@ -232,6 +238,8 @@ extension NPCID {
         case .elderMorel: "text.book.closed.fill"
         case .chanterelle: "bag.fill"
         case .shiitake: "hammer.fill"
+        case .truffle: "pawprint.fill"
+        case .porcini: "book.pages.fill"
         }
     }
 }
@@ -250,6 +258,10 @@ extension ActionFailure {
         case .wrongClass: "Your class can't use that"
         case .missingMaterials: "You need more Amber Shards"
         case .maxUpgrade: "Already +10"
+        case .noPet: "Put a pet in your pet slot first"
+        case .petHungry: "Too hungry to come out. Feed it Kibble"
+        case .petFull: "Your pet is already full"
+        case .noStatPoints: "No stat points left to spend"
         }
     }
 }
@@ -272,5 +284,39 @@ extension QuestDefinition {
         var parts = ["\(rewardXP) XP", "\(rewardCaps) caps"]
         parts += rewardItems.map { $0.count > 1 ? "\($0.item.definition.name) ×\($0.count)" : $0.item.definition.name }
         return parts.joined(separator: " · ")
+    }
+}
+
+extension Attribute {
+    var symbol: String {
+        switch self {
+        case .strength: "figure.strengthtraining.traditional"
+        case .stamina: "heart.fill"
+        case .dexterity: "hare.fill"
+        case .intelligence: "sparkles"
+        }
+    }
+
+    var tint: Color {
+        switch self {
+        case .strength: .red
+        case .stamina: .orange
+        case .dexterity: .green
+        case .intelligence: .cyan
+        }
+    }
+
+    /// What one point buys.
+    var perPoint: String {
+        switch self {
+        case .strength: "+\(Self.decimal(Attributes.attackPerStrength)) ATK"
+        case .stamina: "+\(Attributes.hpPerStamina) HP, +\(Self.decimal(Attributes.defensePerStamina)) DEF"
+        case .dexterity: "+\(Self.decimal(Attributes.speedPerDexterity * 100))% speed, +\(Self.decimal(Attributes.criticalPerDexterity * 100))% crit"
+        case .intelligence: "+\(Attributes.mpPerIntelligence) MP, +\(Self.decimal(Attributes.skillPowerPerIntelligence * 100))% skills"
+        }
+    }
+
+    private static func decimal(_ value: Float) -> String {
+        value == value.rounded() ? "\(Int(value))" : String(format: "%g", value)
     }
 }

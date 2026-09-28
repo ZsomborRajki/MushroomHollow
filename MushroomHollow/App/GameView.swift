@@ -49,6 +49,9 @@ struct GameView: View {
             case let .npc(npc):
                 NPCPanel(session: session, npc: npc)
                     .transition(.scale(scale: 0.95).combined(with: .opacity))
+            case .character:
+                CharacterPanel(session: session)
+                    .transition(.scale(scale: 0.95).combined(with: .opacity))
             case .map:
                 MapPanel(session: session)
                     .transition(.scale(scale: 0.95).combined(with: .opacity))
@@ -156,6 +159,23 @@ private struct UtilityRow: View {
                 session.toggleMute()
             }
             .accessibilityLabel(session.isMuted ? "Unmute" : "Mute")
+            let unspent = player?.unspentStatPoints ?? 0
+            RoundButton(symbol: "figure.stand", size: 48, tint: unspent > 0 ? .mint : .white, glyph: nil) {
+                session.perform(.toggleCharacter)
+            }
+            .overlay(alignment: .topLeading) {
+                // Unspent stat points: a Flyff-style nag until they're spent.
+                if unspent > 0 {
+                    Text("+\(unspent)")
+                        .font(.caption2.weight(.heavy).monospacedDigit())
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1)
+                        .background(.mint, in: .capsule)
+                        .foregroundStyle(.black)
+                        .offset(x: -4, y: -4)
+                }
+            }
+            .accessibilityLabel(unspent > 0 ? "Character, \(unspent) stat points to spend" : "Character")
             RoundButton(symbol: "map.fill", size: 48, glyph: session.glyphs?.map) {
                 session.perform(.toggleMap)
             }

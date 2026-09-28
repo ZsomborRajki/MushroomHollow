@@ -278,6 +278,11 @@ extension GameSimulation {
         guard player.stats.isAlive, player.position.y <= Self.reachableAltitude,
               player.position.xz.distance(to: drops[index].position) <= Self.dropPickupRadius
         else { return .tooFar }
+        return grantDrop(at: index, to: &player)
+    }
+
+    /// Hands a drop to its owner, whoever picked it up (the owner or their pet).
+    mutating func grantDrop(at index: Int, to player: inout WorldEntity) -> ActionFailure? {
         guard var data = player.player else { return .notAvailable }
         switch drops[index].kind {
         case let .caps(amount):

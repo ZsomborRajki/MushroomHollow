@@ -33,6 +33,23 @@ public enum PlayerCommand: Codable, Sendable, Equatable {
     case toggleFlight
     /// While flying: -1 (descend) ... 1 (climb).
     case climb(Float)
+
+    // Pets (see `Pets.swift`). Feeding is `useItem(.kibble)`.
+    /// Moves a pet from the bag into the pet slot (a pet already there goes back to the bag).
+    case slotPet(ItemID)
+    /// Puts the slotted pet back in the bag.
+    case unslotPet
+    /// Calls the slotted pet out to follow you (it hides while you fly).
+    case summonPet
+    case dismissPet
+    /// At a pet keeper: bake `count` of a mob material into Kibble.
+    case makePetFood(ItemID, count: Int, at: NPCID)
+
+    // Progression
+    /// Spend unspent stat points: how many go into each attribute.
+    case spendStatPoints(Attributes)
+    /// At a naturalist: hand in `count` of a mob material for XP and caps.
+    case tradeMaterials(ItemID, count: Int, at: NPCID)
 }
 
 public enum ActionFailure: String, Codable, Sendable {
@@ -50,6 +67,13 @@ public enum ActionFailure: String, Codable, Sendable {
     case missingMaterials
     /// Already +10.
     case maxUpgrade
+    /// The pet slot is empty.
+    case noPet
+    /// A starving pet won't come out until it's fed.
+    case petHungry
+    case petFull
+    /// Not enough unspent stat points.
+    case noStatPoints
 }
 
 public enum MobAbility: String, Codable, Sendable {
@@ -90,6 +114,17 @@ public enum WorldEvent: Codable, Sendable, Equatable {
     case worldBossDeparted(entity: EntityID)
     case worldBossDefeated(entity: EntityID, participants: [EntityID])
     case knockedBack(entity: EntityID)
+    case petSummoned(player: EntityID)
+    case petDismissed(player: EntityID, reason: PetDismissal)
+    case petFed(player: EntityID, kibble: Int)
+    /// Fell to a quarter full: it slows down.
+    case petHungry(player: EntityID)
+    /// The pet picked up one of its owner's drops.
+    case petFetched(player: EntityID)
+    /// Stat points were spent.
+    case attributesChanged(player: EntityID)
+    /// Mob materials handed in at a naturalist (the XP and caps also arrive as their own events).
+    case materialsTraded(player: EntityID, item: ItemID, count: Int, xp: Int, caps: Int)
 }
 
 /// A danger marker on the ground: get out before it goes off.
@@ -136,6 +171,8 @@ public struct EntitySnapshot: Codable, Sendable, Equatable, Identifiable {
     public let gear: [ItemID]
     public let playerClass: PlayerClass?
     public let isFlying: Bool
+    /// Mobs: attacks players who come close (about one in five); the rest only fight back.
+    public let isAggressive: Bool
 
     public var isAlive: Bool { hp > 0 }
 
@@ -187,6 +224,10 @@ public struct PlayerStatus: Codable, Sendable, Equatable {
     public let isFlying: Bool
     /// Meters above the ground.
     public let altitude: Float
+    public let pet: PetStatus
+    /// Stat points spent, and points waiting to be spent.
+    public let attributes: Attributes
+    public let unspentStatPoints: Int
 }
 
 /// The world as seen by one viewer at the end of one simulation tick.
@@ -199,9 +240,11 @@ public struct WorldSnapshot: Codable, Sendable, Equatable {
     /// 0 = midnight, 0.25 = dawn, 0.5 = noon, 0.75 = dusk.
     public let timeOfDay: Float
     public let telegraphs: [TelegraphSnapshot]
+    /// Companions out in the world, one per owner.
+    public let pets: [PetSnapshot]
 
     public static let empty = WorldSnapshot(tick: 0, entities: [], hazards: [], drops: [], viewer: nil,
-                                            timeOfDay: 0.4, telegraphs: [])
+                                            timeOfDay: 0.4, telegraphs: [], pets: [])
 
     public func entity(_ id: EntityID) -> EntitySnapshot? {
         entities.first { $0.id == id }

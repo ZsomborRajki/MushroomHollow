@@ -7,7 +7,8 @@ import Testing
     private func arena(_ kind: MobKind = .snail, seed: UInt64 = 11) throws -> (GameSimulation, player: EntityID, mob: EntityID) {
         var sim = GameSimulation(seed: seed)
         let player = sim.spawnPlayer()
-        let mob = try #require(sim.snapshot().entities.first { $0.kind == .mob(kind) })
+        // Aggressive kinds: pick one that attacks on sight (most only fight back).
+        let mob = try #require(sim.snapshot().entities.first { $0.kind == .mob(kind) && ($0.isAggressive || kind.stats.aggroRadius == 0) })
         sim.teleport(player, to: mob.position.xz + Vec2(1.2, 0))
         return (sim, player, mob.id)
     }
@@ -143,7 +144,7 @@ import Testing
         let snailCount = { (sim: GameSimulation) in sim.snapshot().entities.filter { $0.kind == .mob(.snail) }.count }
         let initial = snailCount(sim)
         sim.enqueue(.target(snail, engage: true), from: player)
-        run(&sim, seconds: 15)
+        run(&sim, seconds: 40) // mobs are built to last
         #expect(sim.entity(snail) == nil, "corpse despawned")
 
         run(&sim, seconds: MobKind.snail.stats.respawnSeconds + 1)

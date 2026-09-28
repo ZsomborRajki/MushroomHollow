@@ -86,6 +86,27 @@ extension GameSimulation {
 
         case let .climb(amount):
             player.climbIntent = player.isFlying ? max(-1, min(1, amount)) : 0
+
+        case let .slotPet(item):
+            if let failure = slotPet(item, player: &player) { fail(failure, player) }
+
+        case .unslotPet:
+            if let failure = unslotPet(player: &player) { fail(failure, player) }
+
+        case .summonPet:
+            if let failure = summonPet(player: &player) { fail(failure, player) }
+
+        case .dismissPet:
+            if let failure = dismissPet(player: &player) { fail(failure, player) }
+
+        case let .makePetFood(item, count, npc):
+            if let failure = makePetFood(item, count: count, at: npc, player: &player) { fail(failure, player) }
+
+        case let .spendStatPoints(points):
+            if let failure = spendStatPoints(points, player: &player) { fail(failure, player) }
+
+        case let .tradeMaterials(item, count, npc):
+            if let failure = tradeMaterials(item, count: count, at: npc, player: &player) { fail(failure, player) }
         }
     }
 
@@ -278,6 +299,7 @@ extension GameSimulation {
     }
 
     private mutating func useItem(_ item: ItemID, player: inout WorldEntity) -> ActionFailure? {
+        if case .petFood = item.definition.kind { return feedPet(player: &player) }
         guard player.stats.isAlive, var data = player.player else { return .notUsable }
         guard case let .consumable(effect) = item.definition.kind else { return .notUsable }
         guard data.inventory.count(of: item) > 0 else { return .missingItem }
@@ -352,6 +374,8 @@ extension GameSimulation {
         guard var data = player.player, count > 0 else { return .notAvailable }
         guard isNear(npc, player) else { return .tooFar }
         guard npc.definition.isShopkeeper else { return .notAvailable }
+        // Pets and Kibble aren't for sale.
+        guard gear.definition.sellPrice > 0 else { return .notAvailable }
         guard data.inventory.remove(gear.item, count: count, upgrade: gear.upgrade) else { return .missingItem }
 
         let earned = gear.sellPrice * count

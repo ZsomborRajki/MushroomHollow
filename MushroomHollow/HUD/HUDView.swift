@@ -112,6 +112,9 @@ private struct PlayerFrame: View {
             }
             StatBar(value: status.stats.hp, max: status.stats.maxHP, color: .red, label: "HP")
             StatBar(value: status.stats.mp, max: status.stats.maxMP, color: .blue, label: "MP")
+            if status.pet.isSummoned || status.pet.awaitingFood, let name = status.pet.slot?.definition.name {
+                PetBar(pet: status.pet, name: name)
+            }
             if let zone {
                 HStack(spacing: 4) {
                     Image(systemName: status.isSlowed ? "tortoise.fill" : "location.fill")
@@ -133,6 +136,36 @@ private struct PlayerFrame: View {
         .padding(12)
         .glassEffect(.regular, in: .rect(cornerRadius: 20))
         .animation(.snappy, value: status.caps)
+    }
+}
+
+/// Your pet's belly: a slim bar that turns red (and says so) when it's hungry.
+private struct PetBar: View {
+    let pet: PetStatus
+    let name: String
+
+    private var color: Color {
+        pet.awaitingFood || pet.isHungry ? .red : pet.fullness < 0.5 ? .orange : .green
+    }
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: pet.awaitingFood ? "house.fill" : "pawprint.fill")
+                .foregroundStyle(color)
+            Text(name).font(.caption2.weight(.bold))
+            GeometryReader { geometry in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(.black.opacity(0.4))
+                    Capsule().fill(color.gradient).frame(width: geometry.size.width * CGFloat(pet.fullness))
+                }
+            }
+            .frame(height: 6)
+            Text(pet.awaitingFood ? "Starving" : pet.isHungry ? "Hungry" : "\(pet.minutesLeft) min")
+                .font(.caption2.monospacedDigit())
+                .foregroundStyle(pet.isHungry || pet.awaitingFood ? .red : .secondary)
+                .fixedSize()
+        }
+        .font(.caption2)
     }
 }
 
@@ -237,6 +270,12 @@ private struct TargetFrame: View {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .foregroundStyle(.red)
                         .font(.caption)
+                } else if target.isAggressive {
+                    // Attacks on sight; most mobs wait to be hit.
+                    Image(systemName: "flame.fill")
+                        .foregroundStyle(.orange)
+                        .font(.caption)
+                        .accessibilityLabel("Aggressive")
                 }
                 Text(target.name)
                     .font(.headline)

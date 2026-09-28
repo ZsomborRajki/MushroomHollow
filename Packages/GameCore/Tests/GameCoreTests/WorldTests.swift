@@ -187,7 +187,7 @@ import Testing
     @Test func mobsCantReachFlyers() throws {
         var sim = GameSimulation(seed: 3)
         let player = sim.spawnPlayer(profile: PlayerProfile(level: 10, inventory: glider()))
-        let slug = try #require(sim.snapshot().entities.first { $0.kind == .mob(.slug) })
+        let slug = try #require(sim.snapshot().entities.first { $0.kind == .mob(.slug) && $0.isAggressive })
         sim.teleport(player, to: slug.position.xz + Vec2(1.2, 0))
         _ = run(&sim, seconds: 2)
         #expect(sim.entity(slug.id)?.combat.target == player, "aggroed on the ground")

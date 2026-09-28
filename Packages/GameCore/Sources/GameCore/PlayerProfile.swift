@@ -14,11 +14,15 @@ public struct PlayerProfile: Codable, Sendable, Equatable {
     public var position: Vec2?
     /// Optional so saves from before classes existed still load.
     public var playerClass: PlayerClass?
+    /// Optional so saves from before pets existed still load.
+    public var pet: PetProfile?
+    /// Stat points spent. nil in saves from before stats existed: every earned point is waiting to be spent.
+    public var attributes: Attributes?
 
     public init(level: Int = 1, xp: Int = 0, hp: Int? = nil, mp: Int? = nil, caps: Int = 0,
                 inventory: Inventory = Inventory(), equipment: [EquipSlot: Gear] = [:],
                 activeQuests: [QuestID: Int] = [:], completedQuests: Set<QuestID> = [], position: Vec2? = nil,
-                playerClass: PlayerClass? = nil) {
+                playerClass: PlayerClass? = nil, pet: PetProfile? = nil, attributes: Attributes? = nil) {
         self.level = level
         self.xp = xp
         self.hp = hp
@@ -30,6 +34,8 @@ public struct PlayerProfile: Codable, Sendable, Equatable {
         self.completedQuests = completedQuests
         self.position = position
         self.playerClass = playerClass
+        self.pet = pet
+        self.attributes = attributes
     }
 
     /// A brand-new sprout: a little pocket money and a few potions.
@@ -54,6 +60,12 @@ extension GameSimulation {
         data.activeQuests = profile.activeQuests
         data.completedQuests = profile.completedQuests
         data.playerClass = level >= PlayerClass.requiredLevel ? profile.playerClass : nil
+        data.pet = PetData(profile: profile.pet)
+        // A save can't hold more spent points than its level earned (e.g. an edited or future save).
+        if let attributes = profile.attributes, attributes.isValid,
+           attributes.spent <= Attributes.earned(atLevel: level) {
+            data.attributes = attributes
+        }
 
         var stats = Self.playerStats(level: level, data: data)
         if let hp = profile.hp, hp > 0 { stats.hp = min(hp, stats.maxHP) }
@@ -84,11 +96,12 @@ extension GameSimulation {
             level: e.stats.level, xp: data.xp, hp: e.stats.hp, mp: e.stats.mp, caps: data.caps,
             inventory: data.inventory, equipment: data.equipment,
             activeQuests: data.activeQuests, completedQuests: data.completedQuests,
-            position: e.position.xz, playerClass: data.playerClass)
+            position: e.position.xz, playerClass: data.playerClass, pet: data.pet.profile,
+            attributes: data.attributes)
     }
 
     /// Worn gear (with upgrades) plus any set bonuses.
-    static func equipmentBonus(_ equipment: [EquipSlot: Gear]) -> StatBonus {
+    public static func equipmentBonus(_ equipment: [EquipSlot: Gear]) -> StatBonus {
         EquipSlot.allCases.reduce(ItemSet.bonus(for: equipment)) { total, slot in
             total + (equipment[slot]?.bonus ?? StatBonus())
         }
@@ -97,6 +110,6 @@ extension GameSimulation {
     /// Full-health stats for a player's level, class, and gear.
     static func playerStats(level: Int, data: PlayerData) -> CombatStats {
         Progression.playerStats(level: level, bonus: equipmentBonus(data.equipment), playerClass: data.playerClass,
-                                weapon: data.equipment[.weapon]?.definition.weaponType)
+                                weapon: data.equipment[.weapon]?.definition.weaponType, attributes: data.attributes)
     }
 }

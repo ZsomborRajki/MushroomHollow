@@ -15,6 +15,8 @@ struct TargetInfo: Equatable {
     /// Mob level relative to the player's: drives the name color.
     let levelDelta: Int
     let isFightingYou: Bool
+    /// Attacks on sight (most mobs only fight back).
+    let isAggressive: Bool
 }
 
 /// The world boss's health bar, shown when you're near it.
@@ -49,6 +51,9 @@ struct HUDState: Equatable {
             && a.skills.map(\.canAfford) == b.skills.map(\.canAfford)
             && a.buffs.map(\.id) == b.buffs.map(\.id)
             && (a.itemCooldown > 0) == (b.itemCooldown > 0)
+            && a.pet.slot == b.pet.slot && a.pet.minutesLeft == b.pet.minutesLeft && a.pet.isHungry == b.pet.isHungry
+            && a.pet.isSummoned == b.pet.isSummoned && a.pet.isOut == b.pet.isOut && a.pet.awaitingFood == b.pet.awaitingFood
+            && a.attributes == b.attributes && a.unspentStatPoints == b.unspentStatPoints
     }
 }
 
@@ -123,6 +128,8 @@ struct FeedbackTriggers: Equatable {
 
 enum Panel: Equatable {
     case inventory
+    /// Stats and stat points (Flyff's character window).
+    case character
     case npc(NPCID)
     case map
 }
@@ -163,6 +170,10 @@ struct PanelRow: Identifiable, Equatable {
         case accept(QuestID)
         case turnIn(QuestID)
         case chooseClass(PlayerClass)
+        /// At the pet keeper: bake a whole pile of a material into Kibble.
+        case makePetFood(ItemID, count: Int)
+        /// At the naturalist: hand in a pile of one material.
+        case trade(ItemID, count: Int)
         case none
     }
 
@@ -184,6 +195,8 @@ struct InventoryCell: Identifiable, Equatable {
     let count: Int
     var upgrade = 0
     let slot: EquipSlot?
+    /// The pet slot, under the equipment.
+    var isPetSlot = false
 
     var gear: Gear? { item.map { Gear($0, upgrade: upgrade) } }
 }
@@ -210,6 +223,8 @@ final class GameSession {
     private(set) var shopTab = ShopTab.buy
     /// At the blacksmith: spend a Ward Charm on risky upgrades.
     private(set) var protectUpgrades = false
+    /// On the character panel: points picked but not yet confirmed.
+    private(set) var pendingPoints = Attributes()
     /// Half the width of ground the map shows, in meters (pinch or LB/RB to change).
     private(set) var mapSpan = GameSession.mapFullSpan
     /// Sound off (remembered on this device).
@@ -250,6 +265,8 @@ final class GameSession {
     static let inventoryColumns = 6
     static let equipmentColumns = 2
     static let firstBagCell = EquipSlot.allCases.count
+    /// The pet slot sits under the equipment grid, but comes last so bag indices stay put.
+    static let petCell = firstBagCell + Inventory.capacity
     static let autosaveInterval: Double = 20
 
     #if DEBUG
@@ -406,14 +423,52 @@ final class GameSession {
         gameCenter.showAccessPoint(false)
         panel = nil
         selection = 0
+        pendingPoints = Attributes()
     }
 
     private func openPanel(_ newPanel: Panel) {
         panel = newPanel
+        pendingPoints = Attributes()
         gameCenter.showAccessPoint(newPanel == .inventory)
         selection = newPanel == .inventory ? Self.firstBagCell : 0
         shopTab = .buy
         renderer.sounds.playInterface(.uiConfirm)
+    }
+
+    // MARK: - Stat points
+
+    /// Points left to hand out on the character panel, counting the ones already picked.
+    var pointsLeftToPick: Int {
+        (hud.player?.unspentStatPoints ?? 0) - pendingPoints.spent
+    }
+
+    /// Picks (or un-picks) one point; nothing is spent until confirmed.
+    func adjustPendingPoint(_ attribute: Attribute, by step: Int) {
+        guard step > 0 ? pointsLeftToPick > 0 : pendingPoints[attribute] > 0 else {
+            if step > 0 { renderer.sounds.playInterface(.error) }
+            return
+        }
+        pendingPoints[attribute] += step
+        renderer.sounds.playInterface(.uiMove)
+    }
+
+    func confirmPendingPoints() {
+        guard pendingPoints.spent > 0 else { return }
+        host.send(.spendStatPoints(pendingPoints))
+    }
+
+    func clearPendingPoints() {
+        pendingPoints = Attributes()
+        renderer.sounds.playInterface(.uiMove)
+    }
+
+    /// Full stats as they'd be with the picked points spent (for the before → after preview).
+    var previewStats: CombatStats? {
+        guard let player = hud.player else { return nil }
+        return Progression.playerStats(level: player.stats.level, bonus: GameSimulation.equipmentBonus(player.equipment),
+                                       playerClass: player.playerClass,
+                                       weapon: player.equipment[.weapon]?.definition.weaponType,
+                                       attributes: player.attributes + pendingPoints)
     }
 
     // MARK: - Frame
@@ -549,6 +604,16 @@ final class GameSession {
         case .toggleFlight:
             host.send(.toggleFlight)
 
+        case .togglePet:
+            togglePet()
+
+        case .toggleCharacter:
+            if panel == .character {
+                closePanel()
+            } else {
+                openPanel(.character)
+            }
+
         case let .menu(input):
             handleMenu(input)
         }
@@ -566,6 +631,10 @@ final class GameSession {
             stepMapZoom(zoomIn: input == .nextTab)
         case .confirm:
             activateSelection()
+        case .previousTab where panel == .inventory, .nextTab where panel == .inventory:
+            openPanel(.character) // the bag and the character sheet sit side by side, like tabs
+        case .previousTab where panel == .character, .nextTab where panel == .character:
+            openPanel(.inventory)
         case .previousTab, .nextTab:
             guard case let .npc(npc) = panel else { return }
             if npc.definition.isShopkeeper { setShopTab(shopTab == .buy ? .sell : .buy) }
@@ -583,12 +652,12 @@ final class GameSession {
             // The equipment grid (row by row), then the bag grid to its right.
             let columns = Self.inventoryColumns
             let slotColumns = Self.equipmentColumns
-            let slotRows = Self.firstBagCell / slotColumns
+            let slotRows = Self.firstBagCell / slotColumns + 1 // the pet slot is the last row
             let bagRows = Inventory.capacity / columns
-            let inSlots = selection < Self.firstBagCell
+            let inSlots = selection < Self.firstBagCell || selection == Self.petCell
             let bagIndex = selection - Self.firstBagCell
-            var column = inSlots ? selection % slotColumns : slotColumns + bagIndex % columns
-            var row = inSlots ? selection / slotColumns : bagIndex / columns
+            var column = selection == Self.petCell ? slotColumns - 1 : inSlots ? selection % slotColumns : slotColumns + bagIndex % columns
+            var row = selection == Self.petCell ? slotRows - 1 : inSlots ? selection / slotColumns : bagIndex / columns
             switch direction {
             case .left: column = max(0, column - 1)
             case .right: column = min(slotColumns + columns - 1, column + 1)
@@ -597,7 +666,21 @@ final class GameSession {
             default: break
             }
             row = min(row, (column < slotColumns ? slotRows : bagRows) - 1)
-            selection = column < slotColumns ? row * slotColumns + column : Self.firstBagCell + row * columns + column - slotColumns
+            if column < slotColumns, row == slotRows - 1 {
+                selection = Self.petCell
+            } else {
+                selection = column < slotColumns ? row * slotColumns + column : Self.firstBagCell + row * columns + column - slotColumns
+            }
+        case .character:
+            // The four attributes, then Confirm. Left/right take a point back or put one in.
+            switch direction {
+            case .up: selection = max(0, selection - 1)
+            case .down: selection = min(Attribute.allCases.count, selection + 1)
+            case .left, .right:
+                guard Attribute.allCases.indices.contains(selection) else { return }
+                adjustPendingPoint(Attribute.allCases[selection], by: direction == .right ? 1 : -1)
+            default: break
+            }
         case .npc:
             let count = npcRows.count
             guard count > 0 else { return }
@@ -621,6 +704,10 @@ final class GameSession {
         switch panel {
         case .inventory:
             guard let cell = inventoryCells.first(where: { $0.id == selection }), let item = cell.item else { return }
+            if cell.isPetSlot {
+                togglePet()
+                return
+            }
             if let slot = cell.slot {
                 host.send(.unequip(slot))
                 return
@@ -629,10 +716,16 @@ final class GameSession {
             case .consumable: host.send(.useItem(item))
             case .equipment: host.send(.equip(item, upgrade: cell.upgrade))
             case .material where item == .amberShard || item == .wardCharm: showToast("Bring it to Shiitake to upgrade gear")
-            case .material: showToast("Sell materials to Chanterelle")
+            case .material: showToast("Trade materials to Porcini for XP, or sell them to Chanterelle")
             case .glider:
                 closePanel()
                 host.send(.toggleFlight)
+            case .pet:
+                // Into the slot and straight out to play.
+                host.send(.slotPet(item))
+                host.send(.summonPet)
+            case .petFood:
+                host.send(.useItem(item))
             }
         case let .npc(npc):
             guard npcRows.indices.contains(selection) else { return }
@@ -645,7 +738,15 @@ final class GameSession {
             case let .accept(quest): host.send(.acceptQuest(quest))
             case let .turnIn(quest): host.send(.completeQuest(quest))
             case let .chooseClass(playerClass): host.send(.chooseClass(playerClass))
+            case let .makePetFood(item, count): host.send(.makePetFood(item, count: count, at: npc))
+            case let .trade(item, count): host.send(.tradeMaterials(item, count: count, at: npc))
             case .none: break
+            }
+        case .character:
+            if Attribute.allCases.indices.contains(selection) {
+                adjustPendingPoint(Attribute.allCases[selection], by: 1)
+            } else {
+                confirmPendingPoints()
             }
         case .map:
             cycleMapZoom()
@@ -720,7 +821,7 @@ final class GameSession {
             markers.mobs = snapshot.entities.compactMap { entity in
                 guard case let .mob(kind) = entity.kind, entity.isAlive, kind != .owl,
                       entity.position.xz.distance(to: me.position.xz) < 90 else { return nil }
-                return MapMarkers.Mob(position: entity.position.xz, isHostile: kind.stats.aggroRadius > 0,
+                return MapMarkers.Mob(position: entity.position.xz, isHostile: entity.isAggressive,
                                       isFighting: entity.target == host.localPlayerID)
             }
         }
@@ -758,6 +859,7 @@ final class GameSession {
             cells.append(InventoryCell(id: Self.firstBagCell + index, item: stack?.item, count: stack?.count ?? 0,
                                        upgrade: stack?.upgrade ?? 0, slot: nil))
         }
+        cells.append(InventoryCell(id: Self.petCell, item: player.pet.slot, count: 1, slot: nil, isPetSlot: true))
         return cells
     }
 
@@ -823,7 +925,7 @@ final class GameSession {
                     isEnabled: false, action: .none)]
             }
         }
-        let rows: [PanelRow] = classRows + quests.compactMap { status in
+        let rows: [PanelRow] = classRows + quests.compactMap { status -> PanelRow? in
             guard status.id.definition.giver == npc else { return nil }
             let quest = status.id.definition
             let detail = "\(quest.story)\n\n\(quest.objective.summary)\nReward: \(quest.rewardLine)"
@@ -841,7 +943,70 @@ final class GameSession {
             case .completed: return row("checkmark.circle", .secondary, "Done", false, .none)
             }
         }
+        if npc.definition.makesPetFood { return rows + petFoodRows(player) }
+        if npc.definition.buysMaterials { return rows + materialRows(player) }
         return rows
+    }
+
+    /// At the naturalist: every mob material in the bag, a whole pile at a time.
+    private func materialRows(_ player: PlayerStatus) -> [PanelRow] {
+        var piles: [(item: ItemID, count: Int)] = []
+        for stack in player.inventory.stacks where stack.item.bounty != nil {
+            if let index = piles.firstIndex(where: { $0.item == stack.item }) {
+                piles[index].count += stack.count
+            } else {
+                piles.append((stack.item, stack.count))
+            }
+        }
+        // Collect quests still counting on a material get a warning before it's handed over.
+        let wanted: [ItemID: String] = Dictionary(player.quests.compactMap { status in
+            guard case .active = status.state, case let .collect(item, _) = status.id.definition.objective else { return nil }
+            return (item, status.id.definition.title)
+        }, uniquingKeysWith: { first, _ in first })
+        return piles.compactMap { item, count in
+            guard let bounty = item.bounty else { return nil }
+            let xp = bounty.xp(forPlayerLevel: player.stats.level)
+            let warning = wanted[item].map { "\n\nCareful: \"\($0)\" still needs these." } ?? ""
+            return PanelRow(
+                id: "trade-\(item.rawValue)", symbol: item.symbol, tint: item.tint,
+                title: "\(item.definition.name) ×\(count)",
+                subtitle: wanted[item].map { "Needed for \($0)" } ?? "From \(bounty.source.pluralName)",
+                trailing: "+\(xp * count) XP",
+                detail: """
+                    Porcini files all \(count) under \(bounty.source.pluralName), paying \(xp) XP and \(bounty.caps) caps each: \
+                    \(xp * count) XP and \(bounty.caps * count) caps in all. Specimens from critters far below your level teach you less.\(warning)
+                    """,
+                isEnabled: true, action: .trade(item, count: count))
+        }
+    }
+
+    /// At the pet keeper: every mob material in the bag, a whole pile at a time.
+    private func petFoodRows(_ player: PlayerStatus) -> [PanelRow] {
+        var piles: [(item: ItemID, count: Int)] = []
+        for stack in player.inventory.stacks where stack.item.kibbleValue != nil {
+            if let index = piles.firstIndex(where: { $0.item == stack.item }) {
+                piles[index].count += stack.count
+            } else {
+                piles.append((stack.item, stack.count))
+            }
+        }
+        let kibble = player.inventory.count(of: .kibble)
+        return piles.map { item, count in
+            let value = item.kibbleValue ?? 0
+            // Like the sim: the pile leaves the bag first, which may free a slot.
+            var bag = player.inventory
+            bag.remove(item, count: count)
+            let fits = bag.canAdd(.kibble, count: count * value)
+            return PanelRow(
+                id: "kibble-\(item.rawValue)", symbol: item.symbol, tint: item.tint,
+                title: "\(item.definition.name) ×\(count)", subtitle: "\(value) Kibble each",
+                trailing: "\(count * value) Kibble",
+                detail: """
+                    Truffle bakes all \(count) into \(count * value) Kibble. You have \(kibble).
+                    One Kibble keeps a pet fed for 3 minutes; a full belly lasts half an hour.
+                    """,
+                isEnabled: fits, action: .makePetFood(item, count: count))
+        }
     }
 
     /// Everything the blacksmith can work on: worn gear first, then the bag.
@@ -1028,7 +1193,8 @@ final class GameSession {
         case let .levelUp(player, level):
             renderer.playCheer(player, time: elapsed)
             guard player == me else { return }
-            showBanner(Banner(title: "Level Up!", subtitle: "You are now level \(level)"))
+            showBanner(Banner(title: "Level Up!", subtitle: "You are now level \(level) · +\(Attributes.pointsPerLevel) stat points"))
+            addFeed(symbol: "plus.circle.fill", text: "Stat points to spend (\(statPointsHint))", tint: .mint)
             if level >= 10 { gameCenter.report(.level10) }
             if level >= 30 { gameCenter.report(.level30) }
             feedback.levelUps += 1
@@ -1094,6 +1260,9 @@ final class GameSession {
             renderer.playCheer(player, time: elapsed)
             guard player == me else { return }
             showBanner(Banner(title: "Quest Complete", subtitle: quest.definition.title))
+            if let next = quest.next?.definition {
+                addFeed(symbol: next.giver.symbol, text: "Next: \(next.giver.definition.name) has a task for you", tint: .yellow)
+            }
             feedback.levelUps += 1
             renderer.sounds.playInterface(.questDone, gain: 0)
             rumble.play(.celebrate)
@@ -1170,7 +1339,78 @@ final class GameSession {
                 rumble.play(.heavy)
                 shake(0.2)
             }
+
+        case let .petSummoned(player):
+            guard player == me else { return }
+            addFeed(symbol: "pawprint.fill", text: "\(petName) is following you", tint: Color(PetRig.tint))
+            renderer.sounds.playInterface(.uiConfirm, gain: -6)
+            requestSave()
+
+        case let .petDismissed(player, reason):
+            guard player == me else { return }
+            switch reason {
+            case .starving:
+                showToast("\(petName) is starving and went home. Feed her Kibble!")
+                feedback.failures += 1
+                renderer.sounds.playInterface(.error)
+            case .requested, .unslotted:
+                addFeed(symbol: "house.fill", text: "\(petName) went home", tint: .secondary)
+            }
+            requestSave()
+
+        case let .petFed(player, kibble):
+            guard player == me else { return }
+            addFeed(symbol: "pawprint.circle.fill", text: "\(petName) ate \(kibble) Kibble", tint: ItemID.kibble.tint)
+            renderer.sounds.playInterface(.loot, gain: -6)
+            if let position = renderer.petPosition(of: player) {
+                renderer.effects.burst(at: position + [0, 0.5, 0], color: Palette.blush, count: 12, speed: 0.6,
+                                       size: 0.06, lifetime: 0.8, rise: 1, time: elapsed)
+            }
+            requestSave()
+
+        case let .petHungry(player):
+            guard player == me else { return }
+            showToast("\(petName) is hungry and slowing down")
+
+        case let .petFetched(player):
+            renderer.playPetFetch(owner: player, time: elapsed)
+
+        case let .attributesChanged(player):
+            guard player == me else { return }
+            pendingPoints = Attributes()
+            renderer.sounds.playInterface(.uiConfirm, gain: -4)
+            requestSave()
+
+        case let .materialsTraded(player, item, count, xp, _):
+            guard player == me else { return }
+            addFeed(symbol: NPCID.porcini.symbol, text: "Porcini took \(count) \(item.definition.name) (+\(xp) XP)", tint: item.tint)
+            renderer.sounds.playInterface(.loot, gain: -4)
+            requestSave()
         }
+    }
+
+    /// Where to open the character panel on the current device.
+    private var statPointsHint: String {
+        isGamepadConnected ? "open the bag, then LB/RB" : "T, or the person button"
+    }
+
+    /// The name of the pet in your slot ("Pip").
+    private var petName: String {
+        hud.player?.pet.slot?.definition.name ?? "Your pet"
+    }
+
+    /// P, or the pet slot in the bag: call your pet out or send it home.
+    func togglePet() {
+        guard let pet = hud.player?.pet, pet.slot != nil else {
+            showToast(ActionFailure.noPet.message)
+            return
+        }
+        host.send(pet.isSummoned || pet.awaitingFood ? .dismissPet : .summonPet)
+    }
+
+    /// Takes the pet out of its slot, back into the bag.
+    func unslotPet() {
+        host.send(.unslotPet)
     }
 
     private func playSkillEffect(_ skill: SkillID, caster: EntityID, target: EntityID?) {
@@ -1257,7 +1497,7 @@ final class GameSession {
                 id: targetID, name: target.kind.displayName, level: target.level,
                 hp: target.hp, maxHP: target.maxHP,
                 levelDelta: target.level - viewer.stats.level,
-                isFightingYou: target.target == viewer.id)
+                isFightingYou: target.target == viewer.id, isAggressive: target.isAggressive)
         }
         if let bossID = host.simulation.worldBoss, let boss = snapshot.entity(bossID), boss.isAlive,
            let me = snapshot.entity(host.localPlayerID), boss.position.xz.distance(to: me.position.xz) < 45 {
@@ -1348,7 +1588,7 @@ final class GameSession {
 #if DEBUG
 /// Debug-only launch arguments for testing and screenshots:
 /// `-autofight`, `-demo` (geared level 8 character), `-spawn village|lake|glade|maze|barkfall|fen|meadow|...`,
-/// `-panel bag|morel|shop|smith|map`, `-time 0...1` (0.5 = noon), `-level N`, `-class guardian|thornshot|sporecaster|dewkeeper`
+/// `-panel bag|stats|morel|shop|smith|truffle|porcini|map`, `-time 0...1` (0.5 = noon), `-level N`, `-class guardian|thornshot|sporecaster|dewkeeper`
 /// (wielding the class weapon), `-weapon sword|axe|maul|bow|wand|staff` (plus a shield if one fits), `-owl` (summon the boss),
 /// `-resetSave`. Anything but `-resetSave` uses a throwaway save.
 private struct DebugLaunch {
@@ -1356,7 +1596,7 @@ private struct DebugLaunch {
 
     var resetSave: Bool { arguments.contains("-resetSave") }
     var isThrowaway: Bool {
-        ["-autofight", "-demo", "-spawn", "-panel", "-time", "-level", "-class", "-weapon", "-fly", "-owl"].contains { arguments.contains($0) }
+        ["-autofight", "-demo", "-spawn", "-panel", "-time", "-level", "-class", "-weapon", "-fly", "-owl", "-pet"].contains { arguments.contains($0) }
     }
 
     var timeOfDay: Float? { value(after: "-time").flatMap(Float.init) }
@@ -1371,6 +1611,7 @@ private struct DebugLaunch {
         let playerClass = value(after: "-class").flatMap(PlayerClass.init(rawValue:)) ?? weapon?.playerClass
         let level = value(after: "-level").flatMap(Int.init) ?? (playerClass != nil ? 18 : 10)
         guard arguments.contains("-demo") || playerClass != nil || weapon != nil || arguments.contains("-level") || arguments.contains("-fly")
+                || arguments.contains("-pet")
         else { return nil }
         var bag = Inventory()
         bag.add(.dandelionSeed, count: 1)
@@ -1395,9 +1636,26 @@ private struct DebugLaunch {
             equipment[.weapon] = Gear(pick)
             if !family.isTwoHanded { equipment[.shield] = Gear(.barkBuckler) }
         }
+        // `-pet [hungry]`: Pip out and following (optionally about to slow down), with Kibble to spare.
+        var pet: PetProfile?
+        if arguments.contains("-pet") {
+            bag.add(.kibble, count: 60)
+            let fullness = value(after: "-pet") == "hungry" ? GameSimulation.petHungryFullness + GameSimulation.tickRate * 5 : nil
+            pet = PetProfile(slot: .pip, fullness: fullness.map { [.pup: $0] } ?? [:], summoned: true)
+        }
+        // Geared characters come with their stat points spent to suit them; `-level N` alone leaves them to spend.
+        let points = Attributes.earned(atLevel: level)
+        let attributes: Attributes? = switch playerClass {
+        case .guardian: Attributes(strength: points / 3, stamina: points - points / 3)
+        case .thornshot: Attributes(strength: points / 3, dexterity: points - points / 3)
+        case .sporecaster: Attributes(stamina: points / 3, intelligence: points - points / 3)
+        case .dewkeeper: Attributes(stamina: points / 2, intelligence: points - points / 2)
+        case nil where arguments.contains("-demo") || weapon != nil: Attributes(strength: points / 2, stamina: points - points / 2)
+        case nil: nil
+        }
         return PlayerProfile(level: level, caps: 420, inventory: bag, equipment: equipment,
-                             activeQuests: [.slipperySituation: 0], completedQuests: [.shellShock],
-                             playerClass: playerClass)
+                             activeQuests: [.slipperySituation: 0], completedQuests: pet != nil ? [.shellShock, .aNoseForTrouble] : [.shellShock],
+                             playerClass: playerClass, pet: pet, attributes: attributes)
     }
 
     var panel: Panel? {
@@ -1406,6 +1664,9 @@ private struct DebugLaunch {
         case "morel": .npc(.elderMorel)
         case "shop": .npc(.chanterelle)
         case "smith": .npc(.shiitake)
+        case "truffle": .npc(.truffle)
+        case "porcini": .npc(.porcini)
+        case "stats": .character
         case "map": .map
         default: nil
         }

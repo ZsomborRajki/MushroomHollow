@@ -27,7 +27,8 @@ extension GameSimulation {
         // Aggressive mobs notice players that wander too close.
         switch brain.state {
         case .idle, .wander:
-            if let prey = findPrey(for: mob, brain: brain, radius: stats.aggroRadius, reachesFlyers: brain.boss != nil) {
+            if brain.aggressive || brain.boss != nil,
+               let prey = findPrey(for: mob, brain: brain, radius: stats.aggroRadius, reachesFlyers: brain.boss != nil) {
                 mob.combat.target = prey
                 mob.combat.engaged = true
                 brain.state = .engaged
