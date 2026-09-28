@@ -22,9 +22,55 @@ enum ActorModels {
         return model
     }
 
-    /// Visible gear layered onto the player model.
-    static func makeGear(_ gear: [ItemID]) -> Entity {
+    /// A dandelion seed parachute that the player hangs from while flying.
+    static func makeGlider() -> Entity {
         let e = Entity()
+        let fluff = Materials.matte(UIColor(white: 0.97, alpha: 1), roughness: 1)
+        let stalk = Materials.matte(Palette.stem, roughness: 0.8)
+        e.addCylinder(stalk, at: [0, 2.3, 0], radius: 0.025, height: 1.2)
+        e.addSphere(Materials.matte(Palette.capBrown), at: [0, 1.72, 0], radius: 0.07)
+        for i in 0..<14 {
+            let yaw = Float(i) / 14 * 2 * .pi
+            let tilt = simd_quatf(angle: yaw, axis: [0, 1, 0]) * simd_quatf(angle: 1.05, axis: [1, 0, 0])
+            let tip = tilt.act([0, 0.75, 0])
+            e.addCylinder(fluff, at: [0, 2.9, 0] + tip / 2, radius: 0.012, height: 0.75, rotation: tilt)
+            e.addSphere(fluff, at: [0, 2.9, 0] + tip, radius: 0.1, squash: [1, 0.6, 1])
+        }
+        e.addSphere(fluff, at: [0, 2.9, 0], radius: 0.12)
+        return e
+    }
+
+    /// Visible gear layered onto the player model, plus a class emblem.
+    static func makeGear(_ gear: [ItemID], playerClass: PlayerClass?) -> Entity {
+        let e = Entity()
+        switch playerClass {
+        case .guardian:
+            // Round shield on the back.
+            e.addCylinder(Materials.glossy(Palette.bark), at: [0, 0.8, -0.3], radius: 0.3, height: 0.06,
+                          rotation: simd_quatf(angle: .pi / 2, axis: [1, 0, 0]))
+            e.addSphere(Materials.glossy(Palette.shelfFungus), at: [0, 0.8, -0.34], radius: 0.08)
+        case .thornshot:
+            // Quiver of thorns.
+            e.addCylinder(Materials.matte(Palette.door), at: [0.12, 0.85, -0.3], radius: 0.08, height: 0.5,
+                          rotation: simd_quatf(angle: 0.35, axis: [0, 0, 1]))
+            for i in 0..<3 {
+                e.addPart(Meshes.cone, Materials.matte(Palette.leaf), at: [0.2 + Float(i) * 0.04, 1.18, -0.3],
+                          scale: [0.03, 0.2, 0.03], rotation: simd_quatf(angle: 0.35, axis: [0, 0, 1]))
+            }
+        case .sporecaster:
+            // A floating spore orb over the shoulder.
+            e.addSphere(Materials.glow(UIColor(red: 0.75, green: 0.45, blue: 1, alpha: 1)), at: [0.45, 1.55, -0.1], radius: 0.12)
+            e.addSphere(Materials.glow(Palette.sporeGlow), at: [0.45, 1.55, -0.1], radius: 0.06)
+        case .dewkeeper:
+            // A halo of dew.
+            let dew = Materials.glow(UIColor(red: 0.55, green: 0.9, blue: 1, alpha: 1))
+            for i in 0..<8 {
+                let a = Float(i) / 8 * 2 * .pi
+                e.addSphere(dew, at: [sin(a) * 0.32, 1.85, cos(a) * 0.32], radius: 0.05)
+            }
+        case nil:
+            break
+        }
         for item in gear {
             switch item {
             case .twigSword, .thornRapier, .beetleBlade:

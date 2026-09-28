@@ -36,7 +36,8 @@ extension GameSimulation {
     }
 
     func isInSlime(_ entity: WorldEntity) -> Bool {
-        hazards.contains { $0.kind == .slime && $0.position.distance(to: entity.position.xz) < $0.radius + entity.radius * 0.5 }
+        entity.position.y < 0.5
+            && hazards.contains { $0.kind == .slime && $0.position.distance(to: entity.position.xz) < $0.radius + entity.radius * 0.5 }
     }
 
     mutating func stepHazards() {
@@ -48,6 +49,7 @@ extension GameSimulation {
             guard hazard.damagePerSecond > 0, hazard.ticksLeft % Self.tickRate == 0 else { continue }
             for id in order {
                 guard var target = entities[id], target.kind == .player, target.stats.isAlive,
+                      target.position.y < 1.5,
                       hazard.position.distance(to: target.position.xz) < hazard.radius + target.radius
                 else { continue }
                 let amount = max(1, hazard.damagePerSecond - target.stats.defense / 3)

@@ -20,6 +20,13 @@ public enum PlayerCommand: Codable, Sendable, Equatable {
     case sell(ItemID, count: Int, to: NPCID)
     case acceptQuest(QuestID)
     case completeQuest(QuestID)
+    /// First job change at level 15, at Elder Morel.
+    case chooseClass(PlayerClass)
+
+    // Flight (needs a Dandelion Seed)
+    case toggleFlight
+    /// While flying: -1 (descend) ... 1 (climb).
+    case climb(Float)
 }
 
 public enum ActionFailure: String, Codable, Sendable {
@@ -58,6 +65,8 @@ public enum WorldEvent: Codable, Sendable, Equatable {
     case questProgress(player: EntityID, quest: QuestID, progress: Int, goal: Int)
     case questCompleted(player: EntityID, quest: QuestID)
     case actionFailed(player: EntityID, reason: ActionFailure)
+    case classChosen(player: EntityID, playerClass: PlayerClass)
+    case flightChanged(player: EntityID, isFlying: Bool)
 }
 
 /// What a client needs to render one entity.
@@ -75,8 +84,19 @@ public struct EntitySnapshot: Codable, Sendable, Equatable, Identifiable {
     public let target: EntityID?
     /// Visible gear (players only), in `EquipSlot` order.
     public let gear: [ItemID]
+    public let playerClass: PlayerClass?
+    public let isFlying: Bool
 
     public var isAlive: Bool { hp > 0 }
+}
+
+public struct BuffStatus: Codable, Sendable, Equatable, Identifiable {
+    public let skill: SkillID
+    /// Seconds.
+    public let remaining: Float
+    public let total: Float
+
+    public var id: SkillID { skill }
 }
 
 public struct SkillStatus: Codable, Sendable, Equatable, Identifiable {
@@ -106,6 +126,12 @@ public struct PlayerStatus: Codable, Sendable, Equatable {
     /// Seconds until potions can be used again.
     public let itemCooldown: Float
     public let isSlowed: Bool
+    public let playerClass: PlayerClass?
+    public let buffs: [BuffStatus]
+    public let canFly: Bool
+    public let isFlying: Bool
+    /// Meters above the ground.
+    public let altitude: Float
 }
 
 /// The world as seen by one viewer at the end of one simulation tick.
@@ -114,8 +140,10 @@ public struct WorldSnapshot: Codable, Sendable, Equatable {
     public let entities: [EntitySnapshot]
     public let hazards: [HazardSnapshot]
     public let viewer: PlayerStatus?
+    /// 0 = midnight, 0.25 = dawn, 0.5 = noon, 0.75 = dusk.
+    public let timeOfDay: Float
 
-    public static let empty = WorldSnapshot(tick: 0, entities: [], hazards: [], viewer: nil)
+    public static let empty = WorldSnapshot(tick: 0, entities: [], hazards: [], viewer: nil, timeOfDay: 0.4)
 
     public func entity(_ id: EntityID) -> EntitySnapshot? {
         entities.first { $0.id == id }

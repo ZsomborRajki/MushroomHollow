@@ -30,7 +30,7 @@ extension NPCID {
             NPCDefinition(
                 id: self, name: "Chanterelle", title: "Trader",
                 greeting: "Potions, blades, boots! Everything a sprout needs. Selling shells? I'm buying.",
-                shopStock: [.dewPotion, .nectarVial, .twigSword, .mossBoots, .acornCap, .leafTunic, .thornRapier, .barkMail])
+                shopStock: [.dewPotion, .nectarVial, .twigSword, .mossBoots, .acornCap, .leafTunic, .thornRapier, .barkMail, .dandelionSeed])
         }
     }
 }

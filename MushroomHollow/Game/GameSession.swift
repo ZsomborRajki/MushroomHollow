@@ -76,6 +76,7 @@ struct PanelRow: Identifiable, Equatable {
         case sell(ItemID)
         case accept(QuestID)
         case turnIn(QuestID)
+        case chooseClass(PlayerClass)
         case none
     }
 
@@ -115,12 +116,14 @@ final class GameSession {
     private(set) var panel: Panel?
     private(set) var selection = 0
     private(set) var shopTab = ShopTab.buy
+    private(set) var timeOfDay: Float = 0.4
     private(set) var debugText = ""
 
     var isGamepadConnected: Bool { glyphs != nil }
 
     @ObservationIgnored let host: LocalWorldHost
     @ObservationIgnored let input = InputHub()
+    @ObservationIgnored private let rumble = Rumble()
     @ObservationIgnored let renderer: WorldRenderer
     @ObservationIgnored private let store: SaveStore?
     @ObservationIgnored private var camera = OrbitCamera()
@@ -144,6 +147,7 @@ final class GameSession {
     /// `-autofight` launch argument: start in the snail glade and fight automatically.
     @ObservationIgnored private let autoFight = ProcessInfo.processInfo.arguments.contains("-autofight")
     @ObservationIgnored private var autoFightClock: Double = 0
+    @ObservationIgnored private var debugClimbUntil: Double?
     #endif
 
     init() {
@@ -161,7 +165,11 @@ final class GameSession {
         let profile = store?.load() ?? .newCharacter
         #endif
 
+        #if DEBUG
+        host = LocalWorldHost(profile: profile, startTimeOfDay: debug.timeOfDay ?? 0.32)
+        #else
         host = LocalWorldHost(profile: profile)
+        #endif
         renderer = WorldRenderer(map: host.map)
         // Start behind the player, looking at the giant trunk.
         if let player = host.currentSnapshot.entity(host.localPlayerID) {
@@ -173,13 +181,25 @@ final class GameSession {
         }
         panel = debug.panel
         if panel == .inventory { selection = Self.firstBagCell }
+        if debug.arguments.contains("-fly") {
+            host.send(.toggleFlight)
+            input.touchClimb = 1
+            debugClimbUntil = 2.5
+        }
         #endif
     }
 
     func attach(to content: inout RealityViewCameraContent) {
         content.camera = .virtual
         content.add(renderer.root)
+        content.audioListener = renderer.camera
+        #if !targetEnvironment(simulator)
+        // Custom post-processing traps in the Simulator; the grade and fog run on device only.
+        content.renderingEffects.customPostProcessing = .effect(ColorGradeEffect(settings: renderer.atmosphere.grade))
+        #endif
         projector = content
+        let sounds = renderer.sounds
+        Task { await sounds.load() }
         updateSubscription = content.subscribe(to: SceneEvents.Update.self) { [weak self] event in
             self?.frame(deltaTime: event.deltaTime)
         }
@@ -195,6 +215,7 @@ final class GameSession {
     // MARK: - Input from the SwiftUI overlay
 
     func setTouchMove(_ stick: SIMD2<Float>) { input.touchMove = stick }
+    func setTouchClimb(_ amount: Float) { input.touchClimb = amount }
     func touchLook(_ translation: CGSize) { input.addTouchLook(translation: translation) }
     func zoom(by meters: Float) { input.addZoom(meters) }
     func perform(_ action: InputAction) { input.enqueue(action) }
@@ -216,6 +237,7 @@ final class GameSession {
             activateSelection()
         } else {
             selection = index
+            renderer.sounds.playInterface(.uiMove)
         }
     }
 
@@ -225,8 +247,16 @@ final class GameSession {
     }
 
     func closePanel() {
+        if panel != nil { renderer.sounds.playInterface(.uiMove) }
         panel = nil
         selection = 0
+    }
+
+    private func openPanel(_ newPanel: Panel) {
+        panel = newPanel
+        selection = newPanel == .inventory ? Self.firstBagCell : 0
+        shopTab = .buy
+        renderer.sounds.playInterface(.uiConfirm)
     }
 
     // MARK: - Frame
@@ -237,11 +267,17 @@ final class GameSession {
 
         #if DEBUG
         if autoFight { driveAutoFight(deltaTime: deltaTime) }
+        if let until = debugClimbUntil, elapsed > until {
+            input.touchClimb = 0
+            debugClimbUntil = nil
+        }
         #endif
-        let frameInput = input.poll(deltaTime: dt, menuOpen: panel != nil)
+        let flying = host.currentSnapshot.viewer?.isFlying ?? false
+        let frameInput = input.poll(deltaTime: dt, menuOpen: panel != nil, flying: flying)
         camera.apply(look: frameInput.look, zoom: frameInput.zoom)
         for action in frameInput.actions { handle(action) }
         host.send(.move(camera.worldDirection(forStick: frameInput.move)))
+        if flying { host.send(.climb(frameInput.climb)) }
 
         host.advance(by: deltaTime)
         renderer.render(host: host, time: elapsed)
@@ -263,7 +299,7 @@ final class GameSession {
         guard autoFightClock > 0.5, let me = host.currentSnapshot.viewer else { return }
         autoFightClock = 0
         if !me.isEngaged || !me.stats.isAlive { input.enqueue(.primary) }
-        if let ready = SkillID.barOrder.firstIndex(where: { skill in me.skills.first { $0.id == skill }?.isReady == true }) {
+        if let ready = me.skills.firstIndex(where: \.isReady) {
             input.enqueue(.skill(ready))
         }
         if me.stats.hp * 3 < me.stats.maxHP { input.enqueue(.quickItem(0)) }
@@ -282,9 +318,7 @@ final class GameSession {
             if !me.stats.isAlive {
                 host.send(.respawn)
             } else if let npc = nearbyNPC, !fighting {
-                panel = .npc(npc)
-                selection = 0
-                shopTab = .buy
+                openPanel(.npc(npc))
             } else if let target = me.target, snapshot.entity(target)?.isAlive == true {
                 host.send(.target(target, engage: true))
             } else if let nearest = snapshot.nearestHostile(to: myPosition) {
@@ -300,8 +334,8 @@ final class GameSession {
             host.send(.target(nil, engage: false))
 
         case let .skill(index):
-            guard SkillID.barOrder.indices.contains(index) else { return }
-            let skill = SkillID.barOrder[index]
+            guard me.skills.indices.contains(index) else { return }
+            let skill = me.skills[index].id
             // Flyff-friendly: a targeted skill with nothing selected picks the nearest mob.
             if skill.definition.needsTarget, me.target == nil, let nearest = snapshot.nearestHostile(to: myPosition) {
                 host.send(.target(nearest, engage: false))
@@ -312,9 +346,7 @@ final class GameSession {
             guard id != me.id, let entity = snapshot.entity(id) else { return }
             if case let .npc(npc) = entity.kind {
                 if entity.position.xz.distance(to: myPosition.xz) <= NPCID.interactionRange {
-                    panel = .npc(npc)
-                    selection = 0
-                    shopTab = .buy
+                    openPanel(.npc(npc))
                 } else {
                     showToast("Walk closer to talk to \(npc.definition.name)")
                 }
@@ -326,12 +358,14 @@ final class GameSession {
             if panel == .inventory {
                 closePanel()
             } else {
-                panel = .inventory
-                selection = Self.firstBagCell
+                openPanel(.inventory)
             }
 
         case let .quickItem(index):
             host.send(.useItem(index == 0 ? .dewPotion : .nectarVial))
+
+        case .toggleFlight:
+            host.send(.toggleFlight)
 
         case let .menu(input):
             handleMenu(input)
@@ -351,7 +385,9 @@ final class GameSession {
                 setShopTab(shopTab == .buy ? .sell : .buy)
             }
         case .up, .down, .left, .right:
+            let before = selection
             moveSelection(input)
+            if selection != before { renderer.sounds.playInterface(.uiMove) }
         }
     }
 
@@ -393,6 +429,9 @@ final class GameSession {
             case .consumable: host.send(.useItem(item))
             case .equipment: host.send(.equip(item))
             case .material: showToast("Sell materials to Chanterelle")
+            case .glider:
+                closePanel()
+                host.send(.toggleFlight)
             }
         case let .npc(npc):
             guard npcRows.indices.contains(selection) else { return }
@@ -403,6 +442,7 @@ final class GameSession {
             case let .sell(item): host.send(.sell(item, count: 1, to: npc))
             case let .accept(quest): host.send(.acceptQuest(quest))
             case let .turnIn(quest): host.send(.completeQuest(quest))
+            case let .chooseClass(playerClass): host.send(.chooseClass(playerClass))
             case .none: break
             }
         case nil:
@@ -463,7 +503,28 @@ final class GameSession {
             }
         }
         let quests = player.quests.sorted { priority($0.state) < priority($1.state) }
-        let rows: [PanelRow] = quests.compactMap { status in
+        var classRows: [PanelRow] = []
+        if npc == .elderMorel, player.playerClass == nil {
+            if player.stats.level >= PlayerClass.requiredLevel {
+                classRows = PlayerClass.allCases.map { playerClass in
+                    let definition = playerClass.definition
+                    let skills = definition.skills.map(\.definition.name).joined(separator: ", ")
+                    return PanelRow(
+                        id: "class-\(playerClass.rawValue)", symbol: playerClass.symbol, tint: playerClass.tint,
+                        title: "Become a \(definition.name)", subtitle: definition.role, trailing: "Choose",
+                        detail: "\(definition.description)\n\nNew skills: \(skills)\n\nThis choice is permanent.",
+                        isEnabled: true, action: .chooseClass(playerClass))
+                }
+            } else {
+                classRows = [PanelRow(
+                    id: "class-locked", symbol: "signpost.right.and.left.fill", tint: .gray,
+                    title: "Choose your path", subtitle: "Guard, Thornshot, Sporecaster, or Dewkeeper",
+                    trailing: "Lv \(PlayerClass.requiredLevel)",
+                    detail: "Come back at level \(PlayerClass.requiredLevel) and Elder Morel will help you choose a calling.",
+                    isEnabled: false, action: .none)]
+            }
+        }
+        let rows: [PanelRow] = classRows + quests.compactMap { status in
             guard status.id.definition.giver == npc else { return nil }
             let quest = status.id.definition
             let detail = "\(quest.story)\n\n\(quest.objective.summary)\nReward: \(quest.rewardLine)"
@@ -502,6 +563,17 @@ final class GameSession {
         switch event {
         case let .damage(source, target, amount, isCritical, skill):
             renderer.playAttack(source: source, target: target, time: elapsed)
+            let ranged = renderer.playerClass(of: source)?.definition.isRanged == true && skill == nil
+            if ranged, let from = renderer.headPosition(of: source), let to = renderer.headPosition(of: target) {
+                let color = renderer.playerClass(of: source) == .thornshot ? Palette.leaf : Palette.sporeGlow
+                renderer.effects.projectile(from: from - [0, 0.6, 0], to: to - [0, 0.4, 0], color: color, time: elapsed)
+                renderer.sounds.play(.shoot, from: renderer.entity(for: source), gain: -6)
+            } else if skill == nil {
+                renderer.sounds.play(.swing, from: renderer.entity(for: source), gain: -8)
+            }
+            renderer.sounds.play(isCritical ? .crit : (target == me ? .hurt : .hit), from: renderer.entity(for: target), gain: -2)
+            if target == me { rumble.play(.light) }
+            if source == me, isCritical { rumble.play(.light) }
             let style: FloatingText.Style = target == me ? .taken : (isCritical ? .critical : .dealt)
             float(isCritical ? "\(amount)!" : "\(amount)", style: style, above: target)
             if let hit = renderer.headPosition(of: target) {
@@ -511,11 +583,13 @@ final class GameSession {
             }
             if target == me { feedback.hitsTaken += 1 }
 
-        case let .heal(target, amount, _):
+        case let .heal(target, amount, skill):
             if amount > 0 { float("+\(amount)", style: .heal, above: target) }
+            if skill == nil { renderer.sounds.play(.heal, from: renderer.entity(for: target), gain: -6) }
 
         case let .manaRestored(target, amount):
             if amount > 0 { float("+\(amount) MP", style: .mana, above: target) }
+            renderer.sounds.play(.heal, from: renderer.entity(for: target), gain: -6)
 
         case let .skillCast(caster, skill, target):
             playSkillEffect(skill, caster: caster, target: target)
@@ -524,27 +598,35 @@ final class GameSession {
             guard caster == me else { return }
             showToast(reason.message(for: skill))
             feedback.failures += 1
+            renderer.sounds.playInterface(.error)
 
         case let .mobAbility(entity, ability):
             switch ability {
             case .hide:
                 float("Hides!", style: .info, above: entity)
             case .charge:
-                if host.currentSnapshot.entity(entity)?.target == me { feedback.danger += 1 }
+                renderer.sounds.play(.windup, from: renderer.entity(for: entity))
+                if host.currentSnapshot.entity(entity)?.target == me {
+                    feedback.danger += 1
+                    rumble.play(.danger)
+                }
             case .split:
+                renderer.sounds.play(.poof, from: renderer.entity(for: entity))
                 if let position = renderer.renderedPosition(of: entity) {
                     renderer.effects.burst(at: position + [0, 0.6, 0], color: Palette.sporeGlow, count: 50,
                                            speed: 2.5, size: 0.08, lifetime: 0.8, spread: 0.6, time: elapsed)
                 }
             case .sporeCloud:
-                break
+                renderer.sounds.play(.hiss, from: renderer.entity(for: entity))
             }
 
         case let .died(entity, killer):
             if entity == me {
                 feedback.fainted += 1
+                rumble.play(.heavy)
                 requestSave()
             } else if let position = renderer.renderedPosition(of: entity) {
+                renderer.sounds.play(.poof, from: renderer.entity(for: entity), gain: -4)
                 renderer.effects.burst(at: position + [0, 0.3, 0], color: UIColor(red: 0.8, green: 0.7, blue: 0.5, alpha: 1),
                                        count: 24, speed: 1.2, size: 0.09, lifetime: 0.9, rise: 0.6, spread: 0.4, time: elapsed)
                 if killer == me { feedback.kills += 1 }
@@ -557,6 +639,8 @@ final class GameSession {
             guard player == me else { return }
             showBanner(Banner(title: "Level Up!", subtitle: "You are now level \(level)"))
             feedback.levelUps += 1
+            renderer.sounds.playInterface(.levelUp, gain: 0)
+            rumble.play(.celebrate)
             requestSave()
             if let position = renderer.renderedPosition(of: player) {
                 let gold = UIColor(red: 1, green: 0.82, blue: 0.3, alpha: 1)
@@ -571,11 +655,13 @@ final class GameSession {
         case let .capsChanged(player, delta):
             guard player == me, delta > 0 else { return }
             addFeed(symbol: "circle.circle.fill", text: "+\(delta) caps", tint: .yellow)
+            renderer.sounds.playInterface(.coin, gain: -8)
 
         case let .itemReceived(player, item, count):
             guard player == me else { return }
             addFeed(symbol: item.symbol, text: count > 1 ? "\(item.definition.name) ×\(count)" : item.definition.name, tint: item.tint)
             feedback.loot += 1
+            renderer.sounds.playInterface(.loot, gain: -6)
             requestSave()
 
         case let .itemUsed(player, _), let .equipmentChanged(player):
@@ -584,6 +670,7 @@ final class GameSession {
         case let .questAccepted(player, quest):
             guard player == me else { return }
             showBanner(Banner(title: "New Quest", subtitle: quest.definition.title))
+            renderer.sounds.playInterface(.uiConfirm)
             requestSave()
 
         case let .questProgress(player, quest, progress, goal):
@@ -595,12 +682,37 @@ final class GameSession {
             guard player == me else { return }
             showBanner(Banner(title: "Quest Complete", subtitle: quest.definition.title))
             feedback.levelUps += 1
+            renderer.sounds.playInterface(.questDone, gain: 0)
+            rumble.play(.celebrate)
             requestSave()
 
         case let .actionFailed(player, reason):
             guard player == me else { return }
             showToast(reason.message)
             feedback.failures += 1
+            renderer.sounds.playInterface(.error)
+
+        case let .classChosen(player, playerClass):
+            guard player == me else { return }
+            closePanel()
+            showBanner(Banner(title: "You are now a \(playerClass.definition.name)", subtitle: playerClass.definition.role))
+            feedback.levelUps += 1
+            renderer.sounds.playInterface(.classChosen, gain: 0)
+            rumble.play(.celebrate)
+            requestSave()
+            if let position = renderer.renderedPosition(of: player) {
+                let color = UIColor(playerClass.tint)
+                renderer.effects.burst(at: position + [0, 0.5, 0], color: color, count: 120, speed: 1.6,
+                                       size: 0.08, lifetime: 1.8, rise: 2, spread: 0.8, time: elapsed)
+                renderer.effects.shockwave(at: position, radius: 4, color: color, duration: 0.9, time: elapsed)
+            }
+
+        case let .flightChanged(player, isFlying):
+            renderer.sounds.play(isFlying ? .takeoff : .land, from: renderer.entity(for: player), gain: -2)
+            if player == me, isFlying, let position = renderer.renderedPosition(of: player) {
+                renderer.effects.burst(at: position + [0, 0.3, 0], color: UIColor(white: 1, alpha: 1), count: 40,
+                                       speed: 1.5, size: 0.05, lifetime: 1, rise: 1, spread: 0.5, time: elapsed)
+            }
         }
     }
 
@@ -608,15 +720,34 @@ final class GameSession {
         guard let casterPosition = renderer.renderedPosition(of: caster) else { return }
         let color = skill.effectColor
         switch skill.definition.effect {
-        case .strike:
+        case .strike, .volley:
+            renderer.sounds.play(.cast, from: renderer.entity(for: caster), gain: -4)
             if let target, let position = renderer.renderedPosition(of: target) {
+                if skill.definition.range > 2, let from = renderer.headPosition(of: caster) {
+                    renderer.effects.projectile(from: from - [0, 0.6, 0], to: position + [0, 0.5, 0], color: color, size: 0.16, time: elapsed)
+                }
                 renderer.effects.shockwave(at: position, radius: 1.4, color: color, duration: 0.3, time: elapsed)
             }
+        case let .blast(radius, _):
+            renderer.sounds.play(.cast, from: renderer.entity(for: caster), gain: -4)
+            if let target, let position = renderer.renderedPosition(of: target) {
+                renderer.sounds.play(.poof, from: renderer.entity(for: target), gain: -2)
+                renderer.effects.shockwave(at: position, radius: radius, color: color, time: elapsed)
+                renderer.effects.burst(at: position + [0, 0.4, 0], color: color, count: 70, speed: 3,
+                                       size: 0.09, lifetime: 0.9, spread: 0.6, time: elapsed)
+            }
+        case .buff:
+            renderer.sounds.play(.buff, from: renderer.entity(for: caster), gain: -4)
+            renderer.effects.shockwave(at: casterPosition, radius: 1.6, color: color, duration: 0.6, time: elapsed)
+            renderer.effects.burst(at: casterPosition + [0, 1, 0], color: color, count: 40, speed: 0.8,
+                                   size: 0.06, lifetime: 1.2, rise: 1.2, spread: 0.6, time: elapsed)
         case let .burst(radius, _):
+            renderer.sounds.play(.cast, from: renderer.entity(for: caster), gain: -4)
             renderer.effects.shockwave(at: casterPosition, radius: radius, color: color, time: elapsed)
             renderer.effects.burst(at: casterPosition + [0, 0.4, 0], color: color, count: 70, speed: 3.5,
                                    size: 0.08, lifetime: 0.8, spread: 0.5, time: elapsed)
         case .heal:
+            renderer.sounds.play(.heal, from: renderer.entity(for: caster), gain: -4)
             renderer.effects.burst(at: casterPosition + [0, 0.3, 0], color: color, count: 50, speed: 0.6,
                                    size: 0.06, lifetime: 1.3, rise: 1.8, spread: 0.7, time: elapsed)
         }
@@ -688,12 +819,23 @@ final class GameSession {
 
         let glyphs = input.glyphs
         if glyphs != self.glyphs { self.glyphs = glyphs }
+        rumble.attach(to: input.controller)
+        renderer.sounds.setAmbience(night: renderer.atmosphere.nightFactor)
+        let time = (host.currentSnapshot.timeOfDay * 96).rounded() / 96 // 15-minute steps
+        if time != timeOfDay { timeOfDay = time }
 
         let snapshot = host.currentSnapshot
         if let me = snapshot.entity(host.localPlayerID) {
             let position = me.position.xz
             let zone = host.map.zone(at: position)
-            if zone?.name != self.zone?.name { self.zone = zone }
+            if zone?.name != self.zone?.name {
+                // Announce arrivals, MMO style (not on the first frame).
+                if self.zone != nil, let zone {
+                    let subtitle = zone.levels.map { "Level \($0.lowerBound)–\($0.upperBound)" } ?? "A safe place to rest"
+                    showBanner(Banner(title: zone.name, subtitle: subtitle))
+                }
+                self.zone = zone
+            }
 
             let nearby = me.isAlive ? host.map.npcs
                 .filter { $0.position.distance(to: position) <= NPCID.interactionRange }
@@ -731,12 +873,15 @@ final class GameSession {
 #if DEBUG
 /// Debug-only launch arguments for testing and screenshots:
 /// `-autofight`, `-demo` (geared level 8 character), `-spawn village|glade|maze|barkfall|fen`,
-/// `-panel bag|morel|shop`, `-resetSave`. Anything but `-resetSave` uses a throwaway save.
+/// `-panel bag|morel|shop`, `-time 0...1` (0.5 = noon), `-level N`, `-class guardian|thornshot|sporecaster|dewkeeper`,
+/// `-resetSave`. Anything but `-resetSave` uses a throwaway save.
 private struct DebugLaunch {
     let arguments = ProcessInfo.processInfo.arguments
 
     var resetSave: Bool { arguments.contains("-resetSave") }
-    var isThrowaway: Bool { ["-autofight", "-demo", "-spawn", "-panel"].contains { arguments.contains($0) } }
+    var isThrowaway: Bool { ["-autofight", "-demo", "-spawn", "-panel", "-time", "-level", "-class", "-fly"].contains { arguments.contains($0) } }
+
+    var timeOfDay: Float? { value(after: "-time").flatMap(Float.init) }
 
     func value(after flag: String) -> String? {
         guard let index = arguments.firstIndex(of: flag), arguments.indices.contains(index + 1) else { return nil }
@@ -744,8 +889,11 @@ private struct DebugLaunch {
     }
 
     var profile: PlayerProfile? {
-        guard arguments.contains("-demo") else { return nil }
+        let playerClass = value(after: "-class").flatMap(PlayerClass.init(rawValue:))
+        let level = value(after: "-level").flatMap(Int.init) ?? (playerClass != nil ? 18 : 10)
+        guard arguments.contains("-demo") || playerClass != nil || arguments.contains("-level") || arguments.contains("-fly") else { return nil }
         var bag = Inventory()
+        bag.add(.dandelionSeed, count: 1)
         bag.add(.dewPotion, count: 8)
         bag.add(.nectarVial, count: 4)
         bag.add(.snailShell, count: 12)
@@ -753,9 +901,10 @@ private struct DebugLaunch {
         bag.add(.beetleHorn, count: 2)
         bag.add(.thornRapier, count: 1)
         bag.add(.barkMail, count: 1)
-        return PlayerProfile(level: 8, caps: 420, inventory: bag,
+        return PlayerProfile(level: level, caps: 420, inventory: bag,
                              equipment: [.weapon: .twigSword, .hat: .acornCap, .body: .leafTunic, .boots: .mossBoots],
-                             activeQuests: [.slipperySituation: 0], completedQuests: [.shellShock])
+                             activeQuests: [.slipperySituation: 0], completedQuests: [.shellShock],
+                             playerClass: playerClass)
     }
 
     var panel: Panel? {

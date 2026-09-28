@@ -34,6 +34,8 @@ public enum ItemID: String, Codable, Sendable, CaseIterable {
     case leafTunic, barkMail
     // Boots
     case mossBoots
+    // Key items
+    case dandelionSeed
 }
 
 public struct ItemDefinition: Sendable {
@@ -41,6 +43,8 @@ public struct ItemDefinition: Sendable {
         case consumable(ConsumableEffect)
         case material
         case equipment(EquipSlot, StatBonus)
+        /// Owning one lets you fly.
+        case glider
     }
 
     public enum ConsumableEffect: Sendable {
@@ -108,6 +112,9 @@ extension ItemID {
         case .mossBoots:
             item("Moss Boots", "Soft, quiet, a little damp.", .equipment(.boots, StatBonus(defense: 1, maxHP: 5, maxMP: 10)),
                  level: 1, buy: 35, sell: 8)
+        case .dandelionSeed:
+            item("Dandelion Seed", "Hold on tight and let the breeze do the rest. Lets you fly.", .glider,
+                 level: 10, buy: 300, sell: 75)
         }
     }
 

@@ -123,11 +123,16 @@ public struct WorldMap: Codable, Sendable {
         self.colliders = colliders
     }
 
+    /// Roots, houses, and NPCs are shorter than this; above it only the trunk is in the way.
+    public static let obstacleHeight: Float = 6
+
     /// Pushes a circle out of every collider and back inside the world boundary.
-    public func resolve(_ point: Vec2, radius: Float) -> Vec2 {
+    /// Above `obstacleHeight` only the trunk (always the first collider) blocks.
+    public func resolve(_ point: Vec2, radius: Float, altitude: Float = 0) -> Vec2 {
         var p = point
+        let active = altitude > Self.obstacleHeight ? colliders.prefix(1) : colliders[...]
         for _ in 0..<2 {
-            for collider in colliders {
+            for collider in active {
                 if let push = collider.separation(for: p, radius: radius) {
                     p += push
                 }

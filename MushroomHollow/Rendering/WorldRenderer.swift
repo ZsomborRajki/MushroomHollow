@@ -19,6 +19,8 @@ final class WorldRenderer {
     let root = Entity()
     let camera = PerspectiveCamera()
     let effects = EffectsPlayer()
+    let sounds = SoundBank()
+    let atmosphere: Atmosphere
 
     private let actorsRoot = Entity()
     private let hazardsRoot = Entity()
@@ -32,6 +34,7 @@ final class WorldRenderer {
     private var hazards: [UInt32: Entity] = [:]
     private var markers: [NPCID: (kind: QuestMarker?, entity: Entity)] = [:]
     private var time: Double = 0
+    private var timeOfDay: Float = 0.4
 
     /// Per-entity presentation state. Animation timestamps are in renderer time.
     private final class ActorView {
@@ -39,7 +42,9 @@ final class WorldRenderer {
         let model: Entity
         let kind: EntityKind
         var gear: [ItemID] = []
+        var playerClass: PlayerClass?
         var gearEntity: Entity?
+        var glider: Entity?
         var telegraph: Entity?
         var lungeStart: Double?
         var hitStart: Double?
@@ -68,6 +73,10 @@ final class WorldRenderer {
         spores.components.set(Self.makeSporeEmitter())
         root.addChild(spores)
 
+        atmosphere = Atmosphere(map: map, sky: sky)
+        root.addChild(atmosphere.root)
+        root.addChild(sounds.root)
+
         selectedMaterial = Self.translucent(UIColor(red: 1, green: 0.85, blue: 0.3, alpha: 1), opacity: 0.85)
         engagedMaterial = Self.translucent(UIColor(red: 1, green: 0.3, blue: 0.2, alpha: 1), opacity: 0.85)
         selectionRing = ModelEntity(mesh: Meshes.ring, materials: [selectedMaterial])
@@ -88,6 +97,7 @@ final class WorldRenderer {
 
     func render(host: some WorldHost, time: Double) {
         self.time = time
+        timeOfDay = host.currentSnapshot.timeOfDay
         let alpha = host.interpolationAlpha
         let previous = Dictionary(uniqueKeysWithValues: host.previousSnapshot.entities.map { ($0.id, $0) })
         var seen = Set<EntityID>()
@@ -110,7 +120,10 @@ final class WorldRenderer {
                 view.deathStart = nil
                 if current.kind.isMob { view.entity.components.set(InputTargetComponent()) }
             }
-            if current.gear != view.gear { updateGear(view, current.gear) }
+            if current.gear != view.gear || current.playerClass != view.playerClass {
+                updateGear(view, current.gear, playerClass: current.playerClass)
+            }
+            if current.kind == .player { updateGlider(view, airborne: current.isFlying || current.position.y > 0.05) }
             animate(view, snapshot: current, time: time)
         }
 
@@ -129,6 +142,16 @@ final class WorldRenderer {
         camera.look(at: target, from: position, relativeTo: nil)
         sky.position = position
         spores.position = [target.x, 0, target.z]
+        atmosphere.update(timeOfDay: timeOfDay, focus: target)
+    }
+
+    /// The scene entity showing a simulation entity (for spatial sounds).
+    func entity(for id: EntityID) -> Entity? {
+        actors[id]?.entity
+    }
+
+    func playerClass(of id: EntityID) -> PlayerClass? {
+        actors[id]?.playerClass
     }
 
     // MARK: - Combat presentation
@@ -221,12 +244,29 @@ final class WorldRenderer {
         return view
     }
 
-    private func updateGear(_ view: ActorView, _ gear: [ItemID]) {
+    private func updateGear(_ view: ActorView, _ gear: [ItemID], playerClass: PlayerClass?) {
         view.gearEntity?.removeFromParent()
-        let entity = ActorModels.makeGear(gear)
+        let entity = ActorModels.makeGear(gear, playerClass: playerClass)
         view.model.addChild(entity)
         view.gearEntity = entity
         view.gear = gear
+        view.playerClass = playerClass
+    }
+
+    private func updateGlider(_ view: ActorView, airborne: Bool) {
+        if airborne, view.glider == nil {
+            let glider = ActorModels.makeGlider()
+            glider.components.set(Self.makePollenTrail())
+            view.entity.addChild(glider)
+            view.glider = glider
+        } else if !airborne, let glider = view.glider {
+            glider.removeFromParent()
+            view.glider = nil
+        }
+        // A gentle pendulum sway under the seed.
+        if let glider = view.glider {
+            glider.orientation = simd_quatf(angle: sin(Float(time) * 1.6) * 0.08, axis: [0, 0, 1])
+        }
     }
 
     private func updateSelection(_ viewer: PlayerStatus?, time: Double) {
@@ -253,6 +293,10 @@ final class WorldRenderer {
         var rotation = simd_quatf(angle: 0, axis: [0, 1, 0])
 
         switch view.kind {
+        case .player where view.glider != nil:
+            // Dangling from the seed: legs swing, body sways with the glider.
+            rotation = simd_quatf(angle: sin(t * 1.6) * 0.08, axis: [0, 0, 1])
+                * simd_quatf(angle: isMoving ? 0.25 : 0.05, axis: [1, 0, 0])
         case .player:
             offset.y = isMoving ? abs(sin(t * 11)) * 0.07 : sin(t * 2 + seed) * 0.01
             rotation = simd_quatf(angle: isMoving ? 0.12 : 0, axis: [1, 0, 0])
@@ -391,6 +435,25 @@ final class WorldRenderer {
         emitter.mainEmitter.color = .constant(.random(
             a: UIColor(red: 0.7, green: 0.3, blue: 0.9, alpha: 1),
             b: UIColor(red: 0.55, green: 0.9, blue: 0.4, alpha: 1)))
+        return emitter
+    }
+
+    /// Pollen drifting off the dandelion seed while flying.
+    private static func makePollenTrail() -> ParticleEmitterComponent {
+        var emitter = ParticleEmitterComponent()
+        emitter.emitterShape = .sphere
+        emitter.emitterShapeSize = [0.6, 0.3, 0.6]
+        emitter.fieldSimulationSpace = .global
+        emitter.speed = 0.1
+        emitter.mainEmitter.birthRate = 25
+        emitter.mainEmitter.lifeSpan = 2
+        emitter.mainEmitter.size = 0.035
+        emitter.mainEmitter.acceleration = [0, -0.3, 0]
+        emitter.mainEmitter.noiseStrength = 0.3
+        emitter.mainEmitter.opacityCurve = .gradualFadeInOut
+        emitter.mainEmitter.blendMode = .additive
+        emitter.mainEmitter.isLightingEnabled = false
+        emitter.mainEmitter.color = .constant(.single(UIColor(red: 1, green: 0.97, blue: 0.8, alpha: 1)))
         return emitter
     }
 

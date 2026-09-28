@@ -72,6 +72,17 @@ final class EffectsPlayer {
         }
     }
 
+    /// A glowing bolt flying from `from` to `to` (ranged attacks and spells).
+    func projectile(from: SIMD3<Float>, to: SIMD3<Float>, color: UIColor, size: Float = 0.1, time: Double) {
+        let bolt = ModelEntity(mesh: Meshes.sphere, materials: [UnlitMaterial(color: color)])
+        bolt.scale = SIMD3(repeating: size)
+        bolt.components.set(DynamicLightShadowComponent(castsShadow: false))
+        add(bolt, time: time, duration: 0.18) { entity, t in
+            // A slight arc, like a thrown thorn.
+            entity.position = from + (to - from) * t + [0, sin(t * .pi) * 0.4, 0]
+        }
+    }
+
     func update(time: Double) {
         transients.removeAll { transient in
             let t = Float((time - transient.start) / transient.duration)

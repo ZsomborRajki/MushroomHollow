@@ -74,7 +74,7 @@ extension GameSimulation {
             var hitSomeone = false
             for id in order {
                 guard let player = entities[id], player.kind == .player, player.stats.isAlive,
-                      gap(mob, player) < 0.3 else { continue }
+                      player.position.y <= Self.reachableAltitude, gap(mob, player) < 0.3 else { continue }
                 dealDamage(from: &mob, to: id, multiplier: Self.chargeDamageMultiplier, skill: nil)
                 hitSomeone = true
                 break
@@ -116,6 +116,7 @@ extension GameSimulation {
         let stats = kind.stats
         guard let preyID = mob.combat.target,
               let prey = entities[preyID], prey.stats.isAlive,
+              prey.position.y <= Self.reachableAltitude,
               mob.position.xz.distance(to: brain.home) <= brain.leashRadius + Self.leashSlack
         else {
             mob.combat = CombatState()
@@ -167,7 +168,8 @@ extension GameSimulation {
         guard radius > 0 else { return nil }
         var best: (id: EntityID, distance: Float)?
         for id in order {
-            guard let e = entities[id], e.kind == .player, e.stats.isAlive else { continue }
+            guard let e = entities[id], e.kind == .player, e.stats.isAlive,
+                  e.position.y <= Self.reachableAltitude else { continue }
             let distance = gap(mob, e)
             guard distance <= radius,
                   e.position.xz.distance(to: brain.home) <= brain.leashRadius + Self.leashSlack

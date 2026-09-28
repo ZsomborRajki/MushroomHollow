@@ -64,20 +64,23 @@ extension MobKind {
 
 /// Player levelling curve and growth.
 public enum Progression {
-    public static let maxLevel = 15
+    public static let maxLevel = 30
 
     public static func xpToNextLevel(_ level: Int) -> Int {
         Int((40 * pow(Double(level), 1.8)).rounded())
     }
 
-    /// Stats for a player at `level` wearing gear worth `bonus`, fully healed.
-    public static func playerStats(level: Int, bonus: StatBonus = StatBonus()) -> CombatStats {
-        let l = level - 1
-        let maxHP = 90 + 14 * l + bonus.maxHP
-        let maxMP = 40 + 6 * l + bonus.maxMP
+    /// Stats for a player at `level` with `playerClass`, wearing gear worth `bonus`, fully healed.
+    public static func playerStats(level: Int, bonus: StatBonus = StatBonus(), playerClass: PlayerClass? = nil) -> CombatStats {
+        let l = Float(level - 1)
+        let job = playerClass?.definition
+        func scaled(_ base: Float, _ scale: Float?) -> Int { Int((base * (scale ?? 1)).rounded()) }
+        let maxHP = scaled(90 + 14 * l, job?.hpScale) + bonus.maxHP
+        let maxMP = scaled(40 + 6 * l, job?.mpScale) + bonus.maxMP
         return CombatStats(level: level, maxHP: maxHP, hp: maxHP, maxMP: maxMP, mp: maxMP,
-                           attack: 9 + 3 * l + bonus.attack, defense: 2 + l + bonus.defense,
-                           attackInterval: 0.9, reach: 0.9)
+                           attack: scaled(9 + 3 * l, job?.attackScale) + bonus.attack,
+                           defense: scaled(2 + l, job?.defenseScale) + bonus.defense,
+                           attackInterval: 0.9, reach: job?.reach ?? 0.9)
     }
 
     /// Fighting mobs above your level pays more; farming far weaker ones pays little.

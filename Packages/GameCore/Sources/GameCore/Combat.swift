@@ -7,9 +7,10 @@ extension GameSimulation {
         guard var target = entities[targetID], target.stats.isAlive else { return }
 
         // A snail in its shell is very hard to hurt.
-        let defense = target.pose == .hiding ? target.stats.defense * 4 + 6 : target.stats.defense
-        var raw = Float(attacker.stats.attack) * multiplier * random.float(in: 0.85...1.15)
-            - Float(defense) * 0.6
+        var defense = Float(target.pose == .hiding ? target.stats.defense * 4 + 6 : target.stats.defense)
+        defense *= Self.buffMultiplier(target) { if case let .defense(m) = $0 { m } else { nil } }
+        let attack = Float(attacker.stats.attack) * Self.buffMultiplier(attacker) { if case let .attack(m) = $0 { m } else { nil } }
+        var raw = attack * multiplier * random.float(in: 0.85...1.15) - defense * 0.6
         let isCritical = random.unit() < Self.criticalChance
         if isCritical { raw *= Self.criticalMultiplier }
         let amount = max(1, Int(raw.rounded()))
@@ -37,6 +38,11 @@ extension GameSimulation {
         entities[targetID] = target
     }
 
+    /// Product of all active buff multipliers of one kind.
+    static func buffMultiplier(_ entity: WorldEntity, _ pick: (BuffEffect) -> Float?) -> Float {
+        (entity.player?.buffs ?? []).reduce(1) { $0 * (pick($1.effect) ?? 1) }
+    }
+
     /// A mob that gets hit fights back (unless it's already busy with someone).
     func provoke(_ mob: inout WorldEntity, by attacker: EntityID) {
         guard var brain = mob.brain else { return }
@@ -53,6 +59,9 @@ extension GameSimulation {
 
     mutating func kill(_ entity: inout WorldEntity, killer: EntityID?) {
         entity.stats.hp = 0
+        entity.position.y = 0
+        entity.isFlying = false
+        entity.player?.buffs = []
         entity.velocity = .zero
         entity.moveIntent = .zero
         entity.combat = CombatState()
@@ -72,7 +81,8 @@ extension GameSimulation {
 
         while player.stats.level < Progression.maxLevel, data.xp >= Progression.xpToNextLevel(player.stats.level) {
             data.xp -= Progression.xpToNextLevel(player.stats.level)
-            player.stats = Progression.playerStats(level: player.stats.level + 1, bonus: Self.equipmentBonus(data.equipment))
+            player.stats = Progression.playerStats(level: player.stats.level + 1, bonus: Self.equipmentBonus(data.equipment),
+                                                   playerClass: data.playerClass)
             events.append(.levelUp(player: player.id, level: player.stats.level))
         }
         if player.stats.level >= Progression.maxLevel { data.xp = 0 }
@@ -81,7 +91,9 @@ extension GameSimulation {
 
     func castFailure(_ skill: SkillID, by caster: WorldEntity, on targetID: EntityID?) -> SkillFailure? {
         let definition = skill.definition
+        if let required = definition.playerClass, caster.player?.playerClass != required { return .locked }
         if caster.stats.level < definition.requiredLevel { return .locked }
+        if isAirborne(caster) { return .airborne }
         if (caster.player?.cooldowns[skill] ?? 0) > 0 { return .cooldown }
         if caster.stats.mp < definition.manaCost { return .notEnoughMana }
         if definition.needsTarget {
@@ -111,15 +123,30 @@ extension GameSimulation {
             }
 
         case let .burst(radius, multiplier):
-            let center = caster.position.xz
-            let victims = order.filter { id in
-                guard let e = entities[id], e.kind.isMob, e.stats.isAlive else { return false }
-                return e.position.xz.distance(to: center) - e.radius <= radius
-            }
-            for id in victims {
+            for id in mobs(near: caster.position.xz, within: radius) {
                 dealDamage(from: &caster, to: id, multiplier: multiplier, skill: skill)
             }
             caster.combat.lastCombatTick = tick
+
+        case let .blast(radius, multiplier):
+            guard let targetID, let center = entities[targetID]?.position.xz else { break }
+            for id in mobs(near: center, within: radius) {
+                dealDamage(from: &caster, to: id, multiplier: multiplier, skill: skill)
+            }
+
+        case let .volley(multiplier, extraTargets, radius):
+            guard let targetID, let center = entities[targetID]?.position.xz else { break }
+            let others = mobs(near: center, within: radius)
+                .filter { $0 != targetID }
+                .sorted { entities[$0]!.position.xz.distance(to: center) < entities[$1]!.position.xz.distance(to: center) }
+            for id in [targetID] + others.prefix(extraTargets) {
+                dealDamage(from: &caster, to: id, multiplier: multiplier, skill: skill)
+            }
+
+        case let .buff(effect, seconds):
+            let ticks = Self.ticks(seconds)
+            caster.player?.buffs.removeAll { $0.skill == skill }
+            caster.player?.buffs.append(ActiveBuff(skill: skill, effect: effect, totalTicks: ticks, ticksLeft: ticks))
 
         case let .heal(fraction):
             let amount = min(caster.stats.maxHP - caster.stats.hp, Int(Float(caster.stats.maxHP) * fraction))
@@ -144,6 +171,14 @@ extension GameSimulation {
             sporeling.combat.engaged = true
             sporeling.combat.attackTimer = Self.ticks(0.6)
             insert(sporeling)
+        }
+    }
+
+    /// Living mobs whose edge is within `radius` of `center`, in ID order.
+    func mobs(near center: Vec2, within radius: Float) -> [EntityID] {
+        order.filter { id in
+            guard let e = entities[id], e.kind.isMob, e.stats.isAlive else { return false }
+            return e.position.xz.distance(to: center) - e.radius <= radius
         }
     }
 }

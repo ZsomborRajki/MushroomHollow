@@ -1,6 +1,14 @@
 extension GameSimulation {
     static let itemCooldownSeconds: Float = 1.5
 
+    // Flight tuning.
+    public static let flightSpeed: Float = 8
+    public static let climbSpeed: Float = 5
+    public static let glideDescentSpeed: Float = 6
+    public static let maxAltitude: Float = 40
+    /// Above this height, ground mobs can't reach you (and you can't fight them).
+    public static let reachableAltitude: Float = 2.5
+
     mutating func apply(_ command: PlayerCommand, to player: inout WorldEntity) {
         switch command {
         case let .move(direction):
@@ -16,7 +24,7 @@ extension GameSimulation {
             }
             if player.combat.target != id { player.combat.queuedSkill = nil }
             player.combat.target = id
-            player.combat.engaged = engage || (player.combat.engaged && player.combat.target == id)
+            player.combat.engaged = !isAirborne(player) && (engage || (player.combat.engaged && player.combat.target == id))
 
         case let .useSkill(skill):
             guard player.stats.isAlive else { return }
@@ -30,10 +38,12 @@ extension GameSimulation {
             guard !player.stats.isAlive else { return }
             let spawn = map.resolve(map.playerSpawn, radius: player.radius)
             player.position = Vec3(spawn.x, 0, spawn.y)
-            player.stats = Progression.playerStats(level: player.stats.level, bonus: bonus(of: player))
+            player.stats = baseStats(for: player)
             player.combat = CombatState()
             player.moveIntent = .zero
             player.velocity = .zero
+            player.isFlying = false
+            player.player?.buffs = []
             events.append(.respawned(entity: player.id))
 
         case let .useItem(item):
@@ -61,6 +71,15 @@ extension GameSimulation {
 
         case let .completeQuest(quest):
             if let failure = completeQuest(quest, player: &player) { fail(failure, player) }
+
+        case let .chooseClass(playerClass):
+            if let failure = chooseClass(playerClass, player: &player) { fail(failure, player) }
+
+        case .toggleFlight:
+            if let failure = toggleFlight(&player) { fail(failure, player) }
+
+        case let .climb(amount):
+            player.climbIntent = player.isFlying ? max(-1, min(1, amount)) : 0
         }
     }
 
@@ -71,6 +90,11 @@ extension GameSimulation {
         }
         tickTimers(&player)
         regenerate(&player)
+
+        if isAirborne(player) {
+            stepFlight(&player)
+            return
+        }
         let speed = player.moveSpeed * (isInSlime(player) ? Self.slimeSlowFactor : 1)
 
         // Untargeted skills go off immediately, even while moving.
@@ -120,15 +144,80 @@ extension GameSimulation {
         }
     }
 
+    // MARK: - Flight
+
+    func isAirborne(_ entity: WorldEntity) -> Bool {
+        entity.isFlying || entity.position.y > 0
+    }
+
+    /// Flying, or gliding back down after landing was requested. No fighting up here.
+    private func stepFlight(_ player: inout WorldEntity) {
+        let dt = Self.tickDuration
+        let vertical = player.isFlying ? player.climbIntent * Self.climbSpeed : -Self.glideDescentSpeed
+        player.position.y = max(0, min(Self.maxAltitude, player.position.y + vertical * dt))
+        player.combat.engaged = false
+        player.combat.queuedSkill = nil
+
+        let speed = player.isFlying ? Self.flightSpeed : player.moveSpeed
+        if player.moveIntent.length > 0.05 {
+            turn(&player, toward: player.moveIntent, rate: Self.playerTurnRate)
+            move(&player, velocity: player.moveIntent * speed)
+        } else {
+            move(&player, velocity: .zero)
+        }
+        if !player.isFlying, player.position.y == 0 {
+            // Touched down: make sure we're not standing inside a root or a house.
+            player.position.xz = map.resolve(player.position.xz, radius: player.radius)
+        }
+    }
+
+    private mutating func toggleFlight(_ player: inout WorldEntity) -> ActionFailure? {
+        guard player.stats.isAlive, let data = player.player else { return .notUsable }
+        if player.isFlying {
+            player.isFlying = false
+            player.climbIntent = 0
+            events.append(.flightChanged(player: player.id, isFlying: false))
+            return nil
+        }
+        guard data.inventory.count(of: .dandelionSeed) > 0 else { return .missingItem }
+        guard player.stats.level >= ItemID.dandelionSeed.definition.requiredLevel else { return .levelTooLow }
+        player.isFlying = true
+        player.combat.engaged = false
+        player.combat.queuedSkill = nil
+        events.append(.flightChanged(player: player.id, isFlying: true))
+        return nil
+    }
+
+    // MARK: - Class
+
+    private mutating func chooseClass(_ playerClass: PlayerClass, player: inout WorldEntity) -> ActionFailure? {
+        guard var data = player.player else { return .notAvailable }
+        guard data.playerClass == nil else { return .notAvailable }
+        guard player.stats.level >= PlayerClass.requiredLevel else { return .levelTooLow }
+        guard isNear(.elderMorel, player) else { return .tooFar }
+        data.playerClass = playerClass
+        player.player = data
+        refreshStats(&player)
+        player.stats.hp = player.stats.maxHP
+        player.stats.mp = player.stats.maxMP
+        events.append(.classChosen(player: player.id, playerClass: playerClass))
+        return nil
+    }
+
     // MARK: - Stats
 
     func bonus(of player: WorldEntity) -> StatBonus {
         Self.equipmentBonus(player.player?.equipment ?? [:])
     }
 
+    /// Full-health stats for the player's level, class, and gear.
+    func baseStats(for player: WorldEntity) -> CombatStats {
+        Progression.playerStats(level: player.stats.level, bonus: bonus(of: player), playerClass: player.player?.playerClass)
+    }
+
     /// Recomputes stats after a gear change, keeping current HP/MP (clamped).
     func refreshStats(_ player: inout WorldEntity) {
-        var stats = Progression.playerStats(level: player.stats.level, bonus: bonus(of: player))
+        var stats = baseStats(for: player)
         stats.hp = min(player.stats.hp, stats.maxHP)
         stats.mp = min(player.stats.mp, stats.maxMP)
         player.stats = stats
@@ -142,13 +231,24 @@ extension GameSimulation {
         if let itemCooldown = player.player?.itemCooldown, itemCooldown > 0 {
             player.player?.itemCooldown = itemCooldown - 1
         }
+        if let buffs = player.player?.buffs, !buffs.isEmpty {
+            player.player?.buffs = buffs.compactMap { buff in
+                var buff = buff
+                buff.ticksLeft -= 1
+                return buff.ticksLeft > 0 ? buff : nil
+            }
+        }
     }
 
     /// Fast regeneration out of combat, a trickle during it.
     private func regenerate(_ player: inout WorldEntity) {
         guard var data = player.player else { return }
         let outOfCombat = tick - player.combat.lastCombatTick > UInt64(Self.ticks(5)) || player.combat.lastCombatTick == 0
-        let hpPerSecond = Float(player.stats.maxHP) * (outOfCombat ? 0.04 : 0.005)
+        let buffRegen = data.buffs.reduce(Float(0)) { total, buff in
+            if case let .regen(fraction) = buff.effect { return total + fraction }
+            return total
+        }
+        let hpPerSecond = Float(player.stats.maxHP) * ((outOfCombat ? 0.04 : 0.005) + buffRegen)
         let mpPerSecond = Float(player.stats.maxMP) * (outOfCombat ? 0.05 : 0.01)
         data.hpRegen += hpPerSecond * Self.tickDuration
         data.mpRegen += mpPerSecond * Self.tickDuration

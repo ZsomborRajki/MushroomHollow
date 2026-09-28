@@ -29,8 +29,8 @@ public final class LocalWorldHost: WorldHost {
 
     public var map: WorldMap { simulation.map }
 
-    public init(profile: PlayerProfile = .newCharacter, seed: UInt64 = 0x4D55_5348) {
-        var simulation = GameSimulation(seed: seed)
+    public init(profile: PlayerProfile = .newCharacter, seed: UInt64 = 0x4D55_5348, startTimeOfDay: Float = 0.32) {
+        var simulation = GameSimulation(seed: seed, startTimeOfDay: startTimeOfDay)
         localPlayerID = simulation.spawnPlayer(profile: profile)
         self.simulation = simulation
         currentSnapshot = simulation.snapshot(for: localPlayerID)

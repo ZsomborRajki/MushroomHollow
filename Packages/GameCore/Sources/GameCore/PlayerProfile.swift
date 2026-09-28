@@ -11,10 +11,13 @@ public struct PlayerProfile: Codable, Sendable, Equatable {
     public var activeQuests: [QuestID: Int]
     public var completedQuests: Set<QuestID>
     public var position: Vec2?
+    /// Optional so saves from before classes existed still load.
+    public var playerClass: PlayerClass?
 
     public init(level: Int = 1, xp: Int = 0, hp: Int? = nil, mp: Int? = nil, caps: Int = 0,
                 inventory: Inventory = Inventory(), equipment: [EquipSlot: ItemID] = [:],
-                activeQuests: [QuestID: Int] = [:], completedQuests: Set<QuestID> = [], position: Vec2? = nil) {
+                activeQuests: [QuestID: Int] = [:], completedQuests: Set<QuestID> = [], position: Vec2? = nil,
+                playerClass: PlayerClass? = nil) {
         self.level = level
         self.xp = xp
         self.hp = hp
@@ -25,6 +28,7 @@ public struct PlayerProfile: Codable, Sendable, Equatable {
         self.activeQuests = activeQuests
         self.completedQuests = completedQuests
         self.position = position
+        self.playerClass = playerClass
     }
 
     /// A brand-new sprout: a little pocket money and a few potions.
@@ -48,8 +52,9 @@ extension GameSimulation {
         data.equipment = profile.equipment
         data.activeQuests = profile.activeQuests
         data.completedQuests = profile.completedQuests
+        data.playerClass = level >= PlayerClass.requiredLevel ? profile.playerClass : nil
 
-        var stats = Progression.playerStats(level: level, bonus: Self.equipmentBonus(profile.equipment))
+        var stats = Progression.playerStats(level: level, bonus: Self.equipmentBonus(profile.equipment), playerClass: data.playerClass)
         if let hp = profile.hp, hp > 0 { stats.hp = min(hp, stats.maxHP) }
         if let mp = profile.mp { stats.mp = min(max(0, mp), stats.maxMP) }
 
@@ -78,7 +83,7 @@ extension GameSimulation {
             level: e.stats.level, xp: data.xp, hp: e.stats.hp, mp: e.stats.mp, caps: data.caps,
             inventory: data.inventory, equipment: data.equipment,
             activeQuests: data.activeQuests, completedQuests: data.completedQuests,
-            position: e.position.xz)
+            position: e.position.xz, playerClass: data.playerClass)
     }
 
     static func equipmentBonus(_ equipment: [EquipSlot: ItemID]) -> StatBonus {

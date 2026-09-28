@@ -7,50 +7,78 @@ struct ActionBar: View {
     let session: GameSession
 
     /// Layout inside a fixed box, attack button in the bottom-right corner.
-    private static let size = CGSize(width: 300, height: 250)
-    private static let attackCenter = CGPoint(x: 240, y: 190)
-    private static let skillRadius: CGFloat = 106
+    private static let size = CGSize(width: 330, height: 280)
+    private static let attackCenter = CGPoint(x: 270, y: 220)
+
+    /// Base skills on an inner arc, class skills on an outer arc between them.
+    private static func skillPosition(_ index: Int) -> CGPoint {
+        let (radius, degrees): (CGFloat, Double) = index < 3 ? (100, 180 + Double(index) * 45) : (172, 200 + Double(index - 3) * 50)
+        let angle = Angle.degrees(degrees).radians
+        return CGPoint(x: attackCenter.x + cos(angle) * radius, y: attackCenter.y + sin(angle) * radius)
+    }
 
     var body: some View {
-        let skills = session.hud.player?.skills ?? []
+        let player = session.hud.player
         let glyphs = session.glyphs
 
         ZStack {
-            // Skills sit on an arc to the left of and above the attack button.
-            ForEach(Array(SkillID.barOrder.enumerated()), id: \.element) { index, skill in
-                let angle = Angle.degrees(180 + Double(index) * 45)
-                SkillButton(skill: skill, status: skills.first { $0.id == skill }, glyph: glyphs?.skills[index]) {
-                    session.perform(.skill(index))
+            if player?.isFlying == true {
+                ClimbButton(symbol: "arrow.up", glyph: glyphs.map { _ in "rt.rectangle.roundedtop" }) { session.setTouchClimb($0 ? 1 : 0) }
+                    .position(x: Self.attackCenter.x, y: Self.attackCenter.y - 95)
+                ClimbButton(symbol: "arrow.down", glyph: glyphs.map { _ in "lt.rectangle.roundedtop" }) { session.setTouchClimb($0 ? -1 : 0) }
+                    .position(Self.attackCenter)
+            } else {
+                ForEach(Array((player?.skills ?? []).enumerated()), id: \.element.id) { index, status in
+                    SkillButton(skill: status.id, status: status, glyph: glyphs.map { $0.skills[min(index, $0.skills.count - 1)] },
+                                shiftGlyph: index >= 3 ? glyphs?.shift : nil) {
+                        session.perform(.skill(index))
+                    }
+                    .position(Self.skillPosition(index))
                 }
-                .position(
-                    x: Self.attackCenter.x + cos(angle.radians) * Self.skillRadius,
-                    y: Self.attackCenter.y + sin(angle.radians) * Self.skillRadius)
-            }
 
-            RoundButton(symbol: "scope", size: 44, glyph: glyphs?.nextTarget) {
-                session.perform(.cycleTarget(1))
-            }
-            .accessibilityLabel("Next target")
-            .position(x: 102, y: 72)
-
-            ForEach(Array([ItemID.dewPotion, .nectarVial].enumerated()), id: \.element) { index, item in
-                PotionButton(item: item, count: session.hud.player?.inventory.count(of: item) ?? 0,
-                             cooldown: session.hud.player?.itemCooldown ?? 0, glyph: glyphs?.quickItems[index]) {
-                    session.perform(.quickItem(index))
+                RoundButton(symbol: "scope", size: 44, glyph: glyphs?.nextTarget) {
+                    session.perform(.cycleTarget(1))
                 }
-                // Up beside the skill arc, clear of the XP bar.
-                .position(x: index == 0 ? 58 : 32, y: index == 0 ? 150 : 88)
-            }
+                .accessibilityLabel("Next target")
+                .position(x: 135, y: 52)
 
-            RoundButton(symbol: "figure.fencing", size: 88, tint: .red, glyph: glyphs?.primary) {
-                session.perform(.primary)
+                RoundButton(symbol: "figure.fencing", size: 88, tint: .red, glyph: glyphs?.primary) {
+                    session.perform(.primary)
+                }
+                .accessibilityLabel("Attack")
+                .position(Self.attackCenter)
             }
-            .accessibilityLabel("Attack")
-            .position(Self.attackCenter)
         }
         .frame(width: Self.size.width, height: Self.size.height)
         .padding(.trailing, 30)
         .padding(.bottom, 22)
+        .animation(.snappy, value: player?.isFlying)
+    }
+}
+
+/// Hold to climb or descend while flying.
+private struct ClimbButton: View {
+    let symbol: String
+    let glyph: String?
+    let onHold: (Bool) -> Void
+    @State private var isHeld = false
+
+    var body: some View {
+        Image(systemName: symbol)
+            .font(.system(size: 28, weight: .bold))
+            .frame(width: 72, height: 72)
+            .glassEffect(.regular.tint(.cyan.opacity(isHeld ? 0.45 : 0.15)).interactive(), in: .circle)
+            .overlay(alignment: .topTrailing) { GlyphBadge(symbol: glyph) }
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { _ in
+                        if !isHeld { isHeld = true; onHold(true) }
+                    }
+                    .onEnded { _ in
+                        isHeld = false
+                        onHold(false)
+                    }
+            )
     }
 }
 
@@ -58,6 +86,7 @@ private struct SkillButton: View {
     let skill: SkillID
     let status: SkillStatus?
     let glyph: String?
+    var shiftGlyph: String?
     let action: () -> Void
 
     private var cooldownFraction: Double {
@@ -96,7 +125,12 @@ private struct SkillButton: View {
         }
         .buttonStyle(.plain)
         .glassEffect(.regular.interactive(), in: .circle)
-        .overlay(alignment: .topTrailing) { GlyphBadge(symbol: glyph) }
+        .overlay(alignment: .topTrailing) {
+            HStack(spacing: 0) {
+                if let shiftGlyph { GlyphBadge(symbol: shiftGlyph) }
+                GlyphBadge(symbol: glyph)
+            }
+        }
         .overlay(alignment: .bottom) {
             if unlocked {
                 Text("\(skill.definition.manaCost)")
@@ -109,7 +143,7 @@ private struct SkillButton: View {
     }
 }
 
-private struct PotionButton: View {
+struct PotionButton: View {
     let item: ItemID
     let count: Int
     let cooldown: Float

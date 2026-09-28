@@ -17,6 +17,7 @@ extension ItemID {
         case .acornCap, .beetleHelm: "crown.fill"
         case .leafTunic, .barkMail: "tshirt.fill"
         case .mossBoots: "shoeprints.fill"
+        case .dandelionSeed: "wind"
         }
     }
 
@@ -32,6 +33,7 @@ extension ItemID {
         case .thornRapier, .acornCap: .orange
         case .beetleBlade, .beetleHelm: .cyan
         case .barkMail: .brown
+        case .dandelionSeed: .white
         }
     }
 
@@ -42,6 +44,7 @@ extension ItemID {
         case let .consumable(.restoreHP(amount)): return "Restores \(amount) HP"
         case let .consumable(.restoreMP(amount)): return "Restores \(amount) MP"
         case .material: return nil
+        case .glider: return "Lets you fly" 
         case let .equipment(_, bonus):
             var parts: [String] = []
             if bonus.attack > 0 { parts.append("+\(bonus.attack) ATK") }

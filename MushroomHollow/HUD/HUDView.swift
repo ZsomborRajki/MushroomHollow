@@ -9,7 +9,10 @@ struct HUDView: View {
         VStack(spacing: 0) {
             HStack(alignment: .top, spacing: 12) {
                 if let player = session.hud.player {
-                    PlayerFrame(status: player, zone: session.zone)
+                    VStack(alignment: .leading, spacing: 6) {
+                        PlayerFrame(status: player, zone: session.zone, timeOfDay: session.timeOfDay)
+                        BuffRow(buffs: player.buffs)
+                    }
                 }
                 if let target = session.hud.target {
                     TargetFrame(target: target)
@@ -61,6 +64,16 @@ struct HUDView: View {
 private struct PlayerFrame: View {
     let status: PlayerStatus
     let zone: Zone?
+    let timeOfDay: Float
+
+    private var clock: (symbol: String, label: String) {
+        switch timeOfDay {
+        case 0.22..<0.3: ("sunrise.fill", "Dawn")
+        case 0.3..<0.7: ("sun.max.fill", "Day")
+        case 0.7..<0.8: ("sunset.fill", "Dusk")
+        default: ("moon.stars.fill", "Night")
+        }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -68,16 +81,26 @@ private struct PlayerFrame: View {
                 Text("🍄")
                 Text("Sprout")
                     .font(.headline)
+                    .lineLimit(1)
+                    .fixedSize()
                 Text("Lv \(status.stats.level)")
                     .font(.caption.weight(.bold))
                     .padding(.horizontal, 7)
                     .padding(.vertical, 2)
                     .background(.white.opacity(0.18), in: .capsule)
+                if let playerClass = status.playerClass {
+                    Image(systemName: playerClass.symbol)
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(playerClass.tint)
+                        .accessibilityLabel(playerClass.definition.name)
+                }
                 Spacer(minLength: 0)
                 Label("\(status.caps)", systemImage: "circle.circle.fill")
                     .font(.caption.weight(.semibold).monospacedDigit())
                     .foregroundStyle(.yellow)
                     .contentTransition(.numericText())
+                    .lineLimit(1)
+                    .fixedSize()
             }
             StatBar(value: status.stats.hp, max: status.stats.maxHP, color: .red, label: "HP")
             StatBar(value: status.stats.mp, max: status.stats.maxMP, color: .blue, label: "MP")
@@ -89,15 +112,44 @@ private struct PlayerFrame: View {
                         Text("Lv \(levels.lowerBound)–\(levels.upperBound)")
                             .foregroundStyle(.secondary)
                     }
+                    Spacer(minLength: 0)
+                    Label(status.isFlying ? "\(Int(status.altitude)) m" : clock.label,
+                          systemImage: status.isFlying ? "wind" : clock.symbol)
+                        .foregroundStyle(status.isFlying ? .cyan : .secondary)
                 }
                 .font(.caption2.weight(.medium))
                 .foregroundStyle(status.isSlowed ? .yellow : .primary)
             }
         }
-        .frame(width: 220)
+        .frame(width: 240)
         .padding(12)
         .glassEffect(.regular, in: .rect(cornerRadius: 20))
         .animation(.snappy, value: status.caps)
+    }
+}
+
+/// Active buffs with a draining ring.
+private struct BuffRow: View {
+    let buffs: [BuffStatus]
+
+    var body: some View {
+        HStack(spacing: 6) {
+            ForEach(buffs) { buff in
+                ZStack {
+                    Circle().fill(.black.opacity(0.35))
+                    Circle()
+                        .trim(from: 0, to: CGFloat(buff.total > 0 ? buff.remaining / buff.total : 0))
+                        .stroke(buff.skill.tint, lineWidth: 2.5)
+                        .rotationEffect(.degrees(-90))
+                    Image(systemName: buff.skill.symbol)
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundStyle(buff.skill.tint)
+                }
+                .frame(width: 30, height: 30)
+                .accessibilityLabel("\(buff.skill.definition.name), \(Int(buff.remaining)) seconds")
+            }
+        }
+        .animation(.snappy, value: buffs.map(\.id))
     }
 }
 
@@ -155,7 +207,7 @@ private struct QuestTracker: View {
             }
             .padding(10)
             .glassEffect(.regular, in: .rect(cornerRadius: 14))
-            .padding(.trailing, 56) // clear of the bag button
+            .padding(.top, 64) // below the utility buttons
         }
     }
 }

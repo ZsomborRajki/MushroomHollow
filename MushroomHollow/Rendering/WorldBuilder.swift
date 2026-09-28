@@ -19,7 +19,6 @@ enum WorldBuilder {
         addZoneDressing(map, to: world, random: &random)
         addMarketStall(map, to: world)
         if let grass = makeGrass(map, random: &random) { world.addChild(grass) }
-        addLights(map, to: world)
         return world
     }
 
@@ -277,25 +276,4 @@ enum WorldBuilder {
         return grass
     }
 
-    // MARK: - Lighting
-
-    private static func addLights(_ map: WorldMap, to world: Entity) {
-        // Warm late-afternoon sun slanting under the canopy.
-        let sun = DirectionalLight()
-        sun.light.color = UIColor(red: 1.0, green: 0.9, blue: 0.72, alpha: 1)
-        sun.light.intensity = 2600
-        var shadow = DirectionalLightComponent.Shadow(shadowProjection: .automatic(maximumDistance: 45), depthBias: 1.5)
-        shadow.cascades = .automatic
-        sun.shadow = shadow
-        sun.look(at: .zero, from: [45, 60, 70], relativeTo: nil)
-        world.addChild(sun)
-
-        // Lantern glow in the village square.
-        let lantern = PointLight()
-        lantern.light.color = Palette.windowGlow
-        lantern.light.intensity = 12000
-        lantern.light.attenuationRadius = 18
-        lantern.position = [map.villageCenter.x, 4, map.villageCenter.y]
-        world.addChild(lantern)
-    }
 }

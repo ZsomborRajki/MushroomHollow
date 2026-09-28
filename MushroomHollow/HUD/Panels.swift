@@ -163,6 +163,7 @@ private struct ItemDetail: View {
                 case (.some, _): ActionButton(title: "Unequip", glyph: glyph, isEnabled: true, action: action)
                 case (nil, .equipment): ActionButton(title: "Equip", glyph: glyph, isEnabled: true, action: action)
                 case (nil, .consumable): ActionButton(title: "Use", glyph: glyph, isEnabled: true, action: action)
+                case (nil, .glider): ActionButton(title: "Fly", glyph: glyph, isEnabled: true, action: action)
                 case (nil, .material): EmptyView()
                 }
             } else {
@@ -278,6 +279,7 @@ struct NPCPanel: View {
         case .sell: "Sell 1"
         case .accept: "Accept"
         case .turnIn: "Turn in"
+        case .chooseClass: "Choose this path"
         case .none: ""
         }
     }

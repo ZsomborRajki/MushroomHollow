@@ -4,14 +4,19 @@ import UIKit
 
 /// Client-only look of each skill (the sim only knows numbers).
 extension SkillID {
-    /// Order on the skill bar; index matches controller X / Y / B and keys 1 / 2 / 3.
-    static let barOrder: [SkillID] = [.capBash, .sporeBurst, .dewdrop]
-
     var symbol: String {
         switch self {
         case .capBash: "hammer.fill"
         case .sporeBurst: "aqi.medium"
         case .dewdrop: "drop.fill"
+        case .barkSkin: "shield.lefthalf.filled"
+        case .capSlam: "burst.fill"
+        case .thornVolley: "arrow.up.right.and.arrow.down.left"
+        case .pinningShot: "scope"
+        case .sporeNova: "sparkles"
+        case .myceliumSurge: "point.3.filled.connected.trianglepath.dotted"
+        case .morningDew: "sun.horizon.fill"
+        case .rainBlessing: "cloud.rain.fill"
         }
     }
 
@@ -22,6 +27,10 @@ extension SkillID {
         case .capBash: UIColor(red: 1.0, green: 0.55, blue: 0.2, alpha: 1)
         case .sporeBurst: UIColor(red: 0.55, green: 0.95, blue: 0.35, alpha: 1)
         case .dewdrop: UIColor(red: 0.45, green: 0.8, blue: 1.0, alpha: 1)
+        case .barkSkin, .capSlam: UIColor(red: 0.95, green: 0.7, blue: 0.35, alpha: 1)
+        case .thornVolley, .pinningShot: UIColor(red: 0.55, green: 0.9, blue: 0.4, alpha: 1)
+        case .sporeNova, .myceliumSurge: UIColor(red: 0.8, green: 0.5, blue: 1.0, alpha: 1)
+        case .morningDew, .rainBlessing: UIColor(red: 0.5, green: 0.9, blue: 1.0, alpha: 1)
         }
     }
 }
@@ -33,6 +42,7 @@ extension SkillFailure {
         case .cooldown: "\(skill.definition.name) isn't ready"
         case .notEnoughMana: "Not enough MP"
         case .noTarget: "No target"
+        case .airborne: "Land first to fight"
         }
     }
 }
@@ -65,6 +75,26 @@ extension EntityKind {
         case .player: "Sprout"
         case let .mob(kind): kind.displayName
         case let .npc(id): id.definition.name
+        }
+    }
+}
+
+extension PlayerClass {
+    var symbol: String {
+        switch self {
+        case .guardian: "shield.fill"
+        case .thornshot: "arrow.up.forward"
+        case .sporecaster: "sparkles"
+        case .dewkeeper: "leaf.fill"
+        }
+    }
+
+    var tint: Color {
+        switch self {
+        case .guardian: .orange
+        case .thornshot: .green
+        case .sporecaster: .purple
+        case .dewkeeper: .cyan
         }
     }
 }

@@ -22,6 +22,7 @@ enum InputAction: Equatable {
     case toggleInventory
     /// 0 = HP potion, 1 = MP potion.
     case quickItem(Int)
+    case toggleFlight
     case menu(MenuInput)
 }
 
@@ -33,6 +34,8 @@ struct InputFrame {
     var look: SIMD2<Float> = .zero
     /// Camera zoom this frame in meters (positive = further away).
     var zoom: Float = 0
+    /// While flying: -1 (descend) ... 1 (climb).
+    var climb: Float = 0
     var actions: [InputAction] = []
 }
 
@@ -41,7 +44,10 @@ struct InputFrame {
 struct ControllerGlyphs: Equatable {
     var primary = "a.circle"
     var back = "b.circle"
-    var skills = ["x.circle", "y.circle", "b.circle"]
+    /// Base skills on X / Y / B, class skills on RT + X / RT + Y.
+    var skills = ["x.circle", "y.circle", "b.circle", "x.circle", "y.circle"]
+    var shift = "rt.rectangle.roundedtop"
+    var flight = "l.joystick.press.down"
     var previousTarget = "lb.rectangle.roundedbottom"
     var nextTarget = "rb.rectangle.roundedbottom"
     var menu = "line.3.horizontal.circle"
@@ -53,6 +59,7 @@ struct ControllerGlyphs: Equatable {
 final class InputHub {
     // Touch state, written by the SwiftUI overlay.
     var touchMove: SIMD2<Float> = .zero
+    var touchClimb: Float = 0
     private var pendingTouchLook: SIMD2<Float> = .zero
     private var pendingZoom: Float = 0
     private var queuedActions: [InputAction] = []
@@ -69,14 +76,20 @@ final class InputHub {
 
     var isGamepadConnected: Bool { gamepad != nil }
 
+    var controller: GCController? {
+        GCController.current ?? GCController.controllers().first { $0.extendedGamepad != nil }
+    }
+
     var glyphs: ControllerGlyphs? {
         guard let pad = gamepad else { return nil }
         var glyphs = ControllerGlyphs()
         glyphs.primary = pad.buttonA.sfSymbolsName ?? glyphs.primary
         glyphs.back = pad.buttonB.sfSymbolsName ?? glyphs.back
-        glyphs.skills = [pad.buttonX, pad.buttonY, pad.buttonB].enumerated().map { index, button in
+        glyphs.skills = [pad.buttonX, pad.buttonY, pad.buttonB, pad.buttonX, pad.buttonY].enumerated().map { index, button in
             button.sfSymbolsName ?? glyphs.skills[index]
         }
+        glyphs.shift = pad.rightTrigger.sfSymbolsName ?? glyphs.shift
+        glyphs.flight = pad.leftThumbstickButton?.sfSymbolsName ?? glyphs.flight
         glyphs.previousTarget = pad.leftShoulder.sfSymbolsName ?? glyphs.previousTarget
         glyphs.nextTarget = pad.rightShoulder.sfSymbolsName ?? glyphs.nextTarget
         glyphs.menu = pad.buttonMenu.sfSymbolsName ?? glyphs.menu
@@ -96,8 +109,9 @@ final class InputHub {
         queuedActions.append(action)
     }
 
-    /// `menuOpen` switches buttons from gameplay meanings to panel navigation.
-    func poll(deltaTime: Float, menuOpen: Bool) -> InputFrame {
+    /// `menuOpen` switches buttons from gameplay meanings to panel navigation;
+    /// `flying` turns the triggers into climb/descend.
+    func poll(deltaTime: Float, menuOpen: Bool, flying: Bool) -> InputFrame {
         var frame = InputFrame()
         var actions = queuedActions
         queuedActions.removeAll()
@@ -116,9 +130,10 @@ final class InputHub {
             frame.move = touchMove
             frame.look = pendingTouchLook
             frame.zoom = pendingZoom
+            frame.climb = touchClimb
             pendingTouchLook = .zero
             pendingZoom = 0
-            pollGameplay(&frame, deltaTime: deltaTime, button)
+            pollGameplay(&frame, deltaTime: deltaTime, flying: flying, button)
         }
 
         held = pressedNow
@@ -127,7 +142,7 @@ final class InputHub {
         return frame
     }
 
-    private func pollGameplay(_ frame: inout InputFrame, deltaTime: Float, _ button: (String, Bool, InputAction) -> Void) {
+    private func pollGameplay(_ frame: inout InputFrame, deltaTime: Float, flying: Bool, _ button: (String, Bool, InputAction) -> Void) {
         if let pad = gamepad {
             let left = Self.deadZoned(SIMD2(pad.leftThumbstick.xAxis.value, pad.leftThumbstick.yAxis.value))
             let right = Self.deadZoned(SIMD2(pad.rightThumbstick.xAxis.value, pad.rightThumbstick.yAxis.value))
@@ -136,13 +151,17 @@ final class InputHub {
             if pad.dpad.up.isPressed { frame.zoom -= 8 * deltaTime }
             if pad.dpad.down.isPressed { frame.zoom += 8 * deltaTime }
 
+            // RT is a shift for class skills on the ground, and climb in the air.
+            let shifted = !flying && pad.rightTrigger.isPressed
+            if flying { frame.climb += pad.rightTrigger.value - pad.leftTrigger.value }
             button("pad.a", pad.buttonA.isPressed, .primary)
-            button("pad.x", pad.buttonX.isPressed, .skill(0))
-            button("pad.y", pad.buttonY.isPressed, .skill(1))
+            button("pad.x", pad.buttonX.isPressed, .skill(shifted ? 3 : 0))
+            button("pad.y", pad.buttonY.isPressed, .skill(shifted ? 4 : 1))
             button("pad.b", pad.buttonB.isPressed, .skill(2))
             button("pad.lb", pad.leftShoulder.isPressed, .cycleTarget(-1))
             button("pad.rb", pad.rightShoulder.isPressed, .cycleTarget(1))
-            button("pad.lt", pad.leftTrigger.isPressed, .clearTarget)
+            button("pad.lt", !flying && pad.leftTrigger.isPressed, .clearTarget)
+            button("pad.l3", pad.leftThumbstickButton?.isPressed ?? false, .toggleFlight)
             button("pad.left", pad.dpad.left.isPressed, .quickItem(0))
             button("pad.right", pad.dpad.right.isPressed, .quickItem(1))
             button("pad.menu", pad.buttonMenu.isPressed, .toggleInventory)
@@ -167,10 +186,16 @@ final class InputHub {
             button("key.1", down(.one), .skill(0))
             button("key.2", down(.two), .skill(1))
             button("key.3", down(.three), .skill(2))
-            button("key.4", down(.four), .quickItem(0))
-            button("key.5", down(.five), .quickItem(1))
+            button("key.4", down(.four), .skill(3))
+            button("key.5", down(.five), .skill(4))
+            button("key.6", down(.six), .quickItem(0))
+            button("key.7", down(.seven), .quickItem(1))
             button("key.i", down(.keyI), .toggleInventory)
+            button("key.g", down(.keyG), .toggleFlight)
+            if down(.keyR) { frame.climb += 1 }
+            if down(.keyC) { frame.climb -= 1 }
         }
+        frame.climb = max(-1, min(1, frame.climb))
     }
 
     private func pollMenu(_ button: (String, Bool, InputAction) -> Void) {

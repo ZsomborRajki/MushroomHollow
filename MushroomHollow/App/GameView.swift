@@ -1,3 +1,4 @@
+import GameCore
 import RealityKit
 import SwiftUI
 
@@ -82,10 +83,27 @@ struct GameView: View {
                 .ignoresSafeArea()
                 .transition(.opacity)
 
-            RoundButton(symbol: "bag.fill", size: 48, glyph: session.glyphs?.menu) {
-                session.perform(.toggleInventory)
+            // Utility row, top right: potions, flight, bag.
+            HStack(spacing: 12) {
+                ForEach(Array([ItemID.dewPotion, .nectarVial].enumerated()), id: \.element) { index, item in
+                    PotionButton(item: item, count: session.hud.player?.inventory.count(of: item) ?? 0,
+                                 cooldown: session.hud.player?.itemCooldown ?? 0, glyph: session.glyphs?.quickItems[index]) {
+                        session.perform(.quickItem(index))
+                    }
+                }
+                if session.hud.player?.canFly == true {
+                    let flying = session.hud.player?.isFlying == true
+                    RoundButton(symbol: flying ? "arrow.down.to.line" : "wind", size: 48, tint: .cyan, glyph: session.glyphs?.flight) {
+                        session.perform(.toggleFlight)
+                    }
+                    .accessibilityLabel(flying ? "Land" : "Fly")
+                    .transition(.scale.combined(with: .opacity))
+                }
+                RoundButton(symbol: "bag.fill", size: 48, glyph: session.glyphs?.menu) {
+                    session.perform(.toggleInventory)
+                }
+                .accessibilityLabel("Bag")
             }
-            .accessibilityLabel("Bag")
             .padding()
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
 

@@ -91,8 +91,17 @@ struct PlayerData: Codable, Sendable {
     /// Ticks of cooldown remaining; absent means ready.
     var cooldowns: [SkillID: Int] = [:]
     var itemCooldown = 0
+    var playerClass: PlayerClass?
+    var buffs: [ActiveBuff] = []
     var hpRegen: Float = 0
     var mpRegen: Float = 0
+}
+
+struct ActiveBuff: Codable, Sendable {
+    let skill: SkillID
+    let effect: BuffEffect
+    let totalTicks: Int
+    var ticksLeft: Int
 }
 
 /// Server-side mob AI state.
@@ -131,6 +140,10 @@ public struct WorldEntity: Codable, Sendable {
 
     /// Players: the latest desired move direction in world XZ, length <= 1.
     var moveIntent: Vec2 = .zero
+    /// Players: riding the wind on a dandelion seed.
+    var isFlying = false
+    /// Players, while flying: -1 (descend) ... 1 (climb).
+    var climbIntent: Float = 0
     var combat = CombatState()
     /// Mobs only.
     var brain: MobBrain?

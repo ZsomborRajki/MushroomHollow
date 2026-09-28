@@ -15,8 +15,13 @@ public struct GameSimulation: Sendable {
     /// How long a dead mob's body stays before despawning.
     static let corpseTicks = ticks(1.5)
 
+    /// A full day/night cycle, in ticks (12 real minutes).
+    public static let dayLengthTicks: UInt64 = 12 * 60 * UInt64(tickRate)
+
     public let map: WorldMap
     public internal(set) var tick: UInt64 = 0
+    /// Time of day when the world started (0 = midnight, 0.5 = noon).
+    public let startTimeOfDay: Float
 
     var entities: [EntityID: WorldEntity] = [:]
     /// Sorted IDs, so iteration order is deterministic (dictionary order is not).
@@ -35,8 +40,9 @@ public struct GameSimulation: Sendable {
         var ticksLeft: Int
     }
 
-    public init(map: WorldMap = .mushroomHollow, seed: UInt64) {
+    public init(map: WorldMap = .mushroomHollow, seed: UInt64, startTimeOfDay: Float = 0.32) {
         self.map = map
+        self.startTimeOfDay = startTimeOfDay
         self.random = SeededRandom(seed: seed)
         for placement in map.npcs {
             insert(WorldEntity(
@@ -63,6 +69,14 @@ public struct GameSimulation: Sendable {
 
     public var entityCount: Int { order.count }
 
+    /// 0 = midnight, 0.25 = dawn, 0.5 = noon, 0.75 = dusk. Driven by ticks, so every client agrees.
+    public var timeOfDay: Float {
+        let progress = Double(tick % Self.dayLengthTicks) / Double(Self.dayLengthTicks)
+        return Float((Double(startTimeOfDay) + progress).truncatingRemainder(dividingBy: 1))
+    }
+
+    public var isNight: Bool { timeOfDay < 0.22 || timeOfDay > 0.8 }
+
     public func snapshot(for viewer: EntityID? = nil) -> WorldSnapshot {
         WorldSnapshot(
             tick: tick,
@@ -72,16 +86,18 @@ public struct GameSimulation: Sendable {
                     id: id, kind: e.kind, position: e.position, yaw: e.yaw, isMoving: e.isMoving,
                     pose: e.pose, level: e.stats.level, hp: e.stats.hp, maxHP: e.stats.maxHP,
                     target: e.combat.engaged ? e.combat.target : nil,
-                    gear: EquipSlot.allCases.compactMap { e.player?.equipment[$0] })
+                    gear: EquipSlot.allCases.compactMap { e.player?.equipment[$0] },
+                    playerClass: e.player?.playerClass, isFlying: e.isFlying)
             },
             hazards: hazardSnapshots,
-            viewer: viewer.flatMap(playerStatus)
+            viewer: viewer.flatMap(playerStatus),
+            timeOfDay: timeOfDay
         )
     }
 
     public func playerStatus(_ id: EntityID) -> PlayerStatus? {
         guard let e = entities[id], let data = e.player else { return nil }
-        let skills = SkillID.allCases.map { skill in
+        let skills = availableSkills(for: e).map { skill in
             let definition = skill.definition
             return SkillStatus(
                 id: skill,
@@ -97,7 +113,20 @@ public struct GameSimulation: Sendable {
             caps: data.caps, inventory: data.inventory, equipment: data.equipment,
             quests: QuestID.allCases.map { QuestStatus(id: $0, state: questState($0, for: e)) },
             itemCooldown: Float(data.itemCooldown) * Self.tickDuration,
-            isSlowed: isInSlime(e))
+            isSlowed: isInSlime(e),
+            playerClass: data.playerClass,
+            buffs: data.buffs.map {
+                BuffStatus(skill: $0.skill, remaining: Float($0.ticksLeft) * Self.tickDuration,
+                           total: Float($0.totalTicks) * Self.tickDuration)
+            },
+            canFly: data.inventory.count(of: .dandelionSeed) > 0 && e.stats.level >= ItemID.dandelionSeed.definition.requiredLevel,
+            isFlying: e.isFlying,
+            altitude: e.position.y)
+    }
+
+    /// The three base skills, plus the class's two once a class is chosen.
+    func availableSkills(for player: WorldEntity) -> [SkillID] {
+        SkillID.baseSkills + (player.player?.playerClass?.definition.skills ?? [])
     }
 
     // MARK: - Mutations
@@ -127,6 +156,7 @@ public struct GameSimulation: Sendable {
             }
             entities[id] = entity
         }
+        separateMobs()
         stepHazards()
         removeCorpses()
         processRespawns()
@@ -211,11 +241,38 @@ public struct GameSimulation: Sendable {
         for respawn in ready { spawnMob(areaIndex: respawn.areaIndex) }
     }
 
+    /// Mobs shouldn't stack on top of each other: push overlapping pairs apart.
+    private mutating func separateMobs() {
+        let mobs = order.filter { entities[$0].map { $0.kind.isMob && $0.stats.isAlive } ?? false }
+        guard mobs.count > 1 else { return }
+        var positions = mobs.map { entities[$0]!.position.xz }
+        let radii = mobs.map { entities[$0]!.radius }
+        var moved = Set<Int>()
+        for i in 0..<mobs.count {
+            for j in (i + 1)..<mobs.count {
+                let offset = positions[j] - positions[i]
+                let distance = offset.length
+                let minimum = (radii[i] + radii[j]) * 0.9
+                guard distance < minimum else { continue }
+                // Coincident mobs split along a direction derived from their IDs (deterministic).
+                let normal = distance > 1e-4 ? offset / distance : AngleMath.direction(forYaw: Float(mobs[i].rawValue))
+                let push = normal * (minimum - distance) * 0.5
+                positions[i] -= push
+                positions[j] += push
+                moved.insert(i)
+                moved.insert(j)
+            }
+        }
+        for i in moved {
+            entities[mobs[i]]?.position.xz = map.resolve(positions[i], radius: radii[i])
+        }
+    }
+
     /// Moves along the ground, sliding around colliders, and records the actual velocity.
     func move(_ entity: inout WorldEntity, velocity: Vec2) {
         let dt = Self.tickDuration
         let start = entity.position.xz
-        let resolved = velocity == .zero ? start : map.resolve(start + velocity * dt, radius: entity.radius)
+        let resolved = velocity == .zero ? start : map.resolve(start + velocity * dt, radius: entity.radius, altitude: entity.position.y)
         entity.position.xz = resolved
         let actual = (resolved - start) / dt
         entity.velocity = Vec3(actual.x, 0, actual.y)
