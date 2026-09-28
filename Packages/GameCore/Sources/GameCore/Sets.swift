@@ -3,8 +3,10 @@
 public enum ItemSet: String, Codable, Sendable, CaseIterable {
     /// Level 5, anyone. Each piece drops in a different zone.
     case dewleaf
-    /// Level 15 class sets, dropped for the killer's class by the Hollow Owl (and, rarely, the fen).
+    /// Level 15 class sets, dropped for the killer's class by the Hollow Owl (and, rarely, the fen and the outer ring).
     case heartwood, briar, mycelium, rainpetal
+    /// Level 20, anyone. Each piece drops in a different zone of the outer ring.
+    case thistledown
 }
 
 public struct SetDefinition: Sendable {
@@ -40,6 +42,15 @@ extension ItemSet {
                     .init(pieces: 2, bonus: StatBonus(maxHP: 20, maxMP: 10)),
                     .init(pieces: 3, bonus: StatBonus(attack: 3, defense: 3)),
                     .init(pieces: 4, bonus: StatBonus(attack: 6, maxHP: 50, attackSpeed: 0.15, critical: 0.05)),
+                ])
+        case .thistledown:
+            SetDefinition(
+                id: self, name: "Thistledown Set",
+                pieces: [.thistledownCap, .thistledownCoat, .thistledownGloves, .thistledownBoots], playerClass: nil,
+                tiers: [
+                    .init(pieces: 2, bonus: StatBonus(maxHP: 60, maxMP: 30)),
+                    .init(pieces: 3, bonus: StatBonus(attack: 8, defense: 8)),
+                    .init(pieces: 4, bonus: StatBonus(attack: 14, maxHP: 150, attackSpeed: 0.12, critical: 0.06)),
                 ])
         case .heartwood:
             SetDefinition(

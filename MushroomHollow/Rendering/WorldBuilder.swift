@@ -34,7 +34,7 @@ enum WorldBuilder {
 
         // Darker moss patches and a packed-dirt village clearing, as thin discs.
         let darkMoss = Materials.matte(Palette.darkMoss, roughness: 1)
-        for _ in 0..<40 {
+        for _ in 0..<90 {
             let p = random.point(inDiscAt: .zero, radius: map.boundaryRadius)
             let r = random.float(in: 3...9)
             world.addCylinder(darkMoss, at: [p.x, 0.005, p.y], radius: r, height: 0.01)
@@ -45,6 +45,15 @@ enum WorldBuilder {
         // A path from the village up to the trunk.
         let pathLength = village.length - map.trunkCollisionRadius
         world.addPart(Meshes.box, dirt, at: [village.x * 0.62, 0.011, village.y * 0.62], scale: [3, 0.01, pathLength])
+
+        // A trail circling through the outermost hunting grounds, and a spoke out to it from the village.
+        if let ringRadius = map.zones.filter({ $0.levels != nil }).map(\.center.length).max() {
+            let trail = ModelEntity(mesh: Meshes.trailRing, materials: [dirt])
+            trail.transform = Transform(scale: SIMD3(repeating: ringRadius), translation: [0, 0.011, 0])
+            world.addChild(trail)
+            let from = village.y + map.villageRadius * 0.8, to = ringRadius
+            world.addPart(Meshes.box, dirt, at: [0, 0.011, (from + to) / 2], scale: [3, 0.01, to - from])
+        }
     }
 
     // MARK: - The giant tree
@@ -150,7 +159,7 @@ enum WorldBuilder {
         let stem = Materials.matte(Palette.stem)
         let caps = [Palette.capRed, Palette.capBrown, Palette.capSpot].map { Materials.matte($0, roughness: 0.5) }
         let glowCap = Materials.glow(Palette.glowCap)
-        for i in 0..<180 {
+        for i in 0..<380 {
             guard let p = freeSpot(radius: 0.4, avoidVillage: true) else { continue }
             let s = random.float(in: 0.25...0.9)
             let cap = i % 6 == 0 ? glowCap : caps[i % caps.count]
@@ -160,7 +169,7 @@ enum WorldBuilder {
 
         // Fallen leaves the size of rooftops: we're tiny down here.
         let leaves = [Materials.matte(Palette.leaf, roughness: 0.7), Materials.matte(Palette.deadLeaf, roughness: 0.9)]
-        for i in 0..<22 {
+        for i in 0..<48 {
             guard let p = freeSpot(radius: 2.5, avoidVillage: true) else { continue }
             let rotation = simd_quatf(angle: random.float(in: 0...(2 * .pi)), axis: [0, 1, 0])
                 * simd_quatf(angle: random.float(in: -0.08...0.08), axis: [1, 0, 0])
@@ -168,7 +177,7 @@ enum WorldBuilder {
         }
 
         let pebble = Materials.matte(Palette.pebble, roughness: 0.7)
-        for _ in 0..<70 {
+        for _ in 0..<150 {
             guard let p = freeSpot(radius: 0.3) else { continue }
             let s = random.float(in: 0.15...0.5)
             world.addSphere(pebble, at: [p.x, s * 0.25, p.y], radius: s, squash: [1, 0.6, random.float(in: 0.8...1.3)])
@@ -216,8 +225,232 @@ enum WorldBuilder {
                 light.position = [area.center.x, 3, area.center.y]
                 world.addChild(light)
             default:
-                break
+                addOuterDressing(for: area, map: map, to: world, random: &random)
             }
+        }
+    }
+
+    /// The outer ring's hunting grounds: flat forest floor, each half dressed for the species living there.
+    private static func addOuterDressing(for area: MobSpawnArea, map: WorldMap, to world: Entity, random: inout SeededRandom) {
+        func spots(_ count: Int, spread: Float = 4, clearance: Float = 0.3) -> [Vec2] {
+            (0..<count).compactMap { _ in
+                let p = random.point(inDiscAt: area.center, radius: area.radius + spread)
+                return map.isBlocked(p, radius: clearance) ? nil : p
+            }
+        }
+        func patches(_ color: UIColor, count: Int, size: ClosedRange<Float> = 3...7) {
+            let material = Materials.matte(color, roughness: 1)
+            for p in spots(count, spread: 0) {
+                world.addCylinder(material, at: [p.x, 0.009, p.y], radius: random.float(in: size), height: 0.01)
+            }
+        }
+        func yaw() -> simd_quatf { simd_quatf(angle: random.float(in: 0...(2 * .pi)), axis: [0, 1, 0]) }
+        let upsideDown = simd_quatf(angle: .pi, axis: [1, 0, 0])
+
+        switch area.kind {
+        case .fuzzbee:
+            // Buttercup Meadow: sunny grass full of buttercups and clover.
+            patches(UIColor(red: 0.42, green: 0.5, blue: 0.2, alpha: 1), count: 7)
+            let stem = Materials.matte(Palette.dandelionStem)
+            let petal = Materials.matte(Palette.beeYellow, roughness: 0.35)
+            for p in spots(40) {
+                let h = random.float(in: 0.5...1.1)
+                world.addCylinder(stem, at: [p.x, h / 2, p.y], radius: 0.025, height: h)
+                world.addPart(Meshes.cone, petal, at: [p.x, h + 0.05, p.y], scale: [0.15, 0.14, 0.15], rotation: upsideDown)
+            }
+            let clover = Materials.matte(Palette.frogGreen, roughness: 0.8)
+            for p in spots(12) {
+                for i in 0..<3 {
+                    let d = AngleMath.direction(forYaw: Float(i) * 2.1) * 0.14
+                    world.addSphere(clover, at: [p.x + d.x, 0.35, p.y + d.y], radius: 0.16, squash: [1, 0.2, 1])
+                }
+                world.addCylinder(stem, at: [p.x, 0.17, p.y], radius: 0.02, height: 0.34)
+            }
+
+        case .puffweed:
+            // Dandelions: gone to seed, or still in flower.
+            let stem = Materials.matte(Palette.dandelionStem)
+            let fluff = Materials.matte(Palette.puffWhite, roughness: 1)
+            let flower = Materials.matte(Palette.beeYellow, roughness: 0.6)
+            for (i, p) in spots(26).enumerated() {
+                let h = random.float(in: 0.8...1.8)
+                world.addCylinder(stem, at: [p.x, h / 2, p.y], radius: 0.03, height: h)
+                if i % 2 == 0 {
+                    world.addSphere(fluff, at: [p.x, h + 0.2, p.y], radius: 0.25)
+                } else {
+                    world.addSphere(flower, at: [p.x, h + 0.05, p.y], radius: 0.22, squash: [1, 0.35, 1])
+                }
+            }
+
+        case .mossTurtle:
+            // Mossback Creek: a dry sandy creek bed with river pebbles and the last few pools.
+            guard let zone = map.zone(at: area.center) else { break }
+            let along = Vec2(zone.center.y, -zone.center.x).normalizedOrZero
+            let bedYaw = AngleMath.yaw(facing: along)
+            let length = zone.radius * 2
+            world.addPart(Meshes.roundedBox, Materials.matte(UIColor(red: 0.72, green: 0.64, blue: 0.48, alpha: 1), roughness: 1),
+                          at: [zone.center.x, 0.009, zone.center.y], scale: [5.5, 0.01, length],
+                          rotation: simd_quatf(angle: bedYaw, axis: [0, 1, 0]))
+            let pebble = Materials.matte(Palette.pebble, roughness: 0.6)
+            let water = Materials.translucent(UIColor(red: 0.45, green: 0.7, blue: 0.85, alpha: 1), opacity: 0.6)
+            let across = Vec2(along.y, -along.x)
+            for i in 0..<36 {
+                let p = zone.center + along * random.float(in: -length / 2...length / 2) + across * random.float(in: -3...3)
+                if i % 6 == 0 {
+                    world.addCylinder(water, at: [p.x, 0.02, p.y], radius: random.float(in: 0.8...1.8), height: 0.01)
+                } else {
+                    let r = random.float(in: 0.12...0.35)
+                    world.addSphere(pebble, at: [p.x, r * 0.3, p.y], radius: r, squash: [1, 0.5, random.float(in: 0.8...1.4)])
+                }
+            }
+            let reed = Materials.matte(Palette.thornStem)
+            for p in spots(20) where abs(((p - zone.center) * across).sum()) > 3.5 {
+                let h = random.float(in: 1...2.2)
+                world.addCylinder(reed, at: [p.x, h / 2, p.y], radius: 0.03, height: h)
+            }
+
+        case .emberNewt:
+            // Scorched stones that still glow.
+            patches(UIColor(red: 0.25, green: 0.2, blue: 0.17, alpha: 1), count: 5, size: 2...4)
+            let ember = Materials.glow(Palette.emberGlow)
+            let stone = Materials.matte(UIColor(white: 0.3, alpha: 1), roughness: 0.9)
+            for (i, p) in spots(18).enumerated() {
+                let r = random.float(in: 0.15...0.35)
+                world.addSphere(i % 3 == 0 ? stone : ember, at: [p.x, r * 0.2, p.y], radius: r, squash: [1, 0.55, 1])
+            }
+            let light = PointLight()
+            light.light.color = UIColor(red: 1, green: 0.55, blue: 0.25, alpha: 1)
+            light.light.intensity = 6000
+            light.light.attenuationRadius = 14
+            light.position = [area.center.x, 2.5, area.center.y]
+            world.addChild(light)
+
+        case .weaverSpider:
+            // Silkshade Thicket: dim ground and webs strung between reeds.
+            patches(UIColor(red: 0.2, green: 0.22, blue: 0.2, alpha: 1), count: 8)
+            let reed = Materials.matte(Palette.thornStem)
+            let silk = Materials.translucent(.white, opacity: 0.22)
+            let strand = Materials.translucent(.white, opacity: 0.7)
+            let vertical = simd_quatf(angle: .pi / 2, axis: [1, 0, 0])
+            for p in spots(9, clearance: 1.5) {
+                let facing = yaw()
+                let side = facing.act([1, 0, 0])
+                let h = random.float(in: 2.2...3)
+                for s: Float in [-1.3, 1.3] {
+                    world.addCylinder(reed, at: [p.x + side.x * s, h / 2, p.y + side.z * s], radius: 0.04, height: h)
+                }
+                let center = SIMD3<Float>(p.x, h * 0.6, p.y)
+                world.addPart(Meshes.disc, silk, at: center, scale: SIMD3(repeating: 1.2), rotation: facing * vertical)
+                for r: Float in [0.5, 0.85, 1.2] {
+                    world.addPart(Meshes.ring, strand, at: center, scale: SIMD3(repeating: r), rotation: facing * vertical)
+                }
+            }
+
+        case .duskMoth:
+            // Night flowers that glow blue and lilac.
+            let stem = Materials.matte(Palette.thornStem)
+            let glows = [Palette.spiderGlow, Palette.mothLilac].map { Materials.glow($0) }
+            for (i, p) in spots(24).enumerated() {
+                let h = random.float(in: 0.4...1)
+                world.addCylinder(stem, at: [p.x, h / 2, p.y], radius: 0.025, height: h)
+                world.addPart(Meshes.teardrop, glows[i % 2], at: [p.x, h + 0.1, p.y], scale: [0.1, 0.12, 0.1], rotation: upsideDown)
+            }
+
+        case .hedgehog:
+            // Pinecone Rise: rusty needle litter and fallen cones.
+            patches(UIColor(red: 0.5, green: 0.32, blue: 0.18, alpha: 1), count: 8)
+            let cone = Materials.matte(Palette.pinecone, roughness: 0.9)
+            let scale = Materials.matte(Palette.pineconeDark, roughness: 0.9)
+            for p in spots(14, clearance: 1) {
+                let size = random.float(in: 0.4...0.8)
+                let rotation = yaw() * simd_quatf(angle: .pi / 2, axis: [1, 0, 0])
+                let body = world.addPart(Meshes.sphere, cone, at: [p.x, size * 0.45, p.y], scale: [size * 0.5, size, size * 0.5], rotation: rotation)
+                for direction in ActorModels.fibonacciDirections(6) {
+                    body.addSphere(scale, at: direction * 0.9, radius: 0.34, squash: [1, 0.5, 1])
+                }
+            }
+            let needle = Materials.matte(Palette.acornCap, roughness: 1)
+            for p in spots(30, clearance: 0.1) {
+                world.addPart(Meshes.box, needle, at: [p.x, 0.02, p.y], scale: [0.03, 0.03, random.float(in: 0.8...1.4)], rotation: yaw())
+            }
+
+        case .coneKnight:
+            // Pine saplings, knee- to head-high.
+            let needles = Materials.matte(UIColor(red: 0.2, green: 0.36, blue: 0.2, alpha: 1), roughness: 0.9)
+            let trunk = Materials.matte(Palette.bark)
+            for p in spots(12, clearance: 0.6) {
+                let h = random.float(in: 0.8...1.8)
+                world.addCylinder(trunk, at: [p.x, h * 0.15, p.y], radius: 0.05, height: h * 0.3)
+                for tier in 0..<3 {
+                    let t = Float(tier)
+                    world.addPart(Meshes.cone, needles, at: [p.x, h * (0.35 + t * 0.22), p.y],
+                                  scale: [h * (0.35 - t * 0.08), h * 0.35, h * (0.35 - t * 0.08)])
+                }
+            }
+
+        case .mantis:
+            // Briar Tangle: red-brown earth, bramble arches, and orchids.
+            patches(UIColor(red: 0.4, green: 0.25, blue: 0.2, alpha: 1), count: 8)
+            let bramble = Materials.matte(Palette.roseDark, roughness: 0.7)
+            for p in spots(12, clearance: 1) {
+                let facing = yaw()
+                for arch in 0..<3 {
+                    let side = facing.act([Float(arch - 1) * 0.4, 0, 1])
+                    let top = SIMD3<Float>(p.x + side.x * 0.3, random.float(in: 0.8...1.4), p.y + side.z * 0.3)
+                    world.addRod(bramble, from: [p.x - side.x, 0, p.y - side.z], to: top, radius: 0.04)
+                    world.addRod(bramble, from: top, to: [p.x + side.x * 1.2, 0, p.y + side.z * 1.2], radius: 0.035)
+                    world.addPart(Meshes.cone, bramble, at: top + [0, 0.08, 0], scale: [0.04, 0.14, 0.04])
+                }
+            }
+            let stem = Materials.matte(Palette.thornStem)
+            let orchid = Materials.matte(Palette.mantisPink, roughness: 0.5)
+            for p in spots(18) {
+                let h = random.float(in: 0.5...1)
+                world.addCylinder(stem, at: [p.x, h / 2, p.y], radius: 0.02, height: h)
+                for i in 0..<3 {
+                    let a = Float(i) * 2.1
+                    world.addPart(Meshes.teardrop, orchid, at: [p.x + sin(a) * 0.08, h + 0.05, p.y + cos(a) * 0.08],
+                                  scale: [0.06, 0.1, 0.03], rotation: simd_quatf(angle: a, axis: [0, 1, 0]) * simd_quatf(angle: -1, axis: [1, 0, 0]))
+                }
+            }
+
+        case .thornrose:
+            // Wild rose bushes.
+            let bush = Materials.matte(Palette.thornStem, roughness: 0.8)
+            let blooms = [Palette.roseRed, Palette.rosePink].map { Materials.matte($0, roughness: 0.6) }
+            for p in spots(10, clearance: 1) {
+                let r = random.float(in: 0.5...0.8)
+                world.addSphere(bush, at: [p.x, r * 0.6, p.y], radius: r, squash: [1, 0.75, 1])
+                for i in 0..<4 {
+                    let d = AngleMath.direction(forYaw: Float(i) * 1.6 + r) * r * 0.8
+                    world.addSphere(blooms[i % 2], at: [p.x + d.x, r * 0.9, p.y + d.y], radius: 0.12)
+                }
+            }
+
+        case .grumblecap:
+            // Stagshade Grove: dark humus under a canopy of glowcaps.
+            patches(UIColor(red: 0.16, green: 0.2, blue: 0.13, alpha: 1), count: 9)
+            let stem = Materials.matte(Palette.stem)
+            let glow = Materials.glow(Palette.glowCap)
+            for p in spots(22) {
+                let s = random.float(in: 0.3...0.8)
+                world.addCylinder(stem, at: [p.x, s * 0.35, p.y], radius: s * 0.08, height: s * 0.7)
+                world.addSphere(glow, at: [p.x, s * 0.7, p.y], radius: s * 0.3, squash: [1, 0.45, 1])
+            }
+
+        case .stagBeetle:
+            // Rotting logs the stag beetles fight over.
+            let log = Materials.matte(Palette.darkBark, roughness: 1)
+            let moss = Materials.matte(Palette.moss, roughness: 1)
+            for p in spots(12, clearance: 1.2) {
+                let rotation = yaw() * simd_quatf(angle: .pi / 2, axis: [1, 0, 0])
+                let length = random.float(in: 1.5...3)
+                world.addPart(Meshes.cylinder, log, at: [p.x, 0.3, p.y], scale: [0.3, length, 0.3], rotation: rotation)
+                world.addSphere(moss, at: [p.x, 0.55, p.y], radius: 0.35, squash: [1, 0.3, 1.4])
+            }
+
+        default:
+            break
         }
     }
 
@@ -295,7 +528,7 @@ enum WorldBuilder {
         var normals: [SIMD3<Float>] = []
         var indices: [UInt32] = []
 
-        let tuftCount = 3200
+        let tuftCount = 7000
         for _ in 0..<tuftCount {
             let center = random.point(inDiscAt: .zero, radius: map.boundaryRadius + 15)
             if center.length < map.trunkCollisionRadius + 0.5 { continue }

@@ -4,6 +4,13 @@ public enum QuestID: String, Codable, Sendable, CaseIterable {
     case barkBeetles
     case sporeSeason
     case hollowOwl
+    // The outer ring, after Spore Season
+    case buzzkill
+    case shellCollector
+    case tangledUp
+    case pricklyBusiness
+    case prayingForRain
+    case kingOfTheGrove
 }
 
 public enum QuestObjective: Sendable, Equatable {
@@ -18,7 +25,7 @@ public enum QuestObjective: Sendable, Equatable {
 
     public var summary: String {
         switch self {
-        case let .defeat(kind, count): "Defeat \(count) \(kind.displayName)s"
+        case let .defeat(kind, count): "Defeat \(count) \(count == 1 ? kind.displayName : kind.pluralName)"
         case let .collect(item, count): "Collect \(count) \(item.definition.name)"
         }
     }
@@ -96,6 +103,54 @@ extension QuestID {
                 objective: .defeat(.owl, count: 1),
                 rewardXP: 3000, rewardCaps: 600,
                 rewardItems: [ItemStack(item: .dewPotion, count: 5), ItemStack(item: .nectarVial, count: 5)])
+        case .buzzkill:
+            QuestDefinition(
+                id: self, title: "Buzzkill",
+                story: "Past the root tips lies Buttercup Meadow, and its fuzzbees have started raiding our honey jars. Teach them some manners.",
+                giver: .elderMorel, requiredLevel: 14, prerequisite: .sporeSeason,
+                objective: .defeat(.fuzzbee, count: 8),
+                rewardXP: 2_000, rewardCaps: 400,
+                rewardItems: [ItemStack(item: .dewPotion, count: 5), ItemStack(item: .amberShard, count: 4)])
+        case .shellCollector:
+            QuestDefinition(
+                id: self, title: "Shell Collector",
+                story: "The old turtles of Mossback Creek shed scutes that make the best roof tiles. They don't shed them willingly, and mind the newts: they bite hot.",
+                giver: .elderMorel, requiredLevel: 17, prerequisite: .buzzkill,
+                objective: .collect(.mossyScute, count: 6),
+                rewardXP: 3_000, rewardCaps: 550,
+                rewardItems: [ItemStack(item: .amberShard, count: 5), ItemStack(item: .wardCharm, count: 1)])
+        case .tangledUp:
+            QuestDefinition(
+                id: self, title: "Tangled Up",
+                story: "Weaver spiders have strung Silkshade Thicket shut. Cut a way through, and don't get stuck in their webs.",
+                giver: .elderMorel, requiredLevel: 20, prerequisite: .shellCollector,
+                objective: .defeat(.weaverSpider, count: 8),
+                rewardXP: 4_200, rewardCaps: 700,
+                rewardItems: [ItemStack(item: .silkweaveGloves, count: 1), ItemStack(item: .nectarVial, count: 5)])
+        case .pricklyBusiness:
+            QuestDefinition(
+                id: self, title: "Prickly Business",
+                story: "Hedgehog quills make the finest sewing needles. Bring some from Pinecone Rise, and jump aside when they roll.",
+                giver: .elderMorel, requiredLevel: 23, prerequisite: .tangledUp,
+                objective: .collect(.hedgehogQuill, count: 6),
+                rewardXP: 5_500, rewardCaps: 900,
+                rewardItems: [ItemStack(item: .amberShard, count: 8), ItemStack(item: .wardCharm, count: 1)])
+        case .prayingForRain:
+            QuestDefinition(
+                id: self, title: "Praying for Rain",
+                story: "The orchid mantises of the Briar Tangle strike faster than you can blink. Thin them out before they wander this way.",
+                giver: .elderMorel, requiredLevel: 26, prerequisite: .pricklyBusiness,
+                objective: .defeat(.mantis, count: 8),
+                rewardXP: 7_000, rewardCaps: 1_100,
+                rewardItems: [ItemStack(item: .pineconeHelm, count: 1), ItemStack(item: .dewPotion, count: 8)])
+        case .kingOfTheGrove:
+            QuestDefinition(
+                id: self, title: "King of the Grove",
+                story: "In Stagshade Grove the stag beetles lock horns all day. Best the strongest bugs under the tree and you'll be a legend of the Hollow.",
+                giver: .elderMorel, requiredLevel: 28, prerequisite: .prayingForRain,
+                objective: .defeat(.stagBeetle, count: 5),
+                rewardXP: 9_000, rewardCaps: 1_500,
+                rewardItems: [ItemStack(item: .amberShard, count: 10), ItemStack(item: .wardCharm, count: 2)])
         }
     }
 }

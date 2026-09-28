@@ -2,7 +2,7 @@ extension GameSimulation {
     /// How far past its leash radius a mob will chase before giving up.
     static let leashSlack: Float = 12
 
-    // Beetle charge tuning.
+    // Charge tuning (beetles, frogs, hedgehogs...).
     static let chargeWindup: Float = 0.8
     public static let chargeDuration: Float = 0.9
     public static let chargeSpeed: Float = 13
@@ -110,9 +110,10 @@ extension GameSimulation {
             }
         }
 
-        // Slugs leave slime wherever they crawl.
-        if kind == .slug, mob.isMoving, brain.abilityTimer <= 0 {
-            spawnHazard(.slime, at: mob.position.xz, radius: 0.9, seconds: 6, owner: mob.id)
+        // Slugs leave slime wherever they crawl; newts and spiders only while chasing someone.
+        if let trail = kind.trail, mob.isMoving, brain.abilityTimer <= 0,
+           trail == .slime || mob.combat.engaged {
+            spawnHazard(trail, from: mob)
             brain.abilityTimer = Self.ticks(1)
         }
 
@@ -135,29 +136,24 @@ extension GameSimulation {
         let distance = gap(mob, prey)
         let direction = (prey.position.xz - mob.position.xz).normalizedOrZero
 
-        switch kind {
-        case .snail where !brain.hasHidden && mob.stats.hp * 10 < mob.stats.maxHP * 3:
+        if kind.hidesWhenHurt, !brain.hasHidden, mob.stats.hp * 10 < mob.stats.maxHP * 3 {
             brain.hasHidden = true
             brain.state = .hiding(ticksLeft: Self.ticks(3))
             events.append(.mobAbility(entity: mob.id, ability: .hide))
             move(&mob, velocity: .zero)
             return
-
-        case .beetle where brain.abilityTimer <= 0 && Self.chargeRange.contains(distance):
+        }
+        if kind.charges, brain.abilityTimer <= 0, Self.chargeRange.contains(distance) {
             brain.state = .windingUp(direction: direction, ticksLeft: Self.ticks(Self.chargeWindup))
             brain.abilityTimer = Self.ticks(6)
             events.append(.mobAbility(entity: mob.id, ability: .charge))
             move(&mob, velocity: .zero)
             return
-
-        case .sporeBeast where brain.abilityTimer <= 0 && distance < 4:
-            spawnHazard(.sporeCloud, at: mob.position.xz, radius: 2.8, seconds: 5, owner: mob.id,
-                        damagePerSecond: Int(Float(stats.attack) * 0.4))
+        }
+        if let cloud = kind.cloud, brain.abilityTimer <= 0, distance < 4 {
+            spawnHazard(cloud, from: mob)
             brain.abilityTimer = Self.ticks(7)
-            events.append(.mobAbility(entity: mob.id, ability: .sporeCloud))
-
-        default:
-            break
+            events.append(.mobAbility(entity: mob.id, ability: .cloud))
         }
 
         turn(&mob, toward: direction, rate: Self.mobTurnRate * 2)
@@ -196,5 +192,54 @@ extension GameSimulation {
             }
         }
         return brain.home
+    }
+}
+
+// MARK: - Mob traits
+
+extension MobKind {
+    /// Pulls into its shell (or curls up) once when badly hurt: much harder to hurt for a few seconds.
+    public var hidesWhenHurt: Bool {
+        switch self {
+        case .snail, .pillBug, .mossTurtle, .coneKnight: true
+        default: false
+        }
+    }
+
+    /// Lowers its head, then charges (or leaps) in a straight line. Step aside!
+    public var charges: Bool {
+        switch self {
+        case .beetle, .bogFrog, .hedgehog, .mantis, .stagBeetle: true
+        default: false
+        }
+    }
+
+    /// Left behind as it moves.
+    public var trail: HazardKind? {
+        switch self {
+        case .slug: .slime
+        case .emberNewt: .embers
+        case .weaverSpider: .web
+        default: nil
+        }
+    }
+
+    /// Released around itself when a player comes close.
+    public var cloud: HazardKind? {
+        switch self {
+        case .sporeBeast, .grumblecap: .sporeCloud
+        case .thornrose: .pollen
+        case .duskMoth: .mothDust
+        default: nil
+        }
+    }
+
+    /// Bursts into two of these, angry at the killer, when it dies.
+    public var splitsInto: MobKind? {
+        switch self {
+        case .sporeBeast: .sporeling
+        case .puffweed: .puffling
+        default: nil
+        }
     }
 }

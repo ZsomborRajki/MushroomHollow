@@ -313,6 +313,47 @@ final class PlayerRig {
                                   rotation: simd_quatf(angle: x * -1.2, axis: [0, 0, 1]))
                 }
                 attach(cloak, to: torso)
+            case .honeycombHelm:
+                cap = Materials.glossy(Palette.beeYellow)
+                showSpots = false
+                let stripe = Entity()
+                stripe.addPart(Meshes.torus(radius: 0.255, tube: 0.022), Materials.matte(Palette.bugBlack), at: [0, 0.06, 0], scale: .one)
+                attach(stripe, to: hat)
+            case .pineconeHelm:
+                cap = Materials.matte(Palette.pineconeDark, roughness: 0.9)
+                showSpots = false
+                let scales = Entity()
+                let scale = Materials.matte(Palette.pinecone, roughness: 0.9)
+                for (ring, (radius, y)) in [(Float(0.245), Float(0.07)), (0.17, 0.135)].enumerated() {
+                    for i in 0..<8 {
+                        let a = (Float(i) + Float(ring) * 0.5) / 8 * 2 * .pi
+                        scales.addSphere(scale, at: [sin(a) * radius, y, cos(a) * radius], radius: 0.05, squash: [1, 0.6, 1])
+                    }
+                }
+                attach(scales, to: hat)
+            case .turtleshellMail:
+                outfit = Materials.matte(Palette.turtleSkin, roughness: 0.8)
+                let shell = Entity()
+                shell.addSphere(Materials.matte(Palette.turtleShell, roughness: 0.7), at: [0, 0.12, -0.14], radius: 1, squash: [0.24, 0.3, 0.1])
+                shell.addSphere(Materials.matte(Palette.turtleShellDark), at: [0, 0.14, -0.22], radius: 0.07, squash: [1, 1, 0.4])
+                attach(shell, to: torso)
+            case .mantisCarapace:
+                outfit = Materials.matte(Palette.mantisWhite, roughness: 0.6)
+                for arm in arms {
+                    let petal = Entity()
+                    petal.addSphere(Materials.matte(Palette.mantisPink, roughness: 0.6), at: [0, 0.02, 0], radius: 0.09, squash: [1.2, 0.6, 1.1])
+                    attach(petal, to: arm)
+                }
+            case .silkweaveGloves:
+                addGloves(Materials.matte(Palette.mothFur, roughness: 0.8), cuff: Materials.matte(Palette.spiderPurple))
+            case .rosethornGauntlets:
+                addGloves(Materials.matte(Palette.roseRed, roughness: 0.6), cuff: Materials.matte(Palette.thornStem))
+            case .frogHoppers:
+                boots = Materials.matte(Palette.frogGreen, roughness: 0.5)
+                cuffs = Materials.matte(Palette.frogBelly, roughness: 0.8)
+            case .quilledBoots:
+                boots = Materials.matte(Palette.hedgehogBrown, roughness: 1)
+                cuffs = Materials.matte(Palette.quill, roughness: 0.8)
             case .mossBoots:
                 boots = Materials.matte(Palette.darkMoss, roughness: 1)
                 cuffs = Materials.matte(Palette.moss, roughness: 1)
@@ -419,6 +460,7 @@ final class PlayerRig {
         case .briar: (UIColor(red: 0.33, green: 0.48, blue: 0.2, alpha: 1), UIColor(red: 0.88, green: 0.32, blue: 0.3, alpha: 1))
         case .mycelium: (UIColor(red: 0.5, green: 0.38, blue: 0.66, alpha: 1), UIColor(red: 0.86, green: 0.76, blue: 1, alpha: 1))
         case .rainpetal: (UIColor(red: 0.55, green: 0.78, blue: 0.95, alpha: 1), UIColor(red: 1, green: 0.78, blue: 0.9, alpha: 1))
+        case .thistledown: (UIColor(red: 0.9, green: 0.88, blue: 0.97, alpha: 1), UIColor(red: 0.72, green: 0.58, blue: 0.95, alpha: 1))
         }
     }
 

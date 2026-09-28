@@ -806,10 +806,11 @@ final class GameSession {
             case .split:
                 renderer.sounds.play(.poof, from: renderer.entity(for: entity))
                 if let position = renderer.renderedPosition(of: entity) {
-                    renderer.effects.burst(at: position + [0, 0.6, 0], color: Palette.sporeGlow, count: 50,
-                                           speed: 2.5, size: 0.08, lifetime: 0.8, spread: 0.6, time: elapsed)
+                    let seeds = host.currentSnapshot.entity(entity)?.kind == .mob(.puffweed)
+                    renderer.effects.burst(at: position + [0, seeds ? 1.4 : 0.6, 0], color: seeds ? Palette.puffWhite : Palette.sporeGlow,
+                                           count: 50, speed: 2.5, size: 0.08, lifetime: 0.8, spread: 0.6, time: elapsed)
                 }
-            case .sporeCloud:
+            case .cloud:
                 renderer.sounds.play(.hiss, from: renderer.entity(for: entity))
             case .swoop:
                 renderer.sounds.play(.screech, from: renderer.entity(for: entity))
@@ -1252,7 +1253,12 @@ private struct DebugLaunch {
         case "maze": .slug
         case "barkfall": .beetle
         case "fen": .sporeBeast
-        case "village": nil
+        case "meadow": .fuzzbee
+        case "creek": .mossTurtle
+        case "thicket": .weaverSpider
+        case "rise": .hedgehog
+        case "briars": .mantis
+        case "grove": .stagBeetle
         default: nil
         }
         if value(after: "-spawn") == "village" { return map.villageCenter + Vec2(0, 3) }

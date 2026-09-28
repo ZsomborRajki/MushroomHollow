@@ -105,7 +105,7 @@ extension GameSimulation {
             stepFlight(&player)
             return
         }
-        let speed = player.moveSpeed * (isInSlime(player) ? Self.slimeSlowFactor : 1)
+        let speed = player.moveSpeed * (isSlowed(player) ? Self.slimeSlowFactor : 1)
 
         // Untargeted skills go off immediately, even while moving.
         if let skill = player.combat.queuedSkill, !skill.definition.needsTarget {

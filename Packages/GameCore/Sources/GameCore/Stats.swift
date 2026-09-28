@@ -59,6 +59,61 @@ extension MobKind {
         case .sporeling:
             MobStats(level: 10, maxHP: 60, attack: 16, defense: 4, xp: 25, aggroRadius: 8,
                      chaseSpeed: 4.5, attackInterval: 1.2, reach: 0.4, respawnSeconds: 0)
+        case .ladybug:
+            MobStats(level: 2, maxHP: 60, attack: 7, defense: 2, xp: 18, aggroRadius: 0,
+                     chaseSpeed: 2.4, attackInterval: 1.7, reach: 0.5, respawnSeconds: 12)
+        case .pillBug:
+            MobStats(level: 5, maxHP: 110, attack: 12, defense: 5, xp: 38, aggroRadius: 4,
+                     chaseSpeed: 2.6, attackInterval: 1.6, reach: 0.5, respawnSeconds: 15)
+        case .acornling:
+            MobStats(level: 9, maxHP: 185, attack: 20, defense: 7, xp: 85, aggroRadius: 6,
+                     chaseSpeed: 3.2, attackInterval: 1.4, reach: 0.5, respawnSeconds: 18)
+        case .bogFrog:
+            MobStats(level: 13, maxHP: 290, attack: 29, defense: 9, xp: 150, aggroRadius: 5,
+                     chaseSpeed: 3.5, attackInterval: 1.6, reach: 0.6, respawnSeconds: 20)
+
+        // The outer ring: tougher, and most of them come looking for you (but only from close by, so
+        // walking into a hunting ground doesn't pull the whole pack).
+        case .fuzzbee:
+            MobStats(level: 15, maxHP: 360, attack: 40, defense: 10, xp: 195, aggroRadius: 4,
+                     chaseSpeed: 5, attackInterval: 1.2, reach: 0.6, respawnSeconds: 20)
+        case .puffweed:
+            MobStats(level: 17, maxHP: 460, attack: 44, defense: 12, xp: 235, aggroRadius: 0,
+                     chaseSpeed: 2.8, attackInterval: 1.8, reach: 0.9, respawnSeconds: 22)
+        case .puffling:
+            MobStats(level: 15, maxHP: 90, attack: 30, defense: 6, xp: 40, aggroRadius: 8,
+                     chaseSpeed: 4.5, attackInterval: 1.1, reach: 0.4, respawnSeconds: 0)
+        case .mossTurtle:
+            MobStats(level: 18, maxHP: 560, attack: 42, defense: 20, xp: 255, aggroRadius: 0,
+                     chaseSpeed: 2.2, attackInterval: 2, reach: 0.7, respawnSeconds: 22)
+        case .emberNewt:
+            MobStats(level: 20, maxHP: 520, attack: 55, defense: 14, xp: 300, aggroRadius: 5,
+                     chaseSpeed: 4.2, attackInterval: 1.3, reach: 0.5, respawnSeconds: 22)
+        case .weaverSpider:
+            MobStats(level: 22, maxHP: 600, attack: 60, defense: 16, xp: 345, aggroRadius: 6,
+                     chaseSpeed: 4.4, attackInterval: 1.4, reach: 0.7, respawnSeconds: 24)
+        case .duskMoth:
+            MobStats(level: 23, maxHP: 580, attack: 64, defense: 15, xp: 365, aggroRadius: 5,
+                     chaseSpeed: 4, attackInterval: 1.5, reach: 0.8, respawnSeconds: 24)
+        case .hedgehog:
+            MobStats(level: 24, maxHP: 700, attack: 66, defense: 19, xp: 390, aggroRadius: 5,
+                     chaseSpeed: 3.8, attackInterval: 1.4, reach: 0.6, respawnSeconds: 24)
+        case .coneKnight:
+            MobStats(level: 26, maxHP: 820, attack: 72, defense: 22, xp: 440, aggroRadius: 5,
+                     chaseSpeed: 3.4, attackInterval: 1.6, reach: 0.8, respawnSeconds: 25)
+        case .mantis:
+            MobStats(level: 27, maxHP: 800, attack: 82, defense: 20, xp: 465, aggroRadius: 7,
+                     chaseSpeed: 5.2, attackInterval: 1.2, reach: 0.9, respawnSeconds: 25)
+        case .thornrose:
+            MobStats(level: 28, maxHP: 900, attack: 78, defense: 23, xp: 490, aggroRadius: 4,
+                     chaseSpeed: 2.4, attackInterval: 1.8, reach: 1, respawnSeconds: 25)
+        case .grumblecap:
+            MobStats(level: 29, maxHP: 1_000, attack: 84, defense: 24, xp: 515, aggroRadius: 5,
+                     chaseSpeed: 2.8, attackInterval: 1.9, reach: 1, respawnSeconds: 26)
+        case .stagBeetle:
+            MobStats(level: 30, maxHP: 1_150, attack: 92, defense: 26, xp: 560, aggroRadius: 6,
+                     chaseSpeed: 4.5, attackInterval: 1.5, reach: 0.9, respawnSeconds: 28)
+
         case .mouse:
             MobStats(level: 12, maxHP: 90, attack: 20, defense: 4, xp: 30, aggroRadius: 12,
                      chaseSpeed: 5.5, attackInterval: 1, reach: 0.4, respawnSeconds: 0)

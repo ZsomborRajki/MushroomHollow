@@ -301,14 +301,74 @@ import Testing
     @Test func sporeBeastPoisonsAndSplits() throws {
         var sim = GameSimulation(seed: 13)
         let player = sim.spawnPlayer(profile: PlayerProfile())
-        setLevel(15, player, in: &sim)
+        setLevel(18, player, in: &sim) // bog frogs share the fen and may join in
         let events = try slay(.sporeBeast, player, in: &sim)
 
-        #expect(events.contains { if case .mobAbility(_, .sporeCloud) = $0 { true } else { false } })
+        #expect(events.contains { if case .mobAbility(_, .cloud) = $0 { true } else { false } })
         #expect(events.contains { if case .mobAbility(_, .split) = $0 { true } else { false } })
         let sporelings = sim.snapshot().entities.filter { $0.kind == .mob(.sporeling) }
         #expect(sporelings.count == 2)
         #expect(sporelings.allSatisfy { $0.target == player }, "sporelings go straight for the killer")
+    }
+
+    @Test func outerRingMobsReuseTheAbilities() throws {
+        var sim = GameSimulation(seed: 21)
+        let player = sim.spawnPlayer(profile: PlayerProfile())
+        setLevel(30, player, in: &sim)
+
+        let curl = try slay(.pillBug, player, in: &sim)
+        #expect(curl.contains { if case .mobAbility(_, .hide) = $0 { true } else { false } }, "pill bugs curl up")
+
+        let burst = try slay(.puffweed, player, in: &sim)
+        #expect(burst.contains { if case .mobAbility(_, .split) = $0 { true } else { false } })
+        #expect(sim.snapshot().entities.filter { $0.kind == .mob(.puffling) }.count == 2)
+    }
+
+    @Test func bogFrogsLeapLikeBeetlesCharge() throws {
+        var sim = GameSimulation(seed: 8)
+        let player = sim.spawnPlayer(profile: PlayerProfile())
+        setLevel(16, player, in: &sim)
+        let frog = try #require(sim.snapshot().entities.first { $0.kind == .mob(.bogFrog) })
+        sim.teleport(player, to: frog.position.xz + Vec2(5, 0))
+
+        var sawWindup = false, sawCharge = false
+        for _ in 0..<(GameSimulation.tickRate * 4) {
+            _ = sim.step()
+            let pose = sim.entity(frog.id)?.pose
+            sawWindup = sawWindup || pose == .windingUp
+            sawCharge = sawCharge || (sawWindup && pose == .charging)
+        }
+        #expect(sawWindup && sawCharge)
+    }
+
+    @Test func emberNewtsLeaveBurningTrailsWhileChasing() throws {
+        var sim = GameSimulation(seed: 3)
+        let player = sim.spawnPlayer(profile: PlayerProfile())
+        setLevel(20, player, in: &sim)
+        let newt = try #require(sim.snapshot().entities.first { $0.kind == .mob(.emberNewt) })
+        _ = run(&sim, seconds: 3)
+        #expect(!sim.hazards.contains { $0.kind == .embers }, "no embers while wandering")
+
+        // Pick a fight from range, then keep backing off so it has to chase.
+        sim.teleport(player, to: try #require(sim.entity(newt.id)).position.xz + Vec2(4, 0))
+        sim.entities[newt.id]?.combat.target = player
+        sim.entities[newt.id]?.combat.engaged = true
+        sim.entities[newt.id]?.brain?.state = .engaged
+        for _ in 0..<(GameSimulation.tickRate * 2) {
+            sim.enqueue(.move(Vec2(1, 0)), from: player)
+            _ = sim.step()
+        }
+        let embers = sim.hazards.filter { $0.kind == .embers }
+        #expect(!embers.isEmpty)
+        #expect(embers.allSatisfy { $0.damagePerSecond > 0 })
+    }
+
+    @Test func spiderWebsSlowLikeSlime() throws {
+        var sim = GameSimulation(seed: 2)
+        let player = sim.spawnPlayer(profile: PlayerProfile())
+        sim.spawnHazard(.web, at: sim.map.playerSpawn, radius: 2, seconds: 10, owner: player)
+        _ = run(&sim, seconds: 0.1)
+        #expect(sim.playerStatus(player)?.isSlowed == true)
     }
 
     @Test func slugSlimeSlowsPlayers() throws {

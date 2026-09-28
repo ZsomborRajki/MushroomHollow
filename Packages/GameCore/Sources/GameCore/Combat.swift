@@ -15,7 +15,7 @@ extension GameSimulation {
             return
         }
 
-        // A snail in its shell is very hard to hurt.
+        // A snail in its shell (or a curled-up pill bug) is very hard to hurt.
         var defense = Float(target.pose == .hiding ? target.stats.defense * 4 + 6 : target.stats.defense)
         defense *= Self.buffMultiplier(target) { if case let .defense(m) = $0 { m } else { nil } }
         let attack = Float(attacker.stats.attack) * Self.buffMultiplier(attacker) { if case let .attack(m) = $0 { m } else { nil } }
@@ -41,8 +41,8 @@ extension GameSimulation {
                     rollLoot(for: kind, into: &attacker)
                     if target.brain?.boss != nil { rewardBossParticipants(target, killer: &attacker) }
                 }
-                if kind == .sporeBeast {
-                    splitIntoSporelings(from: targetID, at: target.position.xz, angryAt: attacker.id)
+                if let offspring = kind.splitsInto {
+                    split(targetID, into: offspring, at: target.position.xz, angryAt: attacker.id)
                 }
             }
         }
@@ -166,21 +166,21 @@ extension GameSimulation {
         return true
     }
 
-    /// Spore beasts burst into two angry sporelings when they die.
-    mutating func splitIntoSporelings(from beast: EntityID, at position: Vec2, angryAt attacker: EntityID) {
-        events.append(.mobAbility(entity: beast, ability: .split))
+    /// Spore beasts burst into two angry sporelings when they die (puffweeds into pufflings).
+    mutating func split(_ parent: EntityID, into kind: MobKind, at position: Vec2, angryAt attacker: EntityID) {
+        events.append(.mobAbility(entity: parent, ability: .split))
         for side: Float in [-1, 1] {
-            let spot = map.resolve(position + Vec2(side * 0.9, 0), radius: MobKind.sporeling.radius)
-            var sporeling = WorldEntity(
-                id: makeID(), kind: .mob(.sporeling),
+            let spot = map.resolve(position + Vec2(side * 0.9, 0), radius: kind.radius)
+            var offspring = WorldEntity(
+                id: makeID(), kind: .mob(kind),
                 position: Vec3(spot.x, 0, spot.y), yaw: random.float(in: -.pi...(.pi)),
-                radius: MobKind.sporeling.radius, moveSpeed: MobKind.sporeling.wanderSpeed,
-                stats: MobKind.sporeling.stats.combatStats,
+                radius: kind.radius, moveSpeed: kind.wanderSpeed,
+                stats: kind.stats.combatStats,
                 brain: MobBrain(home: position, leashRadius: 10, spawnArea: nil, state: .engaged))
-            sporeling.combat.target = attacker
-            sporeling.combat.engaged = true
-            sporeling.combat.attackTimer = Self.ticks(0.6)
-            insert(sporeling)
+            offspring.combat.target = attacker
+            offspring.combat.engaged = true
+            offspring.combat.attackTimer = Self.ticks(0.6)
+            insert(offspring)
         }
     }
 

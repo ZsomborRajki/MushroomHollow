@@ -79,6 +79,31 @@ enum WeaponModels {
                 e.addSphere(glow, at: b, radius: 0.028 * (1 - simd_length(b) * 0.9))
             }
             trail = (0.68, UIColor(red: 0.78, green: 0.9, blue: 1, alpha: 1))
+        case .stingerBlade:
+            let comb = Materials.matte(Palette.beeYellow, roughness: 0.4)
+            e.addPart(Meshes.cylinder, comb, at: d * 0.075, scale: [0.05, 0.02, 0.05], rotation: along)
+            e.addPart(Meshes.cone, Materials.glossy(Palette.bugBlack), at: d * 0.37, scale: [0.028, 0.58, 0.028], rotation: along)
+            trail = (0.66, UIColor(red: 1, green: 0.85, blue: 0.3, alpha: 1))
+        case .silkfangSaber:
+            let fang = Materials.glossy(Palette.mantisWhite)
+            e.addPart(Meshes.cone, fang, at: d * 0.4, scale: [0.03, 0.66, 0.03], rotation: along)
+            for s: Float in [0.1, 0.16, 0.22] {
+                e.addPart(Meshes.torus(radius: 0.03, tube: 0.007), Materials.matte(Palette.mothLilac), at: d * s, scale: .one, rotation: along)
+            }
+            trail = (0.72, UIColor(red: 0.85, green: 0.8, blue: 1, alpha: 1))
+        case .mantisEdge:
+            // A long pink crescent.
+            let edge = Materials.glossy(Palette.mantisPink)
+            let up = SIMD3<Float>(0, d.z, -d.y)
+            let points = (0...6).map { i -> SIMD3<Float> in
+                let s = Float(i) / 6
+                return d * (0.08 + s * 0.66) - up * sin(s * .pi) * 0.1
+            }
+            for (a, b) in zip(points, points.dropFirst()) {
+                e.addRod(edge, from: a, to: b, radius: 0.026 * (1 - simd_length(b) * 0.8))
+                e.addSphere(edge, at: b, radius: 0.026 * (1 - simd_length(b) * 0.8))
+            }
+            trail = (0.74, UIColor(red: 1, green: 0.7, blue: 0.85, alpha: 1))
         default: // Twig sword
             let wood = Materials.matte(Palette.bark)
             e.addSphere(wood, at: d * 0.07, radius: 0.035)
@@ -119,6 +144,26 @@ enum WeaponModels {
                 }
             }
             trail = (0.58, UIColor(red: 1, green: 0.55, blue: 0.45, alpha: 1))
+        case .mossbackCleaver:
+            e.addRod(Materials.matte(Palette.bark), from: -d * 0.08, to: d * 0.52, radius: 0.021)
+            part(Meshes.sphere, Materials.matte(Palette.turtleShell, roughness: 0.7), [0, 0.06, 0], [0.025, 0.1, 0.1])
+            part(Meshes.sphere, Materials.matte(Palette.moss, roughness: 1), [0.012, 0.04, 0.02], [0.02, 0.05, 0.05])
+            trail = (0.58, UIColor(red: 0.6, green: 0.85, blue: 0.4, alpha: 1))
+        case .quillsplitter:
+            e.addRod(Materials.matte(Palette.darkBark), from: -d * 0.08, to: d * 0.54, radius: 0.021)
+            part(Meshes.roundedBox, Materials.matte(Palette.hedgehogBrown), [0, 0.07, 0], [0.022, 0.14, 0.14])
+            let quill = Materials.matte(Palette.quill)
+            for z: Float in [-0.05, 0, 0.05] {
+                part(Meshes.cone, quill, [0, 0.16, z], [0.012, 0.08, 0.012])
+            }
+            trail = (0.6, UIColor(red: 0.85, green: 0.7, blue: 0.5, alpha: 1))
+        case .stagjawAxe:
+            e.addRod(Materials.matte(Palette.darkBark), from: -d * 0.08, to: d * 0.56, radius: 0.023)
+            let jaw = Materials.glossy(Palette.stagBrown)
+            part(Meshes.cone, jaw, [0, 0.09, 0.04], [0.02, 0.2, 0.03], simd_quatf(angle: -0.5, axis: [1, 0, 0]))
+            part(Meshes.cone, jaw, [0, 0.09, -0.04], [0.02, 0.2, 0.03], simd_quatf(angle: 0.5, axis: [1, 0, 0]))
+            part(Meshes.sphere, Materials.glossy(Palette.stagDark), [0, 0.02, 0], [0.035, 0.04, 0.05])
+            trail = (0.64, UIColor(red: 1, green: 0.72, blue: 0.4, alpha: 1))
         default: // Pebble hatchet
             e.addRod(Materials.matte(Palette.bark), from: -d * 0.08, to: d * 0.5, radius: 0.02)
             part(Meshes.sphere, Materials.matte(Palette.pebble, roughness: 0.6), [0, 0.05, 0], [0.032, 0.085, 0.065])
@@ -148,6 +193,21 @@ enum WeaponModels {
             }
             part(Meshes.torus(radius: 0.102, tube: 0.012), Materials.glow(Palette.glowCap), .zero, .one)
             trail = (0.68, UIColor(red: 0.6, green: 1, blue: 0.9, alpha: 1))
+        case .emberstoneMaul:
+            e.addRod(Materials.matte(Palette.darkBark), from: -d * 0.2, to: head, radius: 0.024)
+            part(Meshes.cylinder, Materials.matte(UIColor(white: 0.35, alpha: 1), roughness: 0.9), .zero, [0.085, 0.26, 0.085])
+            for y: Float in [-0.08, 0.08] {
+                part(Meshes.torus(radius: 0.087, tube: 0.012), Materials.glow(Palette.emberGlow), [0, y, 0], .one)
+            }
+            trail = (0.66, UIColor(red: 1, green: 0.55, blue: 0.2, alpha: 1))
+        case .stagCrusher:
+            e.addRod(Materials.matte(Palette.stagDark), from: -d * 0.2, to: head, radius: 0.026)
+            part(Meshes.cylinder, Materials.glossy(Palette.stagBrown), .zero, [0.1, 0.3, 0.1])
+            for y: Float in [-1, 1] {
+                part(Meshes.cone, Materials.glossy(Palette.stagDark), [0, y * 0.2, 0], [0.04, 0.12, 0.04],
+                     simd_quatf(angle: y > 0 ? 0 : .pi, axis: [1, 0, 0]))
+            }
+            trail = (0.7, UIColor(red: 1, green: 0.72, blue: 0.4, alpha: 1))
         default: // Toadstool maul
             e.addRod(Materials.matte(Palette.stem), from: -d * 0.2, to: head, radius: 0.023)
             part(Meshes.cylinder, Materials.matte(Palette.capRed, roughness: 0.5), .zero, [0.08, 0.24, 0.08])
@@ -186,6 +246,26 @@ enum WeaponModels {
             e.addSphere(glow, at: d * 0.31, radius: 0.018)
             muzzle.position = d * 0.36
             trail = (0.36, Palette.glowCap)
+        case .mothwingWand:
+            e.addRod(Materials.matte(Palette.darkBark), from: -d * 0.05, to: d * 0.3, radius: 0.013)
+            let wing = Materials.matte(Palette.mothLilac)
+            for side: Float in [-1, 1] {
+                e.addPart(Meshes.teardrop, wing, at: d * 0.3 + [side * 0.04, 0.01, 0], scale: [0.03, 0.05, 0.006],
+                          rotation: simd_quatf(angle: side * -1.2, axis: [0, 0, 1]))
+            }
+            e.addSphere(Materials.glow(Palette.spiderGlow), at: d * 0.33, radius: 0.022)
+            muzzle.position = d * 0.35
+            trail = (0.36, UIColor(red: 0.75, green: 0.7, blue: 1, alpha: 1))
+        case .grumblecapScepter:
+            e.addRod(Materials.matte(Palette.stem), from: -d * 0.05, to: d * 0.3, radius: 0.016)
+            let cap = d * 0.33
+            e.addSphere(Materials.matte(Palette.capRed, roughness: 0.5), at: cap, radius: 0.055)
+            for i in 0..<4 {
+                let a = Float(i) / 4 * 2 * .pi
+                e.addSphere(Materials.matte(Palette.capSpot), at: cap + [cos(a) * 0.045, 0.02 + sin(a) * 0.02, sin(a) * 0.03], radius: 0.012)
+            }
+            muzzle.position = d * 0.36
+            trail = (0.38, UIColor(red: 1, green: 0.4, blue: 0.35, alpha: 1))
         default: // Puffball wand
             e.addRod(Materials.matte(Palette.stem), from: -d * 0.05, to: d * 0.28, radius: 0.013)
             e.addSphere(Materials.matte(Palette.capSpot, roughness: 1), at: d * 0.32, radius: 0.045)
@@ -221,6 +301,29 @@ enum WeaponModels {
                 e.addSphere(dew, at: top + [cos(angle), sin(angle), 0] * 0.08, radius: 0.014)
             }
             muzzle.position = top
+        case .buttercupStaff:
+            e.addRod(Materials.matte(Palette.dandelionStem), from: front - a * 0.42, to: front + a * 0.7, radius: 0.019)
+            let top = front + a * 0.76
+            e.addPart(Meshes.cone, Materials.matte(Palette.beeYellow, roughness: 0.35), at: top, scale: [0.075, 0.09, 0.075],
+                      rotation: simd_quatf(angle: .pi, axis: [1, 0, 0]))
+            e.addSphere(dew, at: top + a * 0.03, radius: 0.03)
+            muzzle.position = top + a * 0.03
+        case .thornroseStaff:
+            let stem = Materials.matte(Palette.thornStem)
+            e.addRod(stem, from: front - a * 0.42, to: front + a * 0.72, radius: 0.021)
+            for i in 0..<4 {
+                let angle = Float(i) * 2.3
+                e.addPart(Meshes.cone, Materials.matte(Palette.roseDark), at: front + a * (Float(i) * 0.18 - 0.1) + [cos(angle), 0, sin(angle)] * 0.02,
+                          scale: [0.008, 0.035, 0.008], rotation: simd_quatf(from: [0, 1, 0], to: simd_normalize([cos(angle), 0.3, sin(angle)])))
+            }
+            let top = front + a * 0.8
+            e.addSphere(Materials.matte(Palette.roseRed, roughness: 0.6), at: top, radius: 0.05)
+            for i in 0..<6 {
+                let angle = Float(i) / 6 * 2 * .pi
+                e.addPart(Meshes.teardrop, Materials.matte(Palette.rosePink, roughness: 0.6), at: top + [cos(angle), sin(angle), 0] * 0.05,
+                          scale: [0.025, 0.035, 0.01], rotation: simd_quatf(angle: angle - .pi / 2, axis: [0, 0, 1]))
+            }
+            muzzle.position = top
         default: // Dewdrop staff
             e.addRod(Materials.matte(Palette.bark), from: front - a * 0.42, to: front + a * 0.66, radius: 0.02)
             // Three vine tendrils cupping a droplet.
@@ -240,10 +343,15 @@ enum WeaponModels {
     /// Limbs curve forward from the grip; the string, redrawn every frame, runs behind.
     private static func bow(_ item: ItemID) -> Held {
         let e = Entity()
-        let long = item == .owlboneBow
+        let long = item == .owlboneBow || item == .mantisLongbow
         let tip: Float = long ? 0.42 : 0.36
-        let limb = Materials.matte(long ? UIColor(red: 0.92, green: 0.89, blue: 0.8, alpha: 1)
-                                        : UIColor(red: 0.72, green: 0.74, blue: 0.4, alpha: 1), roughness: 0.6)
+        let limbColor = switch item {
+        case .owlboneBow: UIColor(red: 0.92, green: 0.89, blue: 0.8, alpha: 1)
+        case .silkstringBow: Palette.spiderPurple
+        case .mantisLongbow: Palette.mantisPink
+        default: UIColor(red: 0.72, green: 0.74, blue: 0.4, alpha: 1)
+        }
+        let limb = Materials.matte(limbColor, roughness: 0.6)
         let points = (0...10).map { i -> SIMD3<Float> in
             let y = tip * (Float(i) / 5 - 1)
             let s = y / tip
@@ -253,7 +361,12 @@ enum WeaponModels {
             e.addRod(limb, from: a, to: b, radius: 0.017 - abs(a.y + b.y) / 2 / tip * 0.008)
         }
         e.addCylinder(Materials.matte(Palette.door), at: [0, 0, 0.04], radius: 0.024, height: 0.1)
-        let tipTrim = long ? Materials.matte(Palette.owlFeather) : Materials.matte(Palette.leaf)
+        let tipTrim = switch item {
+        case .owlboneBow: Materials.matte(Palette.owlFeather)
+        case .silkstringBow: Materials.glow(Palette.spiderGlow)
+        case .mantisLongbow: Materials.matte(Palette.mantisWhite)
+        default: Materials.matte(Palette.leaf)
+        }
         for end in [points.first!, points.last!] {
             e.addPart(Meshes.teardrop, tipTrim, at: end + [0, 0, 0.02], scale: [0.02, 0.05, 0.012],
                       rotation: simd_quatf(angle: end.y > 0 ? -0.5 : .pi + 0.5, axis: [1, 0, 0]))
@@ -309,6 +422,25 @@ enum WeaponModels {
             e.addPart(Meshes.roundedBox, shell, at: [0, 0, 0.09], scale: [0.025, 0.36, 0.03])
             e.addPart(Meshes.cone, Materials.glossy(Palette.eye), at: [0, 0.1, 0.12], scale: [0.03, 0.12, 0.03],
                       rotation: simd_quatf(from: [0, 1, 0], to: simd_normalize([0, 0.8, 1])))
+        case .lilypadTarge:
+            e.addCylinder(Materials.matte(Palette.frogGreen, roughness: 0.5), at: [0, 0, 0.05], radius: 0.17, height: 0.025, rotation: face)
+            e.addPart(Meshes.torus(radius: 0.17, tube: 0.014), Materials.matte(Palette.moss), at: [0, 0, 0.05], scale: .one, rotation: face)
+            e.addSphere(Materials.matte(Palette.rosePink), at: [0.05, 0.05, 0.08], radius: 0.035, squash: [1, 1.3, 1])
+        case .mossbackShield:
+            e.addSphere(Materials.matte(Palette.turtleShell, roughness: 0.7), at: [0, 0, 0.04], radius: 1, squash: [0.19, 0.21, 0.07])
+            let scute = Materials.matte(Palette.turtleShellDark)
+            for (x, y) in [(0, 0), (0.08, 0.09), (-0.08, 0.09), (0.08, -0.09), (-0.08, -0.09)] as [(Float, Float)] {
+                e.addSphere(scute, at: [x, y, 0.09 - (abs(x) + abs(y)) * 0.15], radius: 0.05, squash: [1, 1, 0.3])
+            }
+        case .pineconeBulwark:
+            e.addSphere(Materials.matte(Palette.pineconeDark), at: [0, 0, 0.04], radius: 1, squash: [0.18, 0.22, 0.05])
+            let scale = Materials.matte(Palette.pinecone, roughness: 0.9)
+            for row in 0..<4 {
+                let y = Float(row) * 0.1 - 0.15
+                for column in -1...1 {
+                    e.addSphere(scale, at: [Float(column) * 0.08 + (row % 2 == 0 ? 0.04 : 0), y, 0.08], radius: 0.05, squash: [1, 0.6, 0.4])
+                }
+            }
         default: // Bark buckler
             e.addCylinder(Materials.matte(Palette.bark, roughness: 1), at: [0, 0, 0.05], radius: 0.15, height: 0.035, rotation: face)
             e.addPart(Meshes.torus(radius: 0.15, tube: 0.018), Materials.matte(Palette.darkBark), at: [0, 0, 0.05], scale: .one, rotation: face)

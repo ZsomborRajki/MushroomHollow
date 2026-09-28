@@ -36,6 +36,44 @@ enum Palette {
     static let sporeGlow = UIColor(red: 0.70, green: 1.00, blue: 0.45, alpha: 1)
     static let owlFeather = UIColor(red: 0.45, green: 0.34, blue: 0.24, alpha: 1)
     static let owlEye = UIColor(red: 1.00, green: 0.78, blue: 0.20, alpha: 1)
+    static let blush = UIColor(red: 1.00, green: 0.55, blue: 0.60, alpha: 1)
+
+    static let ladybugRed = UIColor(red: 0.86, green: 0.12, blue: 0.10, alpha: 1)
+    static let bugBlack = UIColor(red: 0.10, green: 0.08, blue: 0.08, alpha: 1)
+    static let pillGrey = UIColor(red: 0.52, green: 0.54, blue: 0.60, alpha: 1)
+    static let pillDark = UIColor(red: 0.36, green: 0.38, blue: 0.45, alpha: 1)
+    static let acornBrown = UIColor(red: 0.72, green: 0.46, blue: 0.20, alpha: 1)
+    static let acornCap = UIColor(red: 0.46, green: 0.31, blue: 0.17, alpha: 1)
+    static let acornCapDark = UIColor(red: 0.36, green: 0.24, blue: 0.13, alpha: 1)
+    static let frogGreen = UIColor(red: 0.36, green: 0.64, blue: 0.26, alpha: 1)
+    static let frogBelly = UIColor(red: 0.86, green: 0.90, blue: 0.62, alpha: 1)
+    static let beeYellow = UIColor(red: 1.00, green: 0.80, blue: 0.22, alpha: 1)
+    static let wingGlass = UIColor(red: 0.90, green: 0.96, blue: 1.00, alpha: 1)
+    static let puffWhite = UIColor(red: 0.97, green: 0.97, blue: 0.94, alpha: 1)
+    static let dandelionStem = UIColor(red: 0.47, green: 0.62, blue: 0.27, alpha: 1)
+    static let turtleShell = UIColor(red: 0.36, green: 0.42, blue: 0.24, alpha: 1)
+    static let turtleShellDark = UIColor(red: 0.27, green: 0.31, blue: 0.18, alpha: 1)
+    static let turtleSkin = UIColor(red: 0.62, green: 0.70, blue: 0.46, alpha: 1)
+    static let newtOrange = UIColor(red: 0.95, green: 0.42, blue: 0.16, alpha: 1)
+    static let emberGlow = UIColor(red: 1.00, green: 0.62, blue: 0.22, alpha: 1)
+    static let spiderPurple = UIColor(red: 0.38, green: 0.26, blue: 0.50, alpha: 1)
+    static let spiderDark = UIColor(red: 0.21, green: 0.16, blue: 0.29, alpha: 1)
+    static let spiderGlow = UIColor(red: 0.55, green: 0.90, blue: 1.00, alpha: 1)
+    static let mothLilac = UIColor(red: 0.72, green: 0.62, blue: 0.86, alpha: 1)
+    static let mothFur = UIColor(red: 0.92, green: 0.87, blue: 0.96, alpha: 1)
+    static let hedgehogBrown = UIColor(red: 0.46, green: 0.34, blue: 0.25, alpha: 1)
+    static let hedgehogFace = UIColor(red: 0.94, green: 0.83, blue: 0.67, alpha: 1)
+    static let quill = UIColor(red: 0.30, green: 0.22, blue: 0.16, alpha: 1)
+    static let pinecone = UIColor(red: 0.55, green: 0.36, blue: 0.21, alpha: 1)
+    static let pineconeDark = UIColor(red: 0.38, green: 0.24, blue: 0.13, alpha: 1)
+    static let mantisPink = UIColor(red: 0.98, green: 0.72, blue: 0.84, alpha: 1)
+    static let mantisWhite = UIColor(red: 0.99, green: 0.94, blue: 0.96, alpha: 1)
+    static let roseRed = UIColor(red: 0.84, green: 0.14, blue: 0.30, alpha: 1)
+    static let rosePink = UIColor(red: 0.96, green: 0.48, blue: 0.58, alpha: 1)
+    static let roseDark = UIColor(red: 0.45, green: 0.12, blue: 0.16, alpha: 1)
+    static let thornStem = UIColor(red: 0.26, green: 0.44, blue: 0.20, alpha: 1)
+    static let stagBrown = UIColor(red: 0.32, green: 0.18, blue: 0.10, alpha: 1)
+    static let stagDark = UIColor(red: 0.17, green: 0.10, blue: 0.06, alpha: 1)
 }
 
 /// Shared unit meshes; every placeholder part is one of these, scaled.
@@ -49,6 +87,8 @@ enum Meshes {
     /// Flat annulus in the XZ plane, outer radius 1.
     static let ring = makeRing(inner: 0.82, outer: 1, segments: 64)
     static let disc = makeRing(inner: 0, outer: 1, segments: 64)
+    /// A very thin annulus, for a trail that circles the world.
+    static let trailRing = makeRing(inner: 0.985, outer: 1, segments: 256)
     /// Unit sphere with texture coordinates: u = 0.5 faces +Z, v = 1 at the top.
     static let uvSphere = makeUVSphere(rings: 32, segments: 48)
     /// Round at the top (y = 1), pointed at the bottom (y = -1), radius 1. Hair locks, leaves, petals.
@@ -183,6 +223,19 @@ enum Materials {
         material.baseColor = .init(tint: color)
         material.roughness = .init(floatLiteral: roughness)
         material.metallic = .init(floatLiteral: 0)
+        cache[key] = material
+        return material
+    }
+
+    /// See-through (insect wings, webs).
+    static func translucent(_ color: UIColor, opacity: Float) -> any RealityKit.Material {
+        let key = "translucent-\(color.description)-\(opacity)"
+        if let cached = cache[key] { return cached }
+        var material = PhysicallyBasedMaterial()
+        material.baseColor = .init(tint: color)
+        material.roughness = 0.3
+        material.blending = .transparent(opacity: .init(floatLiteral: opacity))
+        material.faceCulling = .none
         cache[key] = material
         return material
     }

@@ -219,6 +219,7 @@ extension WorldMap {
             AngleMath.direction(forYaw: degrees * .pi / 180) * distance
         }
 
+        // The inner ring, between the roots.
         let glade = areaCenter(degrees: 60, distance: 44)
         let maze = areaCenter(degrees: 120, distance: 46)
         let barkfall = areaCenter(degrees: 176, distance: 47)
@@ -226,13 +227,43 @@ extension WorldMap {
         let bough = areaCenter(degrees: 296, distance: 52)
         let boughSide = Vec2(bough.y, -bough.x).normalizedOrZero
 
+        // The outer ring: open, flat forest floor past the root tips, clockwise from beside the village.
+        let outerDistance: Float = 108
+        let meadow = areaCenter(degrees: 28, distance: outerDistance)
+        let creek = areaCenter(degrees: 82, distance: outerDistance)
+        let thicket = areaCenter(degrees: 136, distance: outerDistance)
+        let ridge = areaCenter(degrees: 190, distance: outerDistance)
+        let briars = areaCenter(degrees: 244, distance: outerDistance)
+        let grove = areaCenter(degrees: 312, distance: outerDistance)
+
+        /// Two species share each hunting ground, each in its own half so they only mingle in the middle.
+        func pair(_ first: MobKind, _ second: MobKind, at center: Vec2, counts: (Int, Int) = (6, 6),
+                  radius: Float = 12, spread: Float = 6) -> [MobSpawnArea] {
+            let side = Vec2(center.y, -center.x).normalizedOrZero * spread
+            return [MobSpawnArea(kind: first, center: center - side, radius: radius, count: counts.0),
+                    MobSpawnArea(kind: second, center: center + side, radius: radius, count: counts.1)]
+        }
+
+        let mobSpawns: [[MobSpawnArea]] = [
+            pair(.snail, .ladybug, at: glade, counts: (8, 5), radius: 10, spread: 4),
+            pair(.slug, .pillBug, at: maze, counts: (6, 5), radius: 10, spread: 4),
+            pair(.beetle, .acornling, at: barkfall, counts: (6, 5), radius: 10, spread: 4),
+            pair(.sporeBeast, .bogFrog, at: fen, counts: (5, 5), radius: 10, spread: 4),
+            pair(.fuzzbee, .puffweed, at: meadow),
+            pair(.mossTurtle, .emberNewt, at: creek),
+            pair(.weaverSpider, .duskMoth, at: thicket),
+            pair(.hedgehog, .coneKnight, at: ridge),
+            pair(.mantis, .thornrose, at: briars),
+            pair(.grumblecap, .stagBeetle, at: grove, counts: (5, 5)),
+        ]
+
         // The fallen bough: a thick branch lying along the far edge of the owl's arena.
         let fallenBranch = TreeRoot(
             points: [0, 1, 2, 3].map { i in bough + bough.normalizedOrZero * 13 + boughSide * (Float(i) * 6 - 9) },
             radii: [1.8, 1.6, 1.4, 1.0])
 
         return WorldMap(
-            boundaryRadius: 85,
+            boundaryRadius: 140,
             trunkRadius: trunkRadius,
             trunkCollisionRadius: trunkRadius + 2,
             roots: roots + [fallenBranch],
@@ -241,12 +272,7 @@ extension WorldMap {
             villageRadius: 17,
             playerSpawn: Vec2(0, 37),
             // Zones run clockwise around the trunk, getting tougher as you go.
-            mobSpawns: [
-                MobSpawnArea(kind: .snail, center: glade, radius: 12, count: 8),
-                MobSpawnArea(kind: .slug, center: maze, radius: 12, count: 6),
-                MobSpawnArea(kind: .beetle, center: barkfall, radius: 12, count: 6),
-                MobSpawnArea(kind: .sporeBeast, center: fen, radius: 12, count: 5),
-            ],
+            mobSpawns: mobSpawns.flatMap { $0 },
             npcs: [
                 NPCPlacement(id: .elderMorel, position: villageCenter + Vec2(-3.2, -2.5), yaw: 0.6),
                 NPCPlacement(id: .chanterelle, position: villageCenter + Vec2(3.6, -1.5), yaw: -0.9),
@@ -259,6 +285,12 @@ extension WorldMap {
                 Zone(name: "Barkfall Hollow", center: barkfall, radius: 17, levels: 7...11),
                 Zone(name: "Spore Fen", center: fen, radius: 17, levels: 10...15),
                 Zone(name: "The Great Bough", center: bough, radius: 17, levels: 15...20),
+                Zone(name: "Buttercup Meadow", center: meadow, radius: 22, levels: 14...18),
+                Zone(name: "Mossback Creek", center: creek, radius: 22, levels: 17...21),
+                Zone(name: "Silkshade Thicket", center: thicket, radius: 22, levels: 20...24),
+                Zone(name: "Pinecone Rise", center: ridge, radius: 22, levels: 23...27),
+                Zone(name: "Briar Tangle", center: briars, radius: 22, levels: 26...30),
+                Zone(name: "Stagshade Grove", center: grove, radius: 22, levels: 28...30),
                 Zone(name: "The Forest Floor", center: .zero, radius: 200, levels: nil),
             ],
             bossArena: BossArena(kind: .owl, center: bough, radius: 14, perch: bough + bough.normalizedOrZero * 4)

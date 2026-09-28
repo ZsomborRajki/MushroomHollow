@@ -56,8 +56,42 @@ extension MobKind {
         case .beetle: 1.1
         case .sporeBeast: 2.0
         case .sporeling: 0.9
+        case .ladybug: 0.9
+        case .pillBug: 0.8
+        case .acornling: 1.3
+        case .bogFrog: 1.1
+        case .fuzzbee: 1.8
+        case .puffweed: 2.2
+        case .puffling: 1.3
+        case .mossTurtle: 1.5
+        case .emberNewt: 0.9
+        case .weaverSpider: 1.3
+        case .duskMoth: 2.0
+        case .hedgehog: 1.2
+        case .coneKnight: 2.0
+        case .mantis: 1.8
+        case .thornrose: 2.3
+        case .grumblecap: 2.3
+        case .stagBeetle: 1.4
         case .mouse: 0.9
         case .owl: 6.8
+        }
+    }
+
+    /// Flies (in looks only: the sim keeps every mob on the ground) and bobs in the air.
+    var hovers: Bool {
+        switch self {
+        case .fuzzbee, .duskMoth, .puffling: true
+        default: false
+        }
+    }
+
+    /// Wing beats, in radians per second: a blur for bees, a flutter for moths.
+    var flapRate: Float {
+        switch self {
+        case .fuzzbee: 45
+        case .duskMoth: 9
+        default: 0
         }
     }
 }

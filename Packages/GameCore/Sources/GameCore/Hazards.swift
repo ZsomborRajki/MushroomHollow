@@ -1,8 +1,64 @@
 public enum HazardKind: String, Codable, Sendable {
     /// Left behind by slugs; slows players who walk through it.
     case slime
-    /// Released by spore beasts; poisons players inside.
+    /// Spun by weaver spiders as they chase; slows like slime.
+    case web
+    /// Dropped by ember newts as they chase; burns.
+    case embers
+    /// Released by spore beasts and grumblecaps; poisons players inside.
     case sporeCloud
+    /// Shaken loose by thornroses; stings.
+    case pollen
+    /// Beaten off a dusk moth's wings; stings.
+    case mothDust
+
+    /// Walking through it halves your speed.
+    public var slows: Bool {
+        switch self {
+        case .slime, .web: true
+        case .embers, .sporeCloud, .pollen, .mothDust: false
+        }
+    }
+
+    /// Clouds billow around their mob; the rest lie flat on the ground.
+    public var isCloud: Bool {
+        switch self {
+        case .sporeCloud, .pollen, .mothDust: true
+        case .slime, .web, .embers: false
+        }
+    }
+
+    var radius: Float {
+        switch self {
+        case .slime: 0.9
+        case .web: 1.1
+        case .embers: 0.8
+        case .sporeCloud: 2.8
+        case .pollen: 3
+        case .mothDust: 2.6
+        }
+    }
+
+    var seconds: Float {
+        switch self {
+        case .slime: 6
+        case .web: 7
+        case .embers: 3
+        case .sporeCloud, .pollen: 5
+        case .mothDust: 4
+        }
+    }
+
+    /// Damage per second inside it, as a fraction of its owner's attack.
+    var damageFraction: Float {
+        switch self {
+        case .slime, .web: 0
+        case .embers: 0.25
+        case .pollen: 0.35
+        case .sporeCloud: 0.4
+        case .mothDust: 0.45
+        }
+    }
 }
 
 struct Hazard: Codable, Sendable {
@@ -35,9 +91,16 @@ extension GameSimulation {
                               totalTicks: ticks, ticksLeft: ticks, owner: owner, damagePerSecond: damagePerSecond))
     }
 
-    func isInSlime(_ entity: WorldEntity) -> Bool {
+    /// Leaves a hazard of `kind` at `owner`'s feet, sized and timed by the kind.
+    mutating func spawnHazard(_ kind: HazardKind, from owner: WorldEntity) {
+        spawnHazard(kind, at: owner.position.xz, radius: kind.radius, seconds: kind.seconds, owner: owner.id,
+                    damagePerSecond: Int(Float(owner.stats.attack) * kind.damageFraction))
+    }
+
+    /// Wading through slime or webs.
+    func isSlowed(_ entity: WorldEntity) -> Bool {
         entity.position.y < 0.5
-            && hazards.contains { $0.kind == .slime && $0.position.distance(to: entity.position.xz) < $0.radius + entity.radius * 0.5 }
+            && hazards.contains { $0.kind.slows && $0.position.distance(to: entity.position.xz) < $0.radius + entity.radius * 0.5 }
     }
 
     mutating func stepHazards() {

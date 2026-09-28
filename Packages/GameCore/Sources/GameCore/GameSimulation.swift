@@ -116,7 +116,7 @@ public struct GameSimulation: Sendable {
             caps: data.caps, inventory: data.inventory, equipment: data.equipment,
             quests: QuestID.allCases.map { QuestStatus(id: $0, state: questState($0, for: e)) },
             itemCooldown: Float(data.itemCooldown) * Self.tickDuration,
-            isSlowed: isInSlime(e),
+            isSlowed: isSlowed(e),
             playerClass: data.playerClass,
             buffs: data.buffs.map {
                 BuffStatus(skill: $0.skill, remaining: Float($0.ticksLeft) * Self.tickDuration,

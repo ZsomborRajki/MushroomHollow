@@ -60,6 +60,9 @@ final class WorldRenderer {
         }
     }
 
+    /// Beyond this, mobs aren't drawn (the world is 280 m across; a critter here is ~3 px tall).
+    private static let mobDrawDistance: Float = 120
+
     init(map: WorldMap) {
         SimEntityComponent.registerComponent()
 
@@ -108,9 +111,14 @@ final class WorldRenderer {
 
         for current in host.currentSnapshot.entities {
             seen.insert(current.id)
-            let view = actors[current.id] ?? makeActor(current)
             let from = previous[current.id] ?? current
             let position = simd_mix(from.position, current.position, SIMD3(repeating: alpha))
+            // Mobs across the world are a few pixels tall: don't build, draw, or animate them.
+            let isDistant = current.kind.isMob && current.kind != .mob(.owl)
+                && simd_distance_squared(position, camera.position) > Self.mobDrawDistance * Self.mobDrawDistance
+            guard let view = actors[current.id] ?? (isDistant ? nil : makeActor(current)) else { continue }
+            if view.entity.isEnabled == isDistant { view.entity.isEnabled = !isDistant }
+            if isDistant { continue }
             let yaw = AngleMath.lerp(from.yaw, current.yaw, alpha)
             view.entity.transform = Transform(
                 scale: .one,
@@ -276,14 +284,14 @@ final class WorldRenderer {
         actorsRoot.addChild(entity)
         let view = ActorView(entity: entity, model: model, kind: snapshot.kind)
         view.rig = rig
-        view.wings = ActorModels.owlWingNames.compactMap { model.findEntity(named: $0) }
+        view.wings = ActorModels.wingNames.compactMap { model.findEntity(named: $0) }
 
-        if snapshot.kind == .mob(.beetle) {
+        if case let .mob(kind) = snapshot.kind, kind.charges {
             // Red strip on the ground showing where the charge will go.
             let length = GameSimulation.chargeSpeed * GameSimulation.chargeDuration
             let strip = ModelEntity(mesh: Meshes.box, materials: [Self.translucent(.systemRed, opacity: 0.45)])
-            strip.transform = Transform(scale: [1.2, 0.02, length], rotation: simd_quatf(angle: 0, axis: [0, 1, 0]),
-                                        translation: [0, 0.03, length / 2 + 0.5])
+            strip.transform = Transform(scale: [kind.radius * 1.7, 0.02, length], rotation: simd_quatf(angle: 0, axis: [0, 1, 0]),
+                                        translation: [0, 0.03, length / 2 + kind.radius])
             strip.components.set(DynamicLightShadowComponent(castsShadow: false))
             strip.isEnabled = false
             entity.addChild(strip)
@@ -351,6 +359,17 @@ final class WorldRenderer {
             scale = [1 - ripple * 0.3, 1 - ripple * 0.5, 1 + ripple]
         case .mob(.owl):
             animateOwl(view, snapshot: snapshot, time: t)
+        case let .mob(kind) where kind.hovers:
+            // Bees, moths, and seeds bob in the air and beat their wings.
+            offset.y = sin(t * 3 + seed) * 0.08
+            rotation = simd_quatf(angle: sin(t * 1.7 + seed) * 0.06, axis: [0, 0, 1])
+            for (index, wing) in view.wings.enumerated() {
+                let side: Float = index == 0 ? -1 : 1
+                wing.orientation = simd_quatf(angle: -side * (0.15 + sin(t * kind.flapRate + seed) * 0.55), axis: [0, 0, 1])
+            }
+        case .mob(.puffweed), .mob(.thornrose):
+            // Rooted-looking plants sway on their stems and shuffle when they walk.
+            rotation = simd_quatf(angle: sin(t * (isMoving ? 7 : 1.4) + seed) * (isMoving ? 0.1 : 0.05), axis: [0, 0, 1])
         case .mob:
             offset.y = isMoving ? abs(sin(t * 8 + seed)) * 0.05 : 0
         case .npc:
@@ -499,7 +518,7 @@ final class WorldRenderer {
             // Fade in quickly, fade out over the last third of its life.
             let opacity = min(1, hazard.remaining * 3)
             entity.components.set(OpacityComponent(opacity: opacity))
-            if hazard.kind == .sporeCloud {
+            if hazard.kind.isCloud {
                 entity.scale = SIMD3(repeating: 0.85 + sin(Float(time) * 3 + Float(hazard.id)) * 0.05)
             }
         }
@@ -512,23 +531,33 @@ final class WorldRenderer {
     private func makeHazard(_ hazard: HazardSnapshot) -> Entity {
         let entity = Entity()
         entity.position = [hazard.position.x, 0, hazard.position.y]
-        switch hazard.kind {
-        case .slime:
-            var material = PhysicallyBasedMaterial()
-            material.baseColor = .init(tint: UIColor(red: 0.75, green: 0.8, blue: 0.3, alpha: 1))
-            material.roughness = 0.1
-            material.blending = .transparent(opacity: .init(floatLiteral: 0.55))
+        let color = hazard.kind.color
+        if hazard.kind.isCloud {
+            let cloud = ModelEntity(mesh: Meshes.sphere, materials: [Self.translucent(color, opacity: 0.3)])
+            cloud.transform = Transform(scale: [hazard.radius, hazard.radius * 0.45, hazard.radius],
+                                        rotation: simd_quatf(angle: 0, axis: [0, 1, 0]), translation: [0, 0.4, 0])
+            entity.addChild(cloud)
+            entity.components.set(Self.makeCloudEmitter(radius: hazard.radius, colors: hazard.kind.particleColors))
+        } else {
+            // A puddle: slime, a web, or smouldering embers.
+            let material: any RealityKit.Material = switch hazard.kind {
+            case .embers: Self.translucent(color, opacity: 0.7)
+            case .web: Materials.translucent(color, opacity: 0.5)
+            default: Materials.translucent(color, opacity: 0.55)
+            }
             let puddle = ModelEntity(mesh: Meshes.cylinder, materials: [material])
             puddle.transform = Transform(scale: [hazard.radius, 0.01, hazard.radius * 0.8],
                                          rotation: simd_quatf(angle: Float(hazard.id), axis: [0, 1, 0]),
                                          translation: [0, 0.02, 0])
             entity.addChild(puddle)
-        case .sporeCloud:
-            let cloud = ModelEntity(mesh: Meshes.sphere, materials: [Self.translucent(UIColor(red: 0.6, green: 0.3, blue: 0.8, alpha: 1), opacity: 0.3)])
-            cloud.transform = Transform(scale: [hazard.radius, hazard.radius * 0.45, hazard.radius],
-                                        rotation: simd_quatf(angle: 0, axis: [0, 1, 0]), translation: [0, 0.4, 0])
-            entity.addChild(cloud)
-            entity.components.set(Self.makeCloudEmitter(radius: hazard.radius))
+            if hazard.kind == .web {
+                // Rings of silk.
+                for fraction: Float in [0.45, 0.8] {
+                    let ring = ModelEntity(mesh: Meshes.ring, materials: [Self.translucent(.white, opacity: 0.8)])
+                    ring.transform = Transform(scale: SIMD3(repeating: hazard.radius * fraction), translation: [0, 0.035, 0])
+                    entity.addChild(ring)
+                }
+            }
         }
         entity.components.set(DynamicLightShadowComponent(castsShadow: false))
         hazardsRoot.addChild(entity)
@@ -545,7 +574,7 @@ final class WorldRenderer {
         return material
     }
 
-    private static func makeCloudEmitter(radius: Float) -> ParticleEmitterComponent {
+    private static func makeCloudEmitter(radius: Float, colors: (UIColor, UIColor)) -> ParticleEmitterComponent {
         var emitter = ParticleEmitterComponent()
         emitter.emitterShape = .cylinder
         emitter.birthLocation = .volume
@@ -559,9 +588,7 @@ final class WorldRenderer {
         emitter.mainEmitter.opacityCurve = .gradualFadeInOut
         emitter.mainEmitter.blendMode = .additive
         emitter.mainEmitter.isLightingEnabled = false
-        emitter.mainEmitter.color = .constant(.random(
-            a: UIColor(red: 0.7, green: 0.3, blue: 0.9, alpha: 1),
-            b: UIColor(red: 0.55, green: 0.9, blue: 0.4, alpha: 1)))
+        emitter.mainEmitter.color = .constant(.random(a: colors.0, b: colors.1))
         return emitter
     }
 
@@ -610,5 +637,28 @@ final class WorldRenderer {
             a: UIColor(red: 1.0, green: 0.95, blue: 0.6, alpha: 1),
             b: UIColor(red: 0.7, green: 1.0, blue: 0.8, alpha: 1)))
         return emitter
+    }
+}
+
+extension HazardKind {
+    /// The cloud or puddle's own color.
+    fileprivate var color: UIColor {
+        switch self {
+        case .slime: UIColor(red: 0.75, green: 0.8, blue: 0.3, alpha: 1)
+        case .web: UIColor(red: 0.92, green: 0.92, blue: 0.96, alpha: 1)
+        case .embers: UIColor(red: 1, green: 0.45, blue: 0.12, alpha: 1)
+        case .sporeCloud: UIColor(red: 0.6, green: 0.3, blue: 0.8, alpha: 1)
+        case .pollen: UIColor(red: 1, green: 0.85, blue: 0.3, alpha: 1)
+        case .mothDust: UIColor(red: 0.75, green: 0.7, blue: 0.95, alpha: 1)
+        }
+    }
+
+    /// The motes drifting up out of a cloud.
+    fileprivate var particleColors: (UIColor, UIColor) {
+        switch self {
+        case .pollen: (UIColor(red: 1, green: 0.9, blue: 0.35, alpha: 1), UIColor(red: 1, green: 0.6, blue: 0.75, alpha: 1))
+        case .mothDust: (UIColor(red: 0.8, green: 0.75, blue: 1, alpha: 1), UIColor(red: 0.55, green: 0.9, blue: 1, alpha: 1))
+        default: (UIColor(red: 0.7, green: 0.3, blue: 0.9, alpha: 1), UIColor(red: 0.55, green: 0.9, blue: 0.4, alpha: 1))
+        }
     }
 }

@@ -10,7 +10,18 @@ public struct EntityID: Hashable, Comparable, Codable, Sendable, CustomStringCon
 }
 
 public enum MobKind: String, Codable, Sendable, CaseIterable {
-    case snail, slug, beetle, sporeBeast, sporeling, mouse, owl
+    // The inner ring, levels 1–15
+    case snail, slug, beetle, sporeBeast, sporeling
+    case ladybug, pillBug, acornling, bogFrog
+    // The outer ring, levels 14–30
+    case fuzzbee, puffweed, puffling
+    case mossTurtle, emberNewt
+    case weaverSpider, duskMoth
+    case hedgehog, coneKnight
+    case mantis, thornrose
+    case grumblecap, stagBeetle
+    // The Hollow Owl and its summons
+    case mouse, owl
 
     public var displayName: String {
         switch self {
@@ -19,8 +30,35 @@ public enum MobKind: String, Codable, Sendable, CaseIterable {
         case .beetle: "Beetle"
         case .sporeBeast: "Spore Beast"
         case .sporeling: "Sporeling"
+        case .ladybug: "Ladybug"
+        case .pillBug: "Pill Bug"
+        case .acornling: "Acornling"
+        case .bogFrog: "Bog Frog"
+        case .fuzzbee: "Fuzzbee"
+        case .puffweed: "Puffweed"
+        case .puffling: "Puffling"
+        case .mossTurtle: "Mossback Turtle"
+        case .emberNewt: "Ember Newt"
+        case .weaverSpider: "Weaver Spider"
+        case .duskMoth: "Dusk Moth"
+        case .hedgehog: "Bristle Hedgehog"
+        case .coneKnight: "Cone Knight"
+        case .mantis: "Orchid Mantis"
+        case .thornrose: "Thornrose"
+        case .grumblecap: "Grumblecap"
+        case .stagBeetle: "Stag Beetle"
         case .mouse: "Field Mouse"
         case .owl: "The Hollow Owl"
+        }
+    }
+
+    /// "Defeat 8 Orchid Mantises".
+    public var pluralName: String {
+        switch self {
+        case .mantis: "Orchid Mantises"
+        case .puffweed: "Puffweeds"
+        case .mouse: "Field Mice"
+        default: displayName + "s"
         }
     }
 
@@ -32,6 +70,23 @@ public enum MobKind: String, Codable, Sendable, CaseIterable {
         case .beetle: 0.7
         case .sporeBeast: 0.9
         case .sporeling: 0.4
+        case .ladybug: 0.5
+        case .pillBug: 0.55
+        case .acornling: 0.5
+        case .bogFrog: 0.65
+        case .fuzzbee: 0.55
+        case .puffweed: 0.8
+        case .puffling: 0.4
+        case .mossTurtle: 0.95
+        case .emberNewt: 0.6
+        case .weaverSpider: 0.85
+        case .duskMoth: 0.8
+        case .hedgehog: 0.75
+        case .coneKnight: 0.8
+        case .mantis: 0.8
+        case .thornrose: 0.9
+        case .grumblecap: 1.0
+        case .stagBeetle: 1.1
         case .mouse: 0.45
         case .owl: 2.6
         }
@@ -45,6 +100,23 @@ public enum MobKind: String, Codable, Sendable, CaseIterable {
         case .beetle: 1.6
         case .sporeBeast: 1.1
         case .sporeling: 1.4
+        case .ladybug: 0.9
+        case .pillBug: 0.9
+        case .acornling: 1.2
+        case .bogFrog: 1.4
+        case .fuzzbee: 2
+        case .puffweed: 0.8
+        case .puffling: 1.6
+        case .mossTurtle: 0.7
+        case .emberNewt: 1.8
+        case .weaverSpider: 1.8
+        case .duskMoth: 1.6
+        case .hedgehog: 1.5
+        case .coneKnight: 1.1
+        case .mantis: 2
+        case .thornrose: 0.6
+        case .grumblecap: 0.9
+        case .stagBeetle: 1.5
         case .mouse: 2
         case .owl: 3.0
         }
@@ -65,9 +137,9 @@ public enum EntityKind: Hashable, Codable, Sendable {
 /// What an entity is visibly doing, beyond moving (drives animations and telegraphs).
 public enum Pose: String, Codable, Sendable {
     case normal
-    /// Snail pulled into its shell: much harder to hurt.
+    /// Pulled into its shell (or curled up): much harder to hurt.
     case hiding
-    /// Beetle lowering its head before a charge. Get out of the way!
+    /// Lowering its head before a charge. Get out of the way!
     case windingUp
     case charging
     /// Owl rising before a swoop.

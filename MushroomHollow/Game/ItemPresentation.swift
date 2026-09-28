@@ -27,6 +27,26 @@ extension ItemID {
         case .leafTunic, .barkMail: "tshirt.fill"
         case .mossBoots, .barkTreads: "shoeprints.fill"
         case .grassMitts, .chitinGauntlets: "hand.raised.fill"
+        case .spottedWingCase: "ladybug.fill"
+        case .pillBugPlate, .mossyScute, .pineScale: "hexagon.fill"
+        case .bitterAcorn: "leaf.fill"
+        case .frogJelly: "drop.circle.fill"
+        case .honeycombChip: "circle.hexagongrid.fill"
+        case .pollenPuff: "aqi.low"
+        case .emberScale: "flame.fill"
+        case .spiderSilk: "circle.dotted"
+        case .mothDust: "sparkles"
+        case .hedgehogQuill, .mantisClaw: "line.diagonal"
+        case .roseHip: "camera.macro"
+        case .grumbleSpore: "circle.hexagonpath.fill"
+        case .stagMandible: "arrow.up.and.down.and.sparkles"
+        case .stingerBlade, .silkfangSaber, .mantisEdge: "wand.and.rays"
+        case .mossbackCleaver, .quillsplitter, .stagjawAxe: "hammer.fill"
+        case .lilypadTarge, .mossbackShield, .pineconeBulwark: "shield.fill"
+        case .emberstoneMaul, .stagCrusher: "hammer.circle.fill"
+        case .silkstringBow, .mantisLongbow: "scope"
+        case .mothwingWand, .grumblecapScepter: "wand.and.stars"
+        case .buttercupStaff, .thornroseStaff: "camera.macro"
         case .amberShard: "diamond.fill"
         case .wardCharm: "seal.fill"
         case .dandelionSeed: "wind"
@@ -70,6 +90,22 @@ extension ItemID {
         case .grassMitts: .green
         case .chitinGauntlets: Color(red: 0.4, green: 0.55, blue: 0.95)
         case .barkTreads: .brown
+        case .spottedWingCase: .red
+        case .pillBugPlate: Color(white: 0.65)
+        case .bitterAcorn, .pineScale: Color(red: 0.7, green: 0.48, blue: 0.25)
+        case .frogJelly, .lilypadTarge, .frogHoppers: Color(red: 0.45, green: 0.8, blue: 0.35)
+        case .honeycombChip, .stingerBlade, .honeycombHelm, .buttercupStaff: Color(red: 1, green: 0.8, blue: 0.25)
+        case .pollenPuff: Color(white: 0.95)
+        case .mossyScute, .mossbackCleaver, .mossbackShield, .turtleshellMail: Color(red: 0.5, green: 0.62, blue: 0.3)
+        case .emberScale, .emberstoneMaul: Color(red: 1, green: 0.5, blue: 0.2)
+        case .spiderSilk, .silkfangSaber, .silkstringBow, .silkweaveGloves: Color(red: 0.8, green: 0.75, blue: 0.95)
+        case .mothDust, .mothwingWand: Color(red: 0.72, green: 0.62, blue: 0.9)
+        case .hedgehogQuill, .quillsplitter, .quilledBoots: Color(red: 0.6, green: 0.45, blue: 0.32)
+        case .pineconeHelm, .pineconeBulwark: Color(red: 0.62, green: 0.42, blue: 0.24)
+        case .mantisClaw, .mantisEdge, .mantisLongbow, .mantisCarapace: Color(red: 1, green: 0.7, blue: 0.82)
+        case .roseHip, .thornroseStaff, .rosethornGauntlets: Color(red: 0.9, green: 0.25, blue: 0.38)
+        case .grumbleSpore, .grumblecapScepter: Color(red: 0.95, green: 0.3, blue: 0.3)
+        case .stagMandible, .stagjawAxe, .stagCrusher: Color(red: 0.55, green: 0.35, blue: 0.22)
         case .amberShard: Color(red: 1, green: 0.66, blue: 0.2)
         case .wardCharm: Color(red: 0.45, green: 0.95, blue: 0.85)
         default: definition.set?.tint ?? .white
@@ -143,6 +179,7 @@ extension ItemSet {
         case .briar: Color(red: 0.55, green: 0.75, blue: 0.3)
         case .mycelium: Color(red: 0.8, green: 0.6, blue: 1)
         case .rainpetal: Color(red: 0.55, green: 0.85, blue: 1)
+        case .thistledown: Color(red: 0.85, green: 0.78, blue: 1)
         }
     }
 }

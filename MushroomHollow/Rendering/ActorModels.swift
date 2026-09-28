@@ -3,6 +3,7 @@ import RealityKit
 import UIKit
 
 /// Placeholder models for mobs and NPCs, built from primitives (the player is `PlayerRig`).
+/// The newer critters live in `CritterModels`.
 /// Every model faces +Z (yaw 0) and stands on y = 0.
 @MainActor
 enum ActorModels {
@@ -16,6 +17,23 @@ enum ActorModels {
         case .mob(.sporeBeast): buildSporeBeast(into: model)
         case .mob(.sporeling): buildSporeling(into: model)
         case .mob(.mouse): buildMouse(into: model)
+        case .mob(.ladybug): buildLadybug(into: model)
+        case .mob(.pillBug): buildPillBug(into: model)
+        case .mob(.acornling): buildAcornling(into: model)
+        case .mob(.bogFrog): buildBogFrog(into: model)
+        case .mob(.fuzzbee): buildFuzzbee(into: model)
+        case .mob(.puffweed): buildPuffweed(into: model)
+        case .mob(.puffling): buildPuffling(into: model)
+        case .mob(.mossTurtle): buildMossTurtle(into: model)
+        case .mob(.emberNewt): buildEmberNewt(into: model)
+        case .mob(.weaverSpider): buildWeaverSpider(into: model)
+        case .mob(.duskMoth): buildDuskMoth(into: model)
+        case .mob(.hedgehog): buildHedgehog(into: model)
+        case .mob(.coneKnight): buildConeKnight(into: model)
+        case .mob(.mantis): buildMantis(into: model)
+        case .mob(.thornrose): buildThornrose(into: model)
+        case .mob(.grumblecap): buildGrumblecap(into: model)
+        case .mob(.stagBeetle): buildStagBeetle(into: model)
         case .mob(.owl): buildOwl(into: model)
         case .npc(.elderMorel): buildElderMorel(into: model)
         case .npc(.chanterelle): buildChanterelle(into: model)
@@ -153,8 +171,8 @@ enum ActorModels {
         e.addSphere(Materials.matte(Palette.skin), at: [-0.45, 0.7, 0.12], radius: 0.07)
     }
 
-    /// Wing entities are named so the renderer can flap and spread them.
-    static let owlWingNames = ["owl.wing.left", "owl.wing.right"]
+    /// Named wing pivots, so the renderer can flap and spread them (the owl, bees, moths).
+    static let wingNames = ["wing.left", "wing.right"]
 
     private static func buildOwl(into e: Entity) {
         let feather = Materials.matte(Palette.owlFeather)
@@ -185,7 +203,7 @@ enum ActorModels {
         // Wings: pivot at the shoulder so they can fold and spread.
         for (index, side) in [Float(-1), 1].enumerated() {
             let wing = Entity()
-            wing.name = owlWingNames[index]
+            wing.name = wingNames[index]
             wing.position = [side * 1.7, 3.6, -0.2]
             wing.addSphere(feather, at: [side * 0.6, -1.3, 0], radius: 1, squash: [0.45, 1.6, 1.1])
             wing.addSphere(dark, at: [side * 0.7, -2.4, -0.1], radius: 0.6, squash: [0.4, 1, 1])

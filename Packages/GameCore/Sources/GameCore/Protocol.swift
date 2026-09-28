@@ -51,7 +51,8 @@ public enum ActionFailure: String, Codable, Sendable {
 }
 
 public enum MobAbility: String, Codable, Sendable {
-    case hide, charge, sporeCloud, split
+    /// `cloud`: released a poison cloud (spores, pollen, moth dust).
+    case hide, charge, cloud, split
     // The Hollow Owl
     case swoop, swoopImpact, gust, summon, enrage
 }
