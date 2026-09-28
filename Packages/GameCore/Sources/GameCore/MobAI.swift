@@ -168,7 +168,7 @@ extension GameSimulation {
             if mob.combat.attackTimer <= 0 {
                 let enraged = brain.boss?.enraged == true
                 mob.combat.attackTimer = Self.ticks(stats.attackInterval * (enraged ? 0.7 : 1))
-                dealDamage(from: &mob, to: preyID, multiplier: 1, skill: nil)
+                dealDamage(from: &mob, to: preyID, multiplier: 1, skill: nil, blockable: true)
             }
         }
     }

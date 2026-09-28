@@ -3,8 +3,18 @@ extension GameSimulation {
     static let criticalMultiplier: Float = 1.6
 
     /// Rolls and applies one hit. Handles aggro, death, and XP for the attacker.
-    mutating func dealDamage(from attacker: inout WorldEntity, to targetID: EntityID, multiplier: Float, skill: SkillID?) {
+    /// Only `blockable` hits (plain mob attacks, not charges or boss moves) can land on a shield.
+    mutating func dealDamage(from attacker: inout WorldEntity, to targetID: EntityID, multiplier: Float, skill: SkillID?,
+                             blockable: Bool = false) {
         guard var target = entities[targetID], target.stats.isAlive else { return }
+
+        if blockable, target.stats.blockChance > 0, random.unit() < target.stats.blockChance {
+            attacker.combat.lastCombatTick = tick
+            target.combat.lastCombatTick = tick
+            entities[targetID] = target
+            events.append(.blocked(source: attacker.id, target: targetID))
+            return
+        }
 
         // A snail in its shell is very hard to hurt.
         var defense = Float(target.pose == .hiding ? target.stats.defense * 4 + 6 : target.stats.defense)
@@ -83,8 +93,7 @@ extension GameSimulation {
 
         while player.stats.level < Progression.maxLevel, data.xp >= Progression.xpToNextLevel(player.stats.level) {
             data.xp -= Progression.xpToNextLevel(player.stats.level)
-            player.stats = Progression.playerStats(level: player.stats.level + 1, bonus: Self.equipmentBonus(data.equipment),
-                                                   playerClass: data.playerClass)
+            player.stats = Self.playerStats(level: player.stats.level + 1, data: data)
             events.append(.levelUp(player: player.id, level: player.stats.level))
         }
         if player.stats.level >= Progression.maxLevel { data.xp = 0 }

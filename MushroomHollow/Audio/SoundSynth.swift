@@ -2,7 +2,7 @@ import Foundation
 
 /// Every sound in the game, synthesized at launch (no audio assets yet).
 nonisolated enum Sound: CaseIterable, Sendable {
-    case swing, hit, crit, hurt
+    case swing, hit, crit, hurt, block
     case cast, heal, buff, shoot
     case levelUp, questDone, classChosen
     case coin, loot
@@ -42,6 +42,12 @@ nonisolated enum SoundSynth {
             return mix(
                 tone(duration: 0.2, volume: 0.7, decay: 18) { t in 60 + 60 * exp(-t * 10) },
                 sweepNoise(duration: 0.12, from: 900, to: 200, volume: 0.3, decay: 25))
+        case .block:
+            // A hollow wooden clonk.
+            return mix(
+                tone(duration: 0.16, volume: 0.7, decay: 28) { t in 330 - t * 700 },
+                tone(duration: 0.08, volume: 0.2, decay: 45, shape: .square) { _ in 950 },
+                sweepNoise(duration: 0.08, from: 2600, to: 900, volume: 0.25, decay: 40))
         case .cast:
             return arpeggio([880, 1108.7, 1318.5], step: 0.06, tail: 0.25, volume: 0.35)
         case .heal:

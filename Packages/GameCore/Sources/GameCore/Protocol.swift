@@ -38,6 +38,8 @@ public enum ActionFailure: String, Codable, Sendable {
     case notUsable
     case notAvailable
     case itemCooldown
+    /// Another class's weapon.
+    case wrongClass
 }
 
 public enum MobAbility: String, Codable, Sendable {
@@ -49,6 +51,8 @@ public enum MobAbility: String, Codable, Sendable {
 /// Things that happened during a tick, for effects, sounds, and HUD feedback.
 public enum WorldEvent: Codable, Sendable, Equatable {
     case damage(source: EntityID, target: EntityID, amount: Int, isCritical: Bool, skill: SkillID?)
+    /// `target` caught the attack on its shield: no damage.
+    case blocked(source: EntityID, target: EntityID)
     case heal(target: EntityID, amount: Int, skill: SkillID?)
     case manaRestored(target: EntityID, amount: Int)
     case skillCast(caster: EntityID, skill: SkillID, target: EntityID?)
@@ -110,6 +114,11 @@ public struct EntitySnapshot: Codable, Sendable, Equatable, Identifiable {
     public let isFlying: Bool
 
     public var isAlive: Bool { hp > 0 }
+
+    /// The equipped weapon's family (players only).
+    public var weapon: WeaponType? { gear.lazy.compactMap(\.definition.weaponType).first }
+    /// Auto-attacks fly as projectiles instead of swinging.
+    public var fightsAtRange: Bool { Progression.reach(weapon: weapon, playerClass: playerClass) > 2 }
 }
 
 public struct BuffStatus: Codable, Sendable, Equatable, Identifiable {

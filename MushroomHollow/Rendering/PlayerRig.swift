@@ -35,15 +35,19 @@ final class PlayerRig {
     private var orb: Entity?
     private var halo: Entity?
     private var expression = FacePainter.Expression.open
+    private var weapon: WeaponType?
+    private var held: WeaponModels.Held?
+    private var shield: Entity?
 
     private var swingStart: Double?
     private var swing = Swing.left
     private var comboIndex = 0
     private var lastSwing = -Double.infinity
     private let trail = SwingTrail()
-    /// How far the equipped blade reaches from the fist; nil when unarmed.
+    /// How far the equipped weapon's edge reaches from the fist; nil when it leaves no trail.
     private var bladeReach: Float?
     private var hurtStart: Double?
+    private var blockStart: Double?
     private var castStart: Double?
     private var cheerStart: Double?
     /// 0 relaxed ... 1 in the battle stance; eases toward the wanted pose each frame.
@@ -57,8 +61,6 @@ final class PlayerRig {
     private static let shoulder: SIMD3<Float> = [0.165, 0.3, 0]
     private static let headCenter: SIMD3<Float> = [0, 0.33, 0]
     private static let headRadius: Float = 0.31
-    /// Weapons point forward and a little up from the fist while the arm hangs.
-    private static let bladeDirection = simd_normalize(SIMD3<Float>(0, 0.35, 1))
 
     private static let tunicMesh = Meshes.lathe([
         [0, 0.38], [0.08, 0.375], [0.13, 0.345], [0.15, 0.29], [0.145, 0.21], [0.15, 0.14],
@@ -231,7 +233,11 @@ final class PlayerRig {
         gear = []
         orb = nil
         halo = nil
+        weapon = nil
+        held = nil
+        shield = nil
         bladeReach = nil
+        hands[0].orientation = Self.identity
 
         var outfit = Materials.matte(SproutLook.tunic)
         var boots = Materials.matte(SproutLook.boots)
@@ -240,12 +246,25 @@ final class PlayerRig {
         var showSpots = true
 
         for item in items {
+            if let type = item.definition.weaponType {
+                // Bows sit in the left hand so the right can draw the string.
+                let model = WeaponModels.make(item)
+                attach(model.entity, to: type == .bow ? hands[0] : hands[1])
+                weapon = type
+                held = model
+                if let blade = model.trail {
+                    bladeReach = blade.reach
+                    trail.setTint(blade.tint)
+                }
+                continue
+            }
+            if item.definition.equipSlot == .shield {
+                let model = WeaponModels.makeShield(item)
+                attach(model, to: hands[0])
+                shield = model
+                continue
+            }
             switch item {
-            case .twigSword, .thornRapier, .beetleBlade, .moonTalon:
-                attach(Self.makeWeapon(item), to: hands[1])
-                let blade = Self.blade(item)
-                bladeReach = blade.reach
-                trail.setTint(blade.trail)
             case .acornCap:
                 let acorn = Entity()
                 acorn.addSphere(Materials.matte(Palette.capBrown, roughness: 0.9), at: [0, 0.12, 0], radius: 0.17, squash: [1, 0.5, 1])
@@ -309,7 +328,8 @@ final class PlayerRig {
         for part in scarfParts { part.model?.materials = [scarf] }
 
         switch playerClass {
-        case .guardian:
+        case .guardian where shield == nil:
+            // A spare shield on the back, until a real one is in hand.
             let shield = Entity()
             shield.addCylinder(Materials.glossy(Palette.bark), at: [0, 0.18, -0.2], radius: 0.19, height: 0.04,
                                rotation: simd_quatf(angle: .pi / 2, axis: [1, 0, 0]))
@@ -342,7 +362,7 @@ final class PlayerRig {
             }
             attach(halo, to: head)
             self.halo = halo
-        case nil:
+        case .guardian, nil:
             break
         }
     }
@@ -352,64 +372,69 @@ final class PlayerRig {
         gear.append(part)
     }
 
-    /// A weapon in fist space: the grip sits in the hand, the blade points along `bladeDirection`.
-    private static func makeWeapon(_ item: ItemID) -> Entity {
-        let e = Entity()
-        let d = bladeDirection
-        let along = simd_quatf(from: [0, 1, 0], to: d)
-        e.addRod(Materials.matte(Palette.darkBark), from: -d * 0.07, to: d * 0.07, radius: 0.02)
-        switch item {
-        case .twigSword:
-            let wood = Materials.matte(Palette.bark)
-            e.addSphere(wood, at: d * 0.07, radius: 0.035)
-            e.addRod(wood, from: d * 0.07, to: d * 0.55, radius: 0.024)
-            e.addPart(Meshes.teardrop, Materials.matte(Palette.leaf), at: d * 0.4 + [0.04, 0.02, 0], scale: [0.025, 0.045, 0.008],
-                      rotation: simd_quatf(angle: -1.1, axis: [0, 0, 1]))
-        case .thornRapier:
-            let thorn = Materials.glossy(Palette.shelfFungus)
-            e.addPart(Meshes.cylinder, thorn, at: d * 0.075, scale: [0.055, 0.015, 0.055], rotation: along)
-            e.addPart(Meshes.cone, thorn, at: d * 0.39, scale: [0.022, 0.62, 0.022], rotation: along)
-        case .beetleBlade:
-            let shell = Materials.glossy(Palette.beetleShell)
-            let flat = simd_quatf(from: [0, 0, 1], to: d)
-            e.addPart(Meshes.roundedBox, shell, at: d * 0.075, scale: [0.05, 0.16, 0.035], rotation: flat)
-            e.addPart(Meshes.box, shell, at: d * 0.33, scale: [0.022, 0.09, 0.5], rotation: flat)
-            e.addPart(Meshes.cone, shell, at: d * 0.64, scale: [0.011, 0.12, 0.045], rotation: along)
-        case .moonTalon:
-            // A crescent of cold moonlight.
-            let glow = Materials.glow(UIColor(red: 0.75, green: 0.85, blue: 1, alpha: 1))
-            let up = SIMD3<Float>(0, d.z, -d.y)
-            let points = (0...6).map { i -> SIMD3<Float> in
-                let s = Float(i) / 6
-                return d * (0.08 + s * 0.6) + up * sin(s * .pi) * 0.12
-            }
-            for (a, b) in zip(points, points.dropFirst()) {
-                e.addRod(glow, from: a, to: b, radius: 0.028 * (1 - simd_length(b) * 0.9))
-                e.addSphere(glow, at: b, radius: 0.028 * (1 - simd_length(b) * 0.9))
-            }
-        default:
-            break
-        }
-        return e
-    }
-
-    /// How far each blade reaches from the fist, and the color of its swing trail.
-    private static func blade(_ item: ItemID) -> (reach: Float, trail: UIColor) {
-        switch item {
-        case .thornRapier: (0.7, UIColor(red: 1, green: 0.86, blue: 0.55, alpha: 1))
-        case .beetleBlade: (0.7, UIColor(red: 0.5, green: 0.72, blue: 1, alpha: 1))
-        case .moonTalon: (0.68, UIColor(red: 0.78, green: 0.9, blue: 1, alpha: 1))
-        default: (0.55, UIColor(red: 0.85, green: 1, blue: 0.72, alpha: 1))
-        }
+    /// World position projectiles leave from: the nocked arrow, a wand's tip, a staff's droplet.
+    var muzzlePosition: SIMD3<Float>? {
+        held?.muzzle?.position(relativeTo: nil)
     }
 
     // MARK: - Animation
 
-    static let swingDuration = 0.42
+    /// How each weapon family attacks.
+    private enum Attack {
+        /// Swings along arcs in a repeating combo (melee weapons, and the wand's flicks).
+        case slash(SwingStyle)
+        /// Loose the arrow, then nock and draw the next.
+        case shoot
+        /// Point the staff at the foe, then twirl it.
+        case staff
+        /// Bare-handed ranged classes: point and release.
+        case point
 
-    /// The melee auto-attack combo: a fixed four-hit pattern, like Flyff.
-    enum Swing: CaseIterable {
-        case left, right, up, down
+        var duration: Double {
+            switch self {
+            case let .slash(style): style.duration
+            case .shoot: 0.8
+            case .staff: 0.85
+            case .point: 0.42
+            }
+        }
+    }
+
+    /// One weapon family's swings: the combo and its timing.
+    private struct SwingStyle {
+        let combo: [Swing]
+        let duration: Double
+        /// Swing phases as fractions of `duration`: wind up, strike until `strikeEnd`, recover.
+        let strikeStart: Float
+        let strikeEnd: Float
+        /// How far back along the arc the weapon cocks before the strike.
+        let windup: Float
+
+        static let sword = SwingStyle(combo: [.left, .right, .up, .down], duration: 0.42, strikeStart: 0.22, strikeEnd: 0.52, windup: -0.12)
+        /// Slower and heavier: a bigger wind up, then the whole body follows the head through.
+        static let axe = SwingStyle(combo: [.cleave, .hack, .chop], duration: 0.5, strikeStart: 0.3, strikeEnd: 0.55, windup: -0.2)
+        static let maul = SwingStyle(combo: [.sweep, .slam], duration: 0.66, strikeStart: 0.36, strikeEnd: 0.58, windup: -0.22)
+        static let wand = SwingStyle(combo: [.flick, .flickBack], duration: 0.4, strikeStart: 0.2, strikeEnd: 0.45, windup: -0.15)
+    }
+
+    private var attack: Attack {
+        switch weapon {
+        case .sword: .slash(.sword)
+        case .axe: .slash(.axe)
+        case .maul: .slash(.maul)
+        case .wand: .slash(.wand)
+        case .bow: .shoot
+        case .staff: .staff
+        case nil: Progression.reach(weapon: nil, playerClass: playerClass) > 2 ? .point : .slash(.sword)
+        }
+    }
+
+    /// The melee auto-attack combos: fixed patterns per weapon, like Flyff.
+    enum Swing {
+        case left, right, up, down // sword
+        case cleave, hack, chop // axe
+        case sweep, slam // maul, both hands
+        case flick, flickBack // wand
 
         /// The weapon arm sweeps `sweep` radians from `from` toward `via` (torso space, from the
         /// right shoulder) while the torso turns from `twist.0` to `twist.1`.
@@ -419,6 +444,13 @@ final class PlayerRig {
             case .right: ([0.75, 0.05, 0.65], [-0.3, 0, 1], 2.8, (0.45, -0.5)) // backhand, left to right
             case .up: ([-0.45, -0.8, -0.3], [-0.15, -0.1, 1], 2.9, (-0.2, 0.25)) // rising from the ground
             case .down: ([-0.55, 0.8, -0.25], [-0.15, 0.2, 1], 2.5, (0.2, -0.1)) // overhead chop
+            case .cleave: ([-0.6, 0.75, -0.35], [0.15, -0.15, 1], 2.7, (-0.65, 0.55)) // high right, down to low left
+            case .hack: ([0.8, 0.2, 0.45], [-0.25, -0.05, 1], 3, (0.6, -0.65)) // a flat, heavy backhand
+            case .chop: ([-0.3, 0.9, -0.4], [-0.1, 0.35, 1], 2.7, (0.25, -0.15)) // from behind the head, straight down
+            case .sweep: ([-0.85, -0.25, -0.5], [0.05, -0.4, 1], 3, (-0.8, 0.65)) // low and wide, hips first
+            case .slam: ([-0.15, 0.85, -0.55], [-0.05, 0.15, 1], 3, (0.15, -0.1)) // up and over, into the ground
+            case .flick: ([-0.45, 0.85, -0.15], [0.1, 0.15, 1], 1.8, (-0.25, 0.25)) // over the shoulder at the foe
+            case .flickBack: ([0.4, 0.85, 0.1], [-0.3, 0.1, 1], 1.7, (0.3, -0.2)) // and back across
             }
         }
 
@@ -430,6 +462,12 @@ final class PlayerRig {
             case .right: (-0.06, 0.2, 0, 0, 0.3, 0.1)
             case .up: (0.28, -0.14, 0, 0.07, 0.18, 0.12) // scoop low, then rise onto the toes
             case .down: (-0.22, 0.4, 0.03, 0, 0.5, 0.1) // rear back, then drive down into a lunge
+            case .cleave: (-0.15, 0.36, 0.02, 0, 0.45, 0.1)
+            case .hack: (-0.05, 0.24, 0, 0, 0.32, 0.14)
+            case .chop: (-0.3, 0.5, 0.05, 0, 0.55, 0.12) // rear up, then bury it
+            case .sweep: (-0.08, 0.3, 0, 0, 0.35, 0.16)
+            case .slam: (-0.35, 0.6, 0.1, 0, 0.55, 0.16) // up on the toes, then down with the whole body
+            case .flick, .flickBack: (-0.06, 0.14, 0.02, 0, 0.16, 0.04)
             }
         }
 
@@ -447,21 +485,21 @@ final class PlayerRig {
         }
     }
 
-    /// Swing phases as fractions of `swingDuration`: wind up, strike, recover.
-    private static let strikeStart: Float = 0.22
-    private static let strikeEnd: Float = 0.52
     /// How far back in swing progress the trail reaches.
     private static let trailSpan: Float = 0.2
     /// The wrist cocks the blade out along the arm while swinging.
     private static let wristBend = simd_quatf(angle: 1.35, axis: [1, 0, 0])
     private static let hand: SIMD3<Float> = [0, -0.25, 0]
+    private static let identity = simd_quatf(angle: 0, axis: [1, 0, 0])
+    private static let rightShoulder = shoulder * [-1, 1, 1]
+    private static let leftShoulder = shoulder
 
     func playSwing(at time: Double) {
         lastCombat = time
-        if playerClass?.definition.isRanged != true {
+        if case let .slash(style) = attack {
             // Start the pattern over after a pause in the fight.
             if time - lastSwing > 2.5 { comboIndex = 0 }
-            swing = Swing.allCases[comboIndex % Swing.allCases.count]
+            swing = style.combo[comboIndex % style.combo.count]
             comboIndex += 1
             lastSwing = time
         }
@@ -469,6 +507,11 @@ final class PlayerRig {
     }
     func playHurt(at time: Double) {
         hurtStart = time
+        lastCombat = time
+    }
+    /// Shield up: the hit glances off.
+    func playBlock(at time: Double) {
+        blockStart = time
         lastCombat = time
     }
     func playCast(at time: Double) { castStart = time }
@@ -497,18 +540,55 @@ final class PlayerRig {
 
     private static let meleeStance = Stance(legSwing: [-0.36, 0.3], legSpread: 0.16, hipYaw: -0.38, twist: 0.1, lean: 0.16,
                                             armSwing: [-1, -1.25], armSpread: [0.5, 0.22], wrist: 0.3)
+    /// Wide and low under a heavy two-hander.
+    private static let maulStance = Stance(legSwing: [-0.4, 0.36], legSpread: 0.2, hipYaw: -0.5, twist: 0.2, lean: 0.14,
+                                            armSwing: [-0.8, -0.6], armSpread: [0.3, 0.3], wrist: 0)
     private static let rangedStance = Stance(legSwing: [-0.22, 0.2], legSpread: 0.17, hipYaw: -0.45, twist: 0.12, lean: 0.06,
                                              armSwing: [-1.1, -0.35], armSpread: [0.2, 0.45], wrist: 0)
     /// How long the stance lingers after the last swing or hit.
     private static let stanceLinger = 4.0
 
+    /// Ready poses for the weapon arm, for weapons not held up like a sword.
+    private static let holds: [WeaponType: simd_quatf] = [
+        // Diagonally across the chest, head up by the off shoulder.
+        .maul: aim([-0.25, -0.75, 0.6], toward: [0.6, 0.75, 0.2], axis: WeaponModels.bladeDirection),
+        // Low in front, tip up, ready to flick.
+        .wand: aim([-0.3, -0.55, 0.8], toward: [0.1, 0.8, 0.55], axis: WeaponModels.bladeDirection),
+    ]
+
+    /// A heavy weapon's head hangs forward and down while walking around.
+    private static func restWrist(_ weapon: WeaponType?) -> simd_quatf {
+        weapon == .maul ? simd_quatf(angle: 1.1, axis: [1, 0, 0]) : identity
+    }
+
+    // Bow and staff frames (torso space), which the hand holds whatever the arm is doing.
+    /// Hanging at the side, top tipped forward.
+    private static let bowRest = simd_quatf(angle: 0.5, axis: [1, 0, 0])
+    /// The string hand flung back after the release.
+    private static let bowFlick = simd_quatf(from: [0, -1, 0], to: simd_normalize([-0.8, 0.35, -0.5]))
+    /// Like a walking stick, leaning a little forward and out.
+    private static let staffRest = simd_quatf(angle: 0.12, axis: [0, 0, 1]) * simd_quatf(angle: 0.15, axis: [1, 0, 0])
+    private static let staffReady = simd_quatf(angle: 0.05, axis: [0, 0, 1]) * simd_quatf(angle: 0.25, axis: [1, 0, 0])
+    private static let staffThrust = simd_quatf(from: [0, 1, 0], to: simd_normalize([0.05, 0.45, 1]))
+    private static let staffThrustArm = simd_quatf(from: [0, -1, 0], to: simd_normalize([-0.15, 0.1, 1]))
+    /// The staff windmills around the fist, which is held out low in front.
+    private static let twirlAxis = simd_normalize(SIMD3<Float>(-0.2, -0.2, 1))
+    private static let staffTwirlArm = simd_quatf(from: [0, -1, 0], to: twirlAxis)
+    // Shield facings: out to the side, angled toward the foe, square in front of the face.
+    private static let shieldRest = simd_quatf(angle: 1.35, axis: [0, 1, 0])
+    private static let shieldReady = simd_quatf(angle: 0.45, axis: [0, 1, 0])
+    private static let shieldBlock = simd_quatf(angle: 0.1, axis: [0, 1, 0])
+    private static let blockArm = simd_quatf(from: [0, -1, 0], to: simd_normalize([0.2, 0.3, 1]))
+
     func animate(_ motion: Motion, time: Double, seed: Float) {
         let t = Float(time)
         let dt = Float(min(max(time - (lastFrame ?? time), 0), 0.1))
         lastFrame = time
-        let ranged = playerClass?.definition.isRanged == true
-        let swingProgress = Self.progress(&swingStart, time, duration: Self.swingDuration)
+        let attack = attack
+        let ranged = Progression.reach(weapon: weapon, playerClass: playerClass) > 2
+        let attackProgress = Self.progress(&swingStart, time, duration: attack.duration)
         let hurt = Self.progress(&hurtStart, time, duration: 0.45)
+        let blocking = Self.progress(&blockStart, time, duration: 0.5)
         let cast = Self.progress(&castStart, time, duration: 0.7)
         let cheer = Self.progress(&cheerStart, time, duration: 1.4)
 
@@ -516,6 +596,7 @@ final class PlayerRig {
         let fighting = motion.engaged || time - lastCombat < Self.stanceLinger
         let ready = fighting && !motion.moving && !motion.airborne && !motion.fainted && cheer == nil
         stance += ((ready ? 1 : 0) - stance) * min(1, dt * 6)
+        let k = Self.ease(stance)
 
         var armSwing: [Float] = [0, 0] // about X; negative swings forward and up
         var armSpread: [Float] = [0.28, 0.28]
@@ -563,8 +644,7 @@ final class PlayerRig {
 
         if stance > 0.001 {
             // Bouncing lightly on the balls of the feet, Flyff style.
-            let k = Self.ease(stance)
-            let pose = ranged ? Self.rangedStance : Self.meleeStance
+            let pose = weapon == .maul ? Self.maulStance : (ranged ? Self.rangedStance : Self.meleeStance)
             let bounce = sin(t * 5.5 + seed)
             func blend(_ value: inout Float, _ target: Float) { value += (target - value) * k }
             for i in 0..<2 {
@@ -584,9 +664,12 @@ final class PlayerRig {
 
         var slash: (arm: simd_quatf, amount: Float)?
         var slashProgress: Float?
+        var shot: Float?
+        var flourish: Float?
         let base = (twist: twist, lean: lean)
-        if let p = swingProgress, !motion.fainted {
-            if ranged {
+        if let p = attackProgress, !motion.fainted {
+            switch attack {
+            case .point:
                 // Point and release, turning the shooting shoulder forward.
                 let thrust = sin(p * .pi)
                 armSwing[1] += (-1.5 - armSwing[1]) * thrust
@@ -595,13 +678,13 @@ final class PlayerRig {
                 twist += 0.25 * thrust
                 hipYaw += 0.15 * thrust
                 lean += 0.1 * thrust
-            } else {
+            case let .slash(style):
                 // Cock back, whip through the arc, then ease back to the base pose. The hips
                 // turn and the front foot steps in with the blade.
-                let phase = Self.slashPhase(p)
+                let phase = Self.slashPhase(p, style)
                 slash = (Self.armPose(swing, phase.s), phase.amount)
                 slashProgress = p
-                let body = Self.slashBody(swing, p)
+                let body = Self.slashBody(swing, style, p)
                 hipYaw += body.hipYaw
                 twist += body.twist
                 lean += body.lean
@@ -609,55 +692,134 @@ final class PlayerRig {
                 legSwing[0] -= body.step
                 legSwing[1] += body.step * 0.7
                 for i in 0..<2 { legSpread[i] += body.spread }
-                // The free arm flings back and out for balance.
-                armSwing[0] += (0.5 - armSwing[0]) * body.impact * 0.6
-                armSpread[0] += 0.35 * body.impact
+                if weapon != .maul {
+                    // The free arm flings back and out for balance.
+                    armSwing[0] += (0.5 - armSwing[0]) * body.impact * 0.6
+                    armSpread[0] += 0.35 * body.impact
+                }
                 scarfLift += body.impact * 0.5
                 sproutSway += sin(p * .pi) * 0.4
+            case .shoot:
+                // The shoulders open and the body rocks back as the string lets go.
+                shot = p
+                let recoil = sin(min(p / 0.3, 1) * .pi)
+                twist += 0.12 * recoil
+                hipYaw += 0.05 * recoil
+                lean -= 0.06 * recoil
+                scarfLift += 0.2 * recoil
+            case .staff:
+                // Lunge in behind the thrust, then stand tall for the twirl.
+                flourish = p
+                let phase = Self.staffPhases(p)
+                lean += 0.16 * phase.thrust - 0.04 * phase.twirl
+                twist += 0.2 * phase.thrust
+                legSwing[0] -= 0.32 * phase.thrust
+                legSwing[1] += 0.22 * phase.thrust
+                lift += 0.02 * phase.twirl * abs(sin(phase.spin))
+                sproutSway += sin(p * 2 * .pi) * 0.3
             }
         }
         if let p = hurt, !motion.fainted {
             nod -= 0.2 * sin(p * .pi)
             lean -= 0.12 * sin(p * .pi)
         }
+        var blockAmount: Float = 0
+        if let p = blocking, !motion.fainted, !motion.airborne {
+            // Brace behind the shield and rock back from the impact.
+            blockAmount = Self.ease(min(1, p / 0.12) * min(1, (1 - p) / 0.4))
+            lean -= 0.12 * blockAmount
+            legSwing[0] -= 0.12 * blockAmount
+            legSwing[1] += 0.12 * blockAmount
+        }
         // Keep the eyes on the foe while the body turns and leans under them.
         let look = -(hipYaw + twist - strideTwist) * 0.6
         nod -= lean * 0.6
 
-        var raise: Float = 0 // arms up for a cast or cheer
-        var torsoArch: Float = 0
+        let castAmount = cast.map { Self.ease(min(1, $0 / 0.2) * min(1, (1 - $0) / 0.3)) } ?? 0
+        let cheerAmount = cheer.map { Self.ease(min(1, $0 / 0.15) * min(1, (1 - $0) / 0.2)) } ?? 0
+        let raise = motion.fainted || motion.airborne ? 0 : max(castAmount, cheerAmount) // arms up for a cast or cheer
+        let torsoArch = motion.fainted || motion.airborne ? 0 : 0.1 * castAmount
+        let hipsRotation = simd_quatf(angle: hipYaw, axis: [0, 1, 0])
+        let torsoRotation = Self.torsoRotation(twist, lean - torsoArch)
+
         var armPose = (0..<2).map { i in
             simd_quatf(angle: Self.sides[i] * armSpread[i], axis: [0, 0, 1]) * simd_quatf(angle: armSwing[i], axis: [1, 0, 0])
+        }
+        if let hold = weapon.flatMap({ Self.holds[$0] }) {
+            armPose[1] = simd_slerp(armPose[1], hold, k)
         }
         if let slash {
             armPose[1] = simd_slerp(armPose[1], slash.arm, slash.amount)
         }
+
+        // Bow: the left arm aims, the right hand draws the string back to the cheek.
+        var bowFrame = Self.bowRest
+        var nockAmount: Float = 0
+        var arrowShown = false
+        if weapon == .bow, !motion.fainted, !motion.airborne {
+            let aimAmount = max(k, shot == nil ? 0 : 1)
+            let forward = (hipsRotation * torsoRotation).inverse.act(simd_normalize([0, 0.06, 1]))
+            armPose[0] = simd_slerp(armPose[0], simd_quatf(from: [0, -1, 0], to: forward), aimAmount)
+            let up = simd_normalize(SIMD3<Float>(0, 1, 0) - forward.y * forward)
+            let aimed = simd_quatf(simd_float3x3(simd_cross(up, forward), up, forward)) * simd_quatf(angle: -0.15, axis: [0, 0, 1])
+            bowFrame = simd_slerp(Self.bowRest, aimed, aimAmount)
+            let phase = shot.map(Self.bowPhases) ?? (draw: 0.92 + sin(t * 2) * 0.04, flick: 0, holding: 1, nocked: true)
+            let grip = Self.leftShoulder + armPose[0].act(Self.hand)
+            let target = grip + bowFrame.act(WeaponModels.stringRest + [0, 0, -0.34 * phase.draw])
+            let pull = simd_slerp(simd_quatf(from: [0, -1, 0], to: simd_normalize(target - Self.rightShoulder)), Self.bowFlick, phase.flick)
+            armPose[1] = simd_slerp(armPose[1], pull, aimAmount)
+            nockAmount = aimAmount * phase.holding
+            arrowShown = aimAmount > 0.4 && phase.nocked
+        }
+
+        // Staff: held upright, thrust at the foe, then twirled.
+        var staffFrame = simd_slerp(Self.staffRest, Self.staffReady, k)
+        if weapon == .staff, let p = flourish {
+            let phase = Self.staffPhases(p)
+            armPose[1] = simd_slerp(armPose[1], Self.staffThrustArm, phase.thrust)
+            staffFrame = simd_slerp(staffFrame, Self.staffThrust, phase.thrust)
+            armPose[1] = simd_slerp(armPose[1], Self.staffTwirlArm, phase.twirl)
+            staffFrame = simd_slerp(staffFrame, simd_quatf(angle: phase.spin, axis: Self.twirlAxis), phase.twirl)
+        }
+
+        // Shield: raised in front of the face to catch a blow.
+        if shield != nil {
+            armPose[0] = simd_slerp(armPose[0], Self.blockArm, blockAmount)
+        }
+
+        let slashWrist = motion.airborne || cast != nil || cheer != nil ? 0 : slash?.amount ?? 0
+        let wristAmount = motion.airborne ? 0 : (wrist + (1 - wrist) * slashWrist) * (1 - raise)
+        let heldWrist = simd_slerp(Self.restWrist(weapon), Self.identity, max(k, slashWrist))
+        let weaponWrist = simd_slerp(heldWrist, Self.wristBend, wristAmount)
+
+        if weapon == .maul, !motion.fainted, !motion.airborne {
+            // Two hands on the haft.
+            let grip = Self.rightShoulder + armPose[1].act(Self.hand + weaponWrist.act(WeaponModels.offhandGrip))
+            let reach = simd_quatf(from: [0, -1, 0], to: simd_normalize(grip - Self.leftShoulder))
+            armPose[0] = simd_slerp(armPose[0], reach, max(k, slash?.amount ?? 0))
+        }
+
         if motion.airborne, !motion.fainted {
             // Hanging on to the dandelion stalk.
             let shoulder = SIMD3<Float>(-Self.shoulder.x, Self.hipHeight + Self.shoulder.y, 0)
             armPose[1] = simd_quatf(from: [0, -1, 0], to: simd_normalize(Self.gliderGrip - shoulder))
-        } else if let p = cast, !motion.fainted {
+        } else if cast != nil, !motion.fainted {
             // Both arms up in a V to call the magic down.
-            let amount = Self.ease(min(1, p / 0.2) * min(1, (1 - p) / 0.3))
             for i in 0..<2 {
                 let raised = simd_quatf(from: [0, -1, 0], to: simd_normalize([Self.sides[i] * 0.6, 0.75, 0.3]))
-                armPose[i] = simd_slerp(armPose[i], raised, amount)
+                armPose[i] = simd_slerp(armPose[i], raised, castAmount)
             }
-            nod -= 0.15 * amount
-            raise = amount
-            torsoArch = 0.1 * amount
+            nod -= 0.15 * castAmount
         }
         if let p = cheer, !motion.fainted, !motion.airborne {
             // Two happy hops with waving arms.
             lift += abs(sin(p * 2 * .pi)) * 0.16
-            let amount = Self.ease(min(1, p / 0.15) * min(1, (1 - p) / 0.2))
             for i in 0..<2 {
                 let wave = simd_quatf(angle: Self.sides[i] * sin(t * 18) * 0.3, axis: [0, 0, 1])
                 let raised = wave * simd_quatf(from: [0, -1, 0], to: simd_normalize([Self.sides[i] * 0.45, 0.85, 0.1]))
-                armPose[i] = simd_slerp(armPose[i], raised, amount)
+                armPose[i] = simd_slerp(armPose[i], raised, cheerAmount)
             }
-            nod -= 0.12 * amount
-            raise = max(raise, amount)
+            nod -= 0.12 * cheerAmount
         }
 
         var drop: Float = 0
@@ -667,8 +829,8 @@ final class PlayerRig {
             drop = Self.hipHeight * (1 - reach)
         }
         body.position.y = lift - drop
-        hips.orientation = simd_quatf(angle: hipYaw, axis: [0, 1, 0])
-        torso.orientation = Self.torsoRotation(twist, lean - torsoArch)
+        hips.orientation = hipsRotation
+        torso.orientation = torsoRotation
         torso.scale = [1 + breath * 0.008, 1 + breath * 0.012, 1 + breath * 0.008]
         head.orientation = simd_quatf(angle: look, axis: [0, 1, 0]) * simd_quatf(angle: nod, axis: [1, 0, 0])
             * simd_quatf(angle: tilt, axis: [0, 0, 1])
@@ -679,11 +841,17 @@ final class PlayerRig {
             scarfTails[i].orientation = simd_quatf(angle: Self.sides[i] * 0.18, axis: [0, 0, 1])
                 * simd_quatf(angle: scarfLift + Float(i) * 0.08 + sin(t * 9 + Float(i)) * 0.04, axis: [1, 0, 0])
         }
-        let slashWrist = motion.airborne || cast != nil || cheer != nil ? 0 : slash?.amount ?? 0
-        let wristAmount = motion.airborne ? 0 : (wrist + (1 - wrist) * slashWrist) * (1 - raise)
-        hands[1].orientation = simd_slerp(simd_quatf(angle: 0, axis: [1, 0, 0]), Self.wristBend, wristAmount)
-        if let p = slashProgress, slashWrist > 0 {
-            updateTrail(p, baseTwist: base.twist, baseLean: base.lean)
+        // Bows, staves, and shields keep their own facing whatever the arm does.
+        hands[1].orientation = weapon == .staff ? armPose[1].inverse * staffFrame : weaponWrist
+        if weapon == .bow {
+            hands[0].orientation = armPose[0].inverse * bowFrame
+            updateBowString(nock: nockAmount, arrow: arrowShown)
+        } else if shield != nil {
+            let facing = simd_slerp(simd_slerp(Self.shieldRest, Self.shieldReady, k), Self.shieldBlock, blockAmount)
+            hands[0].orientation = armPose[0].inverse * facing
+        }
+        if let p = slashProgress, slashWrist > 0, case let .slash(style) = attack {
+            updateTrail(p, style, baseTwist: base.twist, baseLean: base.lean)
         } else {
             trail.hide()
         }
@@ -710,16 +878,15 @@ final class PlayerRig {
 
     /// Where a melee swing is: `s` runs along the arc (a little negative while cocking back),
     /// `amount` blends from the base pose into the swing and back out.
-    private static func slashPhase(_ p: Float) -> (s: Float, amount: Float) {
-        let windup: Float = -0.12
-        if p < strikeStart {
-            let x = ease(p / strikeStart)
-            return (windup * x, x)
-        } else if p < strikeEnd {
-            let x = (p - strikeStart) / (strikeEnd - strikeStart)
-            return (windup + (1 - windup) * (1 - pow(1 - x, 3)), 1)
+    private static func slashPhase(_ p: Float, _ style: SwingStyle) -> (s: Float, amount: Float) {
+        if p < style.strikeStart {
+            let x = ease(p / style.strikeStart)
+            return (style.windup * x, x)
+        } else if p < style.strikeEnd {
+            let x = (p - style.strikeStart) / (style.strikeEnd - style.strikeStart)
+            return (style.windup + (1 - style.windup) * (1 - pow(1 - x, 3)), 1)
         } else {
-            return (1, 1 - ease((p - strikeEnd) / (1 - strikeEnd)))
+            return (1, 1 - ease((p - style.strikeEnd) / (1 - style.strikeEnd)))
         }
     }
 
@@ -736,8 +903,8 @@ final class PlayerRig {
         var impact: Float
     }
 
-    private static func slashBody(_ swing: Swing, _ p: Float) -> SlashBody {
-        let phase = slashPhase(p)
+    private static func slashBody(_ swing: Swing, _ style: SwingStyle, _ p: Float) -> SlashBody {
+        let phase = slashPhase(p, style)
         let s = min(max(phase.s, 0), 1)
         let coil = phase.amount * (1 - ease(s / 0.5))
         let follow = phase.amount * ease(s)
@@ -751,6 +918,19 @@ final class PlayerRig {
                          step: body.step * follow, spread: body.spread * min(1, coil + follow), impact: impact)
     }
 
+    /// The bow's shot: the string snaps forward at once while the hand flings back, then the
+    /// hand returns, nocks the next arrow, and draws.
+    private static func bowPhases(_ p: Float) -> (draw: Float, flick: Float, holding: Float, nocked: Bool) {
+        (draw: ease((p - 0.45) / 0.45), flick: sin(min(p / 0.4, 1) * .pi), holding: ease((p - 0.4) / 0.06), nocked: p > 0.42)
+    }
+
+    /// The staff's flourish: a quick thrust at the foe, then one full twirl.
+    private static func staffPhases(_ p: Float) -> (thrust: Float, twirl: Float, spin: Float) {
+        (thrust: ease(p / 0.07) * (1 - ease((p - 0.18) / 0.12)),
+         twirl: ease((p - 0.2) / 0.1) * (1 - ease((p - 0.8) / 0.18)),
+         spin: 2 * .pi * ease((p - 0.28) / 0.5))
+    }
+
     /// Torso orientation in hips space: turned by `twist`, then leaning along its own facing.
     private static func torsoRotation(_ twist: Float, _ lean: Float) -> simd_quatf {
         simd_quatf(angle: twist, axis: [0, 1, 0]) * simd_quatf(angle: lean, axis: [1, 0, 0])
@@ -759,33 +939,56 @@ final class PlayerRig {
     /// Arm rotation pointing the weapon arm along the swing, the fist's forward (+Z) trailing.
     private static func armPose(_ swing: Swing, _ s: Float) -> simd_quatf {
         let (direction, lean) = swing.arm(s)
-        let y = -direction
-        let z = simd_normalize(lean - simd_dot(lean, direction) * direction)
-        return simd_quatf(simd_float3x3(simd_cross(y, z), y, z))
+        return aim(direction, toward: lean)
+    }
+
+    /// Arm rotation pointing the arm along `direction`, rolled so the fist-space `axis` leans toward `toward`.
+    private static func aim(_ direction: SIMD3<Float>, toward: SIMD3<Float>, axis: SIMD3<Float> = [0, 0, 1]) -> simd_quatf {
+        let y = -simd_normalize(direction)
+        let side = toward - simd_dot(toward, y) * y
+        let z = simd_length(side) > 0.0001 ? simd_normalize(side) : simd_normalize(simd_cross([1, 0, 0], y))
+        return simd_quatf(simd_float3x3(simd_cross(y, z), y, z)) * simd_quatf(angle: -atan2(axis.x, axis.z), axis: [0, 1, 0])
+    }
+
+    /// Refits the bow string through the nock (on the drawing hand while it holds the string)
+    /// and shows the arrow resting on it.
+    private func updateBowString(nock amount: Float, arrow shown: Bool) {
+        guard let held, held.string.count == 2, held.stringTips.count == 2 else { return }
+        let hand = hands[1].position(relativeTo: held.entity)
+        let nock = simd_mix(WeaponModels.stringRest, hand, SIMD3(repeating: amount))
+        for (half, tip) in zip(held.string, held.stringTips) {
+            WeaponModels.fit(half, from: tip, to: nock, radius: 0.004)
+        }
+        if let arrow = held.arrow {
+            arrow.isEnabled = shown
+            arrow.position = nock
+            arrow.orientation = simd_quatf(from: [0, 0, 1], to: simd_normalize(SIMD3<Float>(0, 0, 0.04) - nock))
+        }
     }
 
     /// Sweeps the trail over where the blade was during the last `trailSpan` of the strike.
-    private func updateTrail(_ p: Float, baseTwist: Float, baseLean: Float) {
+    private func updateTrail(_ p: Float, _ style: SwingStyle, baseTwist: Float, baseLean: Float) {
         guard let reach = bladeReach else {
             trail.hide()
             return
         }
-        let head = min(p, Self.strikeEnd)
-        let tail = max(Self.strikeStart, p - Self.trailSpan)
+        let head = min(p, style.strikeEnd)
+        let tail = max(style.strikeStart, p - Self.trailSpan)
         guard head > tail else {
             trail.hide()
             return
         }
-        let shoulder = Self.shoulder * [Self.sides[1], 1, 1]
-        let hilt = Self.bladeDirection * 0.16
-        let tip = Self.bladeDirection * reach
+        let shoulder = Self.rightShoulder
+        // Only the business end of long weapons leaves a ribbon.
+        let hilt = WeaponModels.bladeDirection * max(0.16, reach - 0.36)
+        let tip = WeaponModels.bladeDirection * reach
         let hand = Self.hand, wristBend = Self.wristBend
         // The trail lives under the hips, so past samples are placed relative to where the hips face now.
-        let hipsNow = Self.slashBody(swing, p).hipYaw
+        let hipsNow = Self.slashBody(swing, style, p).hipYaw
         let samples = (0...SwingTrail.segments).map { i in
             let q = tail + (head - tail) * Float(i) / Float(SwingTrail.segments)
-            let s = Self.slashPhase(q).s
-            let body = Self.slashBody(swing, q)
+            let s = Self.slashPhase(q, style).s
+            let body = Self.slashBody(swing, style, q)
             let torso = simd_quatf(angle: body.hipYaw - hipsNow, axis: [0, 1, 0])
                 * Self.torsoRotation(baseTwist + body.twist, baseLean + body.lean)
             let arm = Self.armPose(swing, s)
@@ -795,7 +998,7 @@ final class PlayerRig {
             return (hilt: place(hilt), tip: place(tip))
         }
         // Once the blade stops, the tail catches up and the whole ribbon fades.
-        let strength = p > Self.strikeEnd ? 1 - (p - Self.strikeEnd) / Self.trailSpan : 1
+        let strength = p > style.strikeEnd ? 1 - (p - style.strikeEnd) / Self.trailSpan : 1
         trail.show(samples, strength: strength)
     }
 

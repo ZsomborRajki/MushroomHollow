@@ -159,6 +159,18 @@ final class WorldRenderer {
         actors[id]?.playerClass
     }
 
+    /// The weapon family an entity fights with, and whether its auto-attacks fly as projectiles.
+    func attackStyle(of id: EntityID) -> (weapon: WeaponType?, ranged: Bool) {
+        guard let view = actors[id] else { return (nil, false) }
+        let weapon = view.gear.lazy.compactMap(\.definition.weaponType).first
+        return (weapon, view.kind == .player && Progression.reach(weapon: weapon, playerClass: view.playerClass) > 2)
+    }
+
+    /// Where a player's shots leave from (bow string, wand tip, staff droplet), if anywhere special.
+    func muzzle(of id: EntityID) -> SIMD3<Float>? {
+        actors[id]?.rig?.muzzlePosition
+    }
+
     // MARK: - Combat presentation
 
     func playAttack(source: EntityID, target: EntityID, time: Double) {
@@ -167,6 +179,19 @@ final class WorldRenderer {
         actors[target]?.hitStart = time
         actors[target]?.rig?.playHurt(at: time)
     }
+
+    /// The attacker lunges and the defender catches it on the shield.
+    func playBlock(source: EntityID, target: EntityID, time: Double) {
+        actors[source]?.lungeStart = time
+        actors[source]?.rig?.playSwing(at: time)
+        actors[target]?.rig?.playBlock(at: time)
+    }
+
+    #if DEBUG
+    func debugAttack(_ id: EntityID, block: Bool, time: Double) {
+        if block { actors[id]?.rig?.playBlock(at: time) } else { actors[id]?.rig?.playSwing(at: time) }
+    }
+    #endif
 
     /// Arms raised to cast a skill (players only).
     func playCast(caster: EntityID, time: Double) {

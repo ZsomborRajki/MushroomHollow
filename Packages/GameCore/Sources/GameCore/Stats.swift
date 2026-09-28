@@ -13,6 +13,8 @@ public struct CombatStats: Codable, Sendable, Equatable {
     public var attackInterval: Float
     /// Melee reach in meters, measured edge to edge.
     public var reach: Float
+    /// Chance (0...1) to block a mob's attack outright.
+    public var blockChance: Float = 0
 
     public var isAlive: Bool { hp > 0 }
 }
@@ -74,8 +76,9 @@ public enum Progression {
         Int((40 * pow(Double(level), 1.8)).rounded())
     }
 
-    /// Stats for a player at `level` with `playerClass`, wearing gear worth `bonus`, fully healed.
-    public static func playerStats(level: Int, bonus: StatBonus = StatBonus(), playerClass: PlayerClass? = nil) -> CombatStats {
+    /// Stats for a player at `level` with `playerClass`, wearing gear worth `bonus` and wielding `weapon`, fully healed.
+    public static func playerStats(level: Int, bonus: StatBonus = StatBonus(), playerClass: PlayerClass? = nil,
+                                   weapon: WeaponType? = nil) -> CombatStats {
         let l = Float(level - 1)
         let job = playerClass?.definition
         func scaled(_ base: Float, _ scale: Float?) -> Int { Int((base * (scale ?? 1)).rounded()) }
@@ -84,7 +87,13 @@ public enum Progression {
         return CombatStats(level: level, maxHP: maxHP, hp: maxHP, maxMP: maxMP, mp: maxMP,
                            attack: scaled(9 + 3 * l, job?.attackScale) + bonus.attack,
                            defense: scaled(2 + l, job?.defenseScale) + bonus.defense,
-                           attackInterval: 0.9, reach: job?.reach ?? 0.9)
+                           attackInterval: weapon?.attackInterval ?? 0.9, reach: reach(weapon: weapon, playerClass: playerClass),
+                           blockChance: bonus.block > 0 ? bonus.block + (job?.blockBonus ?? 0) : 0)
+    }
+
+    /// Auto-attack reach: the weapon decides; bare-handed, the class does (thornshots fling thorns).
+    public static func reach(weapon: WeaponType?, playerClass: PlayerClass?) -> Float {
+        weapon?.reach ?? playerClass?.definition.reach ?? 0.9
     }
 
     /// Fighting mobs above your level pays more; farming far weaker ones pays little.

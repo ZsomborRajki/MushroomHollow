@@ -23,22 +23,27 @@ extension MobKind {
             [DropEntry(item: .snailShell, chance: 0.6, count: 1...1),
              DropEntry(item: .dewPotion, chance: 0.08, count: 1...1),
              DropEntry(item: .mossBoots, chance: 0.02, count: 1...1),
-             DropEntry(item: .twigSword, chance: 0.02, count: 1...1)]
+             DropEntry(item: .twigSword, chance: 0.02, count: 1...1),
+             DropEntry(item: .barkBuckler, chance: 0.02, count: 1...1)]
         case .slug:
             [DropEntry(item: .slugSlime, chance: 0.55, count: 1...2),
              DropEntry(item: .dewPotion, chance: 0.1, count: 1...1),
              DropEntry(item: .nectarVial, chance: 0.08, count: 1...1),
-             DropEntry(item: .acornCap, chance: 0.03, count: 1...1)]
+             DropEntry(item: .acornCap, chance: 0.03, count: 1...1),
+             DropEntry(item: .pebbleHatchet, chance: 0.02, count: 1...1)]
         case .beetle:
             [DropEntry(item: .beetleHorn, chance: 0.5, count: 1...1),
              DropEntry(item: .dewPotion, chance: 0.12, count: 1...2),
              DropEntry(item: .beetleHelm, chance: 0.03, count: 1...1),
-             DropEntry(item: .thornRapier, chance: 0.03, count: 1...1)]
+             DropEntry(item: .thornRapier, chance: 0.03, count: 1...1),
+             DropEntry(item: .hornCleaver, chance: 0.03, count: 1...1),
+             DropEntry(item: .beetleAegis, chance: 0.02, count: 1...1)]
         case .sporeBeast:
             [DropEntry(item: .sporeSac, chance: 0.55, count: 1...2),
              DropEntry(item: .nectarVial, chance: 0.15, count: 1...2),
              DropEntry(item: .beetleBlade, chance: 0.03, count: 1...1),
-             DropEntry(item: .barkMail, chance: 0.02, count: 1...1)]
+             DropEntry(item: .barkMail, chance: 0.02, count: 1...1),
+             DropEntry(item: .toadstoolChopper, chance: 0.03, count: 1...1)]
         case .sporeling:
             [DropEntry(item: .sporeSac, chance: 0.1, count: 1...1)]
         case .mouse:
@@ -47,6 +52,10 @@ extension MobKind {
             [DropEntry(item: .owlFeather, chance: 1, count: 2...4),
              DropEntry(item: .moonTalon, chance: 0.35, count: 1...1),
              DropEntry(item: .featherCloak, chance: 0.35, count: 1...1),
+             DropEntry(item: .boughHammer, chance: 0.12, count: 1...1),
+             DropEntry(item: .owlboneBow, chance: 0.12, count: 1...1),
+             DropEntry(item: .glowcapScepter, chance: 0.12, count: 1...1),
+             DropEntry(item: .raincallerStaff, chance: 0.12, count: 1...1),
              DropEntry(item: .nectarVial, chance: 1, count: 3...5)]
         }
     }

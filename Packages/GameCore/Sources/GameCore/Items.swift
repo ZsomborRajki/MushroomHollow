@@ -1,5 +1,56 @@
 public enum EquipSlot: String, Codable, Sendable, CaseIterable {
-    case weapon, hat, body, boots
+    case weapon, shield, hat, body, boots
+}
+
+/// Flyff-style weapon families. Each one sets how fast and how far its wielder attacks
+/// (and the client gives each its own attack animation).
+public enum WeaponType: String, Codable, Sendable, CaseIterable {
+    // Anyone
+    case sword, axe
+    // Class weapons
+    case maul, bow, wand, staff
+
+    /// Only this class may wield it; nil = anyone.
+    public var playerClass: PlayerClass? {
+        switch self {
+        case .sword, .axe: nil
+        case .maul: .guardian
+        case .bow: .thornshot
+        case .wand: .sporecaster
+        case .staff: .dewkeeper
+        }
+    }
+
+    /// Needs both hands, so no shield.
+    public var isTwoHanded: Bool {
+        switch self {
+        case .maul, .bow, .staff: true
+        case .sword, .axe, .wand: false
+        }
+    }
+
+    /// Auto-attack reach in meters, edge to edge.
+    public var reach: Float {
+        switch self {
+        case .sword, .axe: 0.9
+        case .maul: 1.1
+        case .bow: 7
+        case .wand, .staff: 6
+        }
+    }
+
+    /// Seconds between auto-attacks: heavier weapons hit harder but slower.
+    public var attackInterval: Float {
+        switch self {
+        case .sword: 0.9
+        case .axe: 1.05
+        case .maul: 1.3
+        case .bow, .staff: 1
+        case .wand: 1.1
+        }
+    }
+
+    public var isRanged: Bool { reach > 2 }
 }
 
 public struct StatBonus: Codable, Sendable, Equatable {
@@ -7,17 +58,20 @@ public struct StatBonus: Codable, Sendable, Equatable {
     public var defense = 0
     public var maxHP = 0
     public var maxMP = 0
+    /// Chance (0...1) to block a mob's attack outright. Shields only.
+    public var block: Float = 0
 
-    public init(attack: Int = 0, defense: Int = 0, maxHP: Int = 0, maxMP: Int = 0) {
+    public init(attack: Int = 0, defense: Int = 0, maxHP: Int = 0, maxMP: Int = 0, block: Float = 0) {
         self.attack = attack
         self.defense = defense
         self.maxHP = maxHP
         self.maxMP = maxMP
+        self.block = block
     }
 
     public static func + (a: StatBonus, b: StatBonus) -> StatBonus {
         StatBonus(attack: a.attack + b.attack, defense: a.defense + b.defense,
-                  maxHP: a.maxHP + b.maxHP, maxMP: a.maxMP + b.maxMP)
+                  maxHP: a.maxHP + b.maxHP, maxMP: a.maxMP + b.maxMP, block: a.block + b.block)
     }
 }
 
@@ -26,8 +80,17 @@ public enum ItemID: String, Codable, Sendable, CaseIterable {
     case dewPotion, nectarVial
     // Materials
     case snailShell, slugSlime, beetleHorn, sporeSac, owlFeather
-    // Weapons
+    // Swords
     case twigSword, thornRapier, beetleBlade, moonTalon
+    // Axes
+    case pebbleHatchet, hornCleaver, toadstoolChopper
+    // Shields
+    case barkBuckler, shellShield, beetleAegis
+    // Class weapons: Guard mauls, Thornshot bows, Sporecaster wands, Dewkeeper staves
+    case toadstoolMaul, boughHammer
+    case reedBow, owlboneBow
+    case puffballWand, glowcapScepter
+    case dewdropStaff, raincallerStaff
     // Hats
     case acornCap, beetleHelm
     // Body
@@ -61,6 +124,11 @@ public struct ItemDefinition: Sendable {
     public let buyPrice: Int?
     public let sellPrice: Int
     public let maxStack: Int
+    /// Weapons only.
+    public let weaponType: WeaponType?
+
+    /// Only this class may equip it; nil = anyone.
+    public var requiredClass: PlayerClass? { weaponType?.playerClass }
 
     public var equipSlot: EquipSlot? {
         if case let .equipment(slot, _) = kind { return slot }
@@ -91,17 +159,59 @@ extension ItemID {
         case .owlFeather:
             item("Hollow Owl Feather", "Soft as moonlight. Proof you survived the night.", .material, sell: 150, stack: 50)
         case .twigSword:
-            item("Twig Sword", "Every hero starts somewhere.", .equipment(.weapon, StatBonus(attack: 4)),
-                 level: 1, buy: 40, sell: 10)
+            weapon("Twig Sword", "Every hero starts somewhere.", .sword, StatBonus(attack: 4),
+                   level: 1, buy: 40, sell: 10)
         case .thornRapier:
-            item("Thorn Rapier", "A bramble thorn with a leather grip.", .equipment(.weapon, StatBonus(attack: 9)),
-                 level: 5, buy: 180, sell: 45)
+            weapon("Thorn Rapier", "A bramble thorn with a leather grip.", .sword, StatBonus(attack: 9),
+                   level: 5, buy: 180, sell: 45)
         case .beetleBlade:
-            item("Beetle-Horn Blade", "Glossy, sharp, and smug about it.", .equipment(.weapon, StatBonus(attack: 16, maxMP: 10)),
-                 level: 9, sell: 120)
+            weapon("Beetle-Horn Blade", "Glossy, sharp, and smug about it.", .sword, StatBonus(attack: 16, maxMP: 10),
+                   level: 9, sell: 120)
         case .moonTalon:
-            item("Moonlit Talon", "Still cold from the night sky.", .equipment(.weapon, StatBonus(attack: 26, maxMP: 20)),
-                 level: 15, sell: 400)
+            weapon("Moonlit Talon", "Still cold from the night sky.", .sword, StatBonus(attack: 26, maxMP: 20),
+                   level: 15, sell: 400)
+        case .pebbleHatchet:
+            weapon("Pebble Hatchet", "A river stone lashed to a stick. Slow, but it thunks.", .axe, StatBonus(attack: 6),
+                   level: 2, buy: 70, sell: 17)
+        case .hornCleaver:
+            weapon("Horn Cleaver", "A beetle horn ground into a wicked edge.", .axe, StatBonus(attack: 14, maxHP: 15),
+                   level: 7, sell: 95)
+        case .toadstoolChopper:
+            weapon("Toadstool Chopper", "Heavy, spotted, and faintly glowing.", .axe, StatBonus(attack: 22, maxHP: 30),
+                   level: 11, sell: 160)
+        case .barkBuckler:
+            item("Bark Buckler", "A round of oak bark. Knocks the odd bite aside.",
+                 .equipment(.shield, StatBonus(defense: 2, block: 0.05)), level: 2, buy: 60, sell: 15)
+        case .shellShield:
+            item("Shell Shield", "A snail's old house, now yours.",
+                 .equipment(.shield, StatBonus(defense: 4, maxHP: 15, block: 0.07)), level: 6, buy: 240, sell: 60)
+        case .beetleAegis:
+            item("Beetle Aegis", "A wing case polished to a mirror shine.",
+                 .equipment(.shield, StatBonus(defense: 7, maxHP: 30, block: 0.1)), level: 10, sell: 140)
+        case .toadstoolMaul:
+            weapon("Toadstool Maul", "A whole toadstool on a pole. Guards only.", .maul, StatBonus(attack: 52, maxHP: 40),
+                   level: 15, buy: 1_100, sell: 275)
+        case .boughHammer:
+            weapon("Great Bough Hammer", "Knotwood from the Great Bough itself.", .maul, StatBonus(attack: 80, maxHP: 90),
+                   level: 22, sell: 700)
+        case .reedBow:
+            weapon("Reed Bow", "Springy fen reed and a spider-silk string. Thornshots only.", .bow, StatBonus(attack: 30),
+                   level: 15, buy: 1_100, sell: 275)
+        case .owlboneBow:
+            weapon("Owlbone Longbow", "Strung with a single owl whisker.", .bow, StatBonus(attack: 48, maxMP: 20),
+                   level: 22, sell: 700)
+        case .puffballWand:
+            weapon("Puffball Wand", "Tap gently. Sporecasters only.", .wand, StatBonus(attack: 24, maxMP: 40),
+                   level: 15, buy: 1_100, sell: 275)
+        case .glowcapScepter:
+            weapon("Glowcap Scepter", "Hums in the dark.", .wand, StatBonus(attack: 38, maxMP: 80),
+                   level: 22, sell: 700)
+        case .dewdropStaff:
+            weapon("Dewdrop Staff", "A single perfect droplet, held in a twist of vine. Dewkeepers only.", .staff,
+                   StatBonus(attack: 20, maxHP: 30, maxMP: 40), level: 15, buy: 1_100, sell: 275)
+        case .raincallerStaff:
+            weapon("Raincaller Staff", "The air smells of rain around it.", .staff, StatBonus(attack: 32, maxHP: 60, maxMP: 70),
+                   level: 22, sell: 700)
         case .featherCloak:
             item("Feathered Cloak", "Woven from the Hollow Owl's down.", .equipment(.body, StatBonus(defense: 12, maxHP: 80)),
                  level: 15, sell: 400)
@@ -129,7 +239,13 @@ extension ItemID {
     private func item(_ name: String, _ description: String, _ kind: ItemDefinition.Kind,
                       level: Int = 1, buy: Int? = nil, sell: Int, stack: Int = 1) -> ItemDefinition {
         ItemDefinition(id: self, name: name, description: description, kind: kind, requiredLevel: level,
-                       buyPrice: buy, sellPrice: sell, maxStack: stack)
+                       buyPrice: buy, sellPrice: sell, maxStack: stack, weaponType: nil)
+    }
+
+    private func weapon(_ name: String, _ description: String, _ type: WeaponType, _ bonus: StatBonus,
+                        level: Int, buy: Int? = nil, sell: Int) -> ItemDefinition {
+        ItemDefinition(id: self, name: name, description: description, kind: .equipment(.weapon, bonus), requiredLevel: level,
+                       buyPrice: buy, sellPrice: sell, maxStack: 1, weaponType: type)
     }
 }
 

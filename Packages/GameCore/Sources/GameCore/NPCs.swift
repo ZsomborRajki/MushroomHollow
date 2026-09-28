@@ -29,8 +29,10 @@ extension NPCID {
         case .chanterelle:
             NPCDefinition(
                 id: self, name: "Chanterelle", title: "Trader",
-                greeting: "Potions, blades, boots! Everything a sprout needs. Selling shells? I'm buying.",
-                shopStock: [.dewPotion, .nectarVial, .twigSword, .mossBoots, .acornCap, .leafTunic, .thornRapier, .barkMail, .dandelionSeed])
+                greeting: "Potions, blades, bucklers, boots! Everything a sprout needs. Selling shells? I'm buying.",
+                shopStock: [.dewPotion, .nectarVial, .twigSword, .pebbleHatchet, .barkBuckler, .mossBoots, .acornCap, .leafTunic,
+                            .thornRapier, .shellShield, .barkMail, .dandelionSeed,
+                            .toadstoolMaul, .reedBow, .puffballWand, .dewdropStaff])
         }
     }
 }

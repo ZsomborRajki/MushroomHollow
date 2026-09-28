@@ -127,6 +127,86 @@ import Testing
         #expect(status.inventory.count(of: .twigSword) == 1)
     }
 
+    @Test func weaponTypesSetSpeedAndReach() throws {
+        var bag = Inventory()
+        bag.add(.pebbleHatchet, count: 1)
+        bag.add(.reedBow, count: 1)
+        var sim = GameSimulation(seed: 1)
+        let player = sim.spawnPlayer(profile: PlayerProfile(level: 15, inventory: bag, playerClass: .thornshot))
+        let unarmed = try #require(sim.entity(player)).stats
+        #expect(unarmed.reach > 2, "bare-handed thornshots still fling thorns")
+
+        sim.enqueue(.equip(.pebbleHatchet), from: player)
+        _ = run(&sim, seconds: 0.1)
+        var stats = try #require(sim.entity(player)).stats
+        #expect(stats.reach < 2, "an axe is a melee weapon, whoever holds it")
+        #expect(stats.attackInterval > unarmed.attackInterval)
+        #expect(sim.snapshot().entity(player)?.weapon == .axe)
+
+        sim.enqueue(.equip(.reedBow), from: player)
+        _ = run(&sim, seconds: 0.1)
+        stats = try #require(sim.entity(player)).stats
+        #expect(stats.reach == WeaponType.bow.reach)
+        #expect(sim.snapshot().entity(player)?.fightsAtRange == true)
+    }
+
+    @Test func classWeaponsNeedTheClass() throws {
+        var bag = Inventory()
+        bag.add(.toadstoolMaul, count: 1)
+        var sim = GameSimulation(seed: 1)
+        let player = sim.spawnPlayer(profile: PlayerProfile(level: 16, inventory: bag, playerClass: .sporecaster))
+        sim.enqueue(.equip(.toadstoolMaul), from: player)
+        #expect(run(&sim, seconds: 0.1).contains(.actionFailed(player: player, reason: .wrongClass)))
+        #expect(try #require(sim.playerStatus(player)).equipment[.weapon] == nil)
+    }
+
+    @Test func twoHandedWeaponsAndShieldsPushEachOtherOff() throws {
+        var bag = Inventory()
+        bag.add(.toadstoolMaul, count: 1)
+        bag.add(.shellShield, count: 1)
+        var sim = GameSimulation(seed: 1)
+        let player = sim.spawnPlayer(profile: PlayerProfile(level: 16, inventory: bag,
+                                                            equipment: [.weapon: .twigSword, .shield: .barkBuckler],
+                                                            playerClass: .guardian))
+        sim.enqueue(.equip(.toadstoolMaul), from: player)
+        _ = run(&sim, seconds: 0.1)
+        var status = try #require(sim.playerStatus(player))
+        #expect(status.equipment[.weapon] == .toadstoolMaul)
+        #expect(status.equipment[.shield] == nil)
+        #expect(status.inventory.count(of: .twigSword) == 1)
+        #expect(status.inventory.count(of: .barkBuckler) == 1)
+        #expect(status.stats.blockChance == 0)
+
+        sim.enqueue(.equip(.shellShield), from: player)
+        _ = run(&sim, seconds: 0.1)
+        status = try #require(sim.playerStatus(player))
+        #expect(status.equipment[.shield] == .shellShield)
+        #expect(status.equipment[.weapon] == nil, "the maul needs both hands")
+        #expect(status.inventory.count(of: .toadstoolMaul) == 1)
+        // Guards are better at blocking than anyone.
+        #expect(abs(status.stats.blockChance - (0.07 + 0.05)) < 0.0001)
+    }
+
+    @Test func shieldsBlockMobAttacks() throws {
+        func blocks(shield: Bool) throws -> (blocked: Int, hits: Int) {
+            var sim = GameSimulation(seed: 3)
+            let player = sim.spawnPlayer(profile: PlayerProfile(level: 10, equipment: shield ? [.shield: .beetleAegis] : [:]))
+            sim.entities[player]?.stats.maxHP = 100_000
+            sim.entities[player]?.stats.hp = 100_000
+            let slug = try #require(sim.snapshot().entities.first { $0.kind == .mob(.slug) })
+            sim.teleport(player, to: slug.position.xz + Vec2(1, 0))
+            let events = run(&sim, seconds: 60)
+            let blocked = events.count { if case .blocked(slug.id, player) = $0 { true } else { false } }
+            let hits = events.count { if case .damage(slug.id, player, _, _, _) = $0 { true } else { false } }
+            return (blocked, hits)
+        }
+        let unshielded = try blocks(shield: false)
+        #expect(unshielded.blocked == 0)
+        let shielded = try blocks(shield: true)
+        #expect(shielded.blocked > 0)
+        #expect(shielded.hits > shielded.blocked * 3, "a 10% block shouldn't stop most hits")
+    }
+
     @Test func potionsHealAndShareACooldown() throws {
         var sim = GameSimulation(seed: 1)
         let player = sim.spawnPlayer(profile: .newCharacter)

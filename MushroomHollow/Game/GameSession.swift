@@ -101,7 +101,7 @@ struct PanelRow: Identifiable, Equatable {
     let action: Action
 }
 
-/// One cell in the inventory grid. Row 0 holds the four equipment slots.
+/// One cell in the inventory grid. Column 0 holds the equipment slots.
 struct InventoryCell: Identifiable, Equatable {
     let id: Int
     let item: ItemID?
@@ -160,6 +160,10 @@ final class GameSession {
     /// `-autofight` launch argument: start in the snail glade and fight automatically.
     @ObservationIgnored private let autoFight = ProcessInfo.processInfo.arguments.contains("-autofight")
     @ObservationIgnored private var autoFightClock: Double = 0
+    /// `-attackloop`: the player attacks thin air on repeat (and blocks now and then), for checking animations.
+    @ObservationIgnored private let attackLoop = ProcessInfo.processInfo.arguments.contains("-attackloop")
+    @ObservationIgnored private var attackLoopClock: Double = 0
+    @ObservationIgnored private var attackLoopCount = 0
     @ObservationIgnored private var debugClimbUntil: Double?
     #endif
 
@@ -195,8 +199,8 @@ final class GameSession {
         panel = debug.panel
         if panel == .inventory { selection = Self.firstBagCell }
         if debug.arguments.contains("-portrait"), let player = host.currentSnapshot.entity(host.localPlayerID) {
-            // Close-up from the front, for checking the character model.
-            camera.yaw = player.yaw
+            // Close-up from the front (or `-portrait <degrees>` around), for checking the character model.
+            camera.yaw = player.yaw + (debug.value(after: "-portrait").flatMap(Float.init) ?? 0) * .pi / 180
             camera.pitch = 0.12
             camera.distance = 3
         }
@@ -294,6 +298,14 @@ final class GameSession {
 
         #if DEBUG
         if autoFight { driveAutoFight(deltaTime: deltaTime) }
+        if attackLoop, let stats = host.currentSnapshot.viewer?.stats {
+            attackLoopClock -= deltaTime
+            if attackLoopClock <= 0 {
+                attackLoopClock = Double(stats.attackInterval)
+                attackLoopCount += 1
+                renderer.debugAttack(host.localPlayerID, block: attackLoopCount.isMultiple(of: 5), time: elapsed)
+            }
+        }
         if let until = debugClimbUntil, elapsed > until {
             input.touchClimb = 0
             debugClimbUntil = nil
@@ -431,16 +443,18 @@ final class GameSession {
         case .inventory:
             // Grid of (1 + columns) x rows: column 0 is equipment, the rest is the bag.
             let columns = Self.inventoryColumns
-            let rows = EquipSlot.allCases.count
+            let slotRows = EquipSlot.allCases.count
+            let bagRows = Inventory.capacity / columns
             var column = selection < Self.firstBagCell ? 0 : 1 + (selection - Self.firstBagCell) % columns
             var row = selection < Self.firstBagCell ? selection : (selection - Self.firstBagCell) / columns
             switch direction {
             case .left: column = max(0, column - 1)
             case .right: column = min(columns, column + 1)
             case .up: row = max(0, row - 1)
-            case .down: row = min(rows - 1, row + 1)
+            case .down: row += 1
             default: break
             }
+            row = min(row, (column == 0 ? slotRows : bagRows) - 1)
             selection = column == 0 ? row : Self.firstBagCell + row * columns + column - 1
         case .npc:
             let count = npcRows.count
@@ -485,7 +499,7 @@ final class GameSession {
         }
     }
 
-    /// Four equipment cells, then the bag.
+    /// The equipment cells, then the bag.
     var inventoryCells: [InventoryCell] {
         guard let player = hud.player else { return [] }
         var cells = EquipSlot.allCases.enumerated().map { index, slot in
@@ -510,7 +524,8 @@ final class GameSession {
                     return PanelRow(
                         id: "buy-\(item.rawValue)", symbol: item.symbol, tint: item.tint,
                         title: definition.name,
-                        subtitle: [item.statLine, definition.requiredLevel > 1 ? "Lv \(definition.requiredLevel)" : nil]
+                        subtitle: [item.statLine, definition.requiredClass.map { "\($0.definition.name) only" },
+                                   definition.requiredLevel > 1 ? "Lv \(definition.requiredLevel)" : nil]
                             .compactMap { $0 }.joined(separator: " · "),
                         trailing: "\(price) caps", detail: definition.description,
                         isEnabled: player.caps >= price, action: .buy(item))
@@ -597,15 +612,29 @@ final class GameSession {
         let me = host.localPlayerID
         switch event {
         case let .damage(source, target, amount, isCritical, skill):
-            renderer.playAttack(source: source, target: target, time: elapsed)
-            let ranged = renderer.playerClass(of: source)?.definition.isRanged == true && skill == nil
-            if ranged, let from = renderer.headPosition(of: source), let to = renderer.headPosition(of: target) {
-                let color = renderer.playerClass(of: source) == .thornshot ? Palette.leaf : Palette.sporeGlow
-                renderer.effects.projectile(from: from - [0, 0.6, 0], to: to - [0, 0.4, 0], color: color, time: elapsed)
+            let attack = renderer.attackStyle(of: source)
+            if skill == nil, attack.ranged, let head = renderer.headPosition(of: source), let to = renderer.headPosition(of: target) {
+                // Read the muzzle before the shot animation moves it.
+                let from = renderer.muzzle(of: source) ?? head - [0, 0.6, 0]
+                let aim = to - [0, 0.4, 0]
+                switch attack.weapon {
+                case .bow: renderer.effects.arrow(from: from, to: aim, time: elapsed)
+                case .wand: renderer.effects.projectile(from: from, to: aim, color: UIColor(red: 0.8, green: 0.5, blue: 1, alpha: 1), time: elapsed)
+                case .staff: renderer.effects.projectile(from: from, to: aim, color: UIColor(red: 0.55, green: 0.9, blue: 1, alpha: 1), size: 0.12, time: elapsed)
+                default:
+                    let color = renderer.playerClass(of: source) == .thornshot ? Palette.leaf : Palette.sporeGlow
+                    renderer.effects.projectile(from: from, to: aim, color: color, time: elapsed)
+                }
                 renderer.sounds.play(.shoot, from: renderer.entity(for: source), gain: -6)
             } else if skill == nil {
-                renderer.sounds.play(.swing, from: renderer.entity(for: source), gain: -8)
+                renderer.sounds.play(.swing, from: renderer.entity(for: source), gain: attack.weapon == .maul ? -4 : -8)
+                if attack.weapon == .maul, let position = renderer.renderedPosition(of: target) {
+                    // The head lands a beat after the swing starts: dust rings out from the impact.
+                    renderer.effects.shockwave(at: position, radius: 1.3, color: UIColor(red: 0.85, green: 0.75, blue: 0.55, alpha: 1),
+                                               duration: 0.35, delay: 0.26, time: elapsed)
+                }
             }
+            renderer.playAttack(source: source, target: target, time: elapsed)
             renderer.sounds.play(isCritical ? .crit : (target == me ? .hurt : .hit), from: renderer.entity(for: target), gain: -2)
             if target == me { rumble.play(.light) }
             if source == me, isCritical { rumble.play(.light) }
@@ -812,6 +841,16 @@ final class GameSession {
             }
             requestSave()
 
+        case let .blocked(source, target):
+            renderer.playBlock(source: source, target: target, time: elapsed)
+            renderer.sounds.play(.block, from: renderer.entity(for: target), gain: -2)
+            float("Block", style: .info, above: target)
+            if let hit = renderer.headPosition(of: target) {
+                renderer.effects.burst(at: hit - [0, 0.6, 0], color: UIColor(red: 1, green: 0.9, blue: 0.6, alpha: 1), count: 10,
+                                       speed: 1.8, size: 0.04, lifetime: 0.3, time: elapsed)
+            }
+            if target == me { rumble.play(.light) }
+
         case let .knockedBack(entity):
             if entity == me {
                 rumble.play(.heavy)
@@ -988,13 +1027,16 @@ final class GameSession {
 #if DEBUG
 /// Debug-only launch arguments for testing and screenshots:
 /// `-autofight`, `-demo` (geared level 8 character), `-spawn village|glade|maze|barkfall|fen`,
-/// `-panel bag|morel|shop`, `-time 0...1` (0.5 = noon), `-level N`, `-class guardian|thornshot|sporecaster|dewkeeper`, `-owl` (summon the boss),
+/// `-panel bag|morel|shop`, `-time 0...1` (0.5 = noon), `-level N`, `-class guardian|thornshot|sporecaster|dewkeeper`
+/// (wielding the class weapon), `-weapon sword|axe|maul|bow|wand|staff` (plus a shield if one fits), `-owl` (summon the boss),
 /// `-resetSave`. Anything but `-resetSave` uses a throwaway save.
 private struct DebugLaunch {
     let arguments = ProcessInfo.processInfo.arguments
 
     var resetSave: Bool { arguments.contains("-resetSave") }
-    var isThrowaway: Bool { ["-autofight", "-demo", "-spawn", "-panel", "-time", "-level", "-class", "-fly", "-owl"].contains { arguments.contains($0) } }
+    var isThrowaway: Bool {
+        ["-autofight", "-demo", "-spawn", "-panel", "-time", "-level", "-class", "-weapon", "-fly", "-owl"].contains { arguments.contains($0) }
+    }
 
     var timeOfDay: Float? { value(after: "-time").flatMap(Float.init) }
 
@@ -1004,9 +1046,11 @@ private struct DebugLaunch {
     }
 
     var profile: PlayerProfile? {
-        let playerClass = value(after: "-class").flatMap(PlayerClass.init(rawValue:))
+        let weapon = value(after: "-weapon").flatMap(WeaponType.init(rawValue:))
+        let playerClass = value(after: "-class").flatMap(PlayerClass.init(rawValue:)) ?? weapon?.playerClass
         let level = value(after: "-level").flatMap(Int.init) ?? (playerClass != nil ? 18 : 10)
-        guard arguments.contains("-demo") || playerClass != nil || arguments.contains("-level") || arguments.contains("-fly") else { return nil }
+        guard arguments.contains("-demo") || playerClass != nil || weapon != nil || arguments.contains("-level") || arguments.contains("-fly")
+        else { return nil }
         var bag = Inventory()
         bag.add(.dandelionSeed, count: 1)
         bag.add(.dewPotion, count: 8)
@@ -1015,9 +1059,17 @@ private struct DebugLaunch {
         bag.add(.slugSlime, count: 3)
         bag.add(.beetleHorn, count: 2)
         bag.add(.thornRapier, count: 1)
+        bag.add(.pebbleHatchet, count: 1)
+        bag.add(.shellShield, count: 1)
         bag.add(.barkMail, count: 1)
-        return PlayerProfile(level: level, caps: 420, inventory: bag,
-                             equipment: [.weapon: .twigSword, .hat: .acornCap, .body: .leafTunic, .boots: .mossBoots],
+        var equipment: [EquipSlot: ItemID] = [.weapon: .twigSword, .hat: .acornCap, .body: .leafTunic, .boots: .mossBoots]
+        // The best weapon of the asked-for family (or the class's own) that this level can wield.
+        if let family = weapon ?? playerClass.flatMap({ job in WeaponType.allCases.first { $0.playerClass == job } }),
+           let pick = ItemID.allCases.last(where: { $0.definition.weaponType == family && $0.definition.requiredLevel <= level }) {
+            equipment[.weapon] = pick
+            if !family.isTwoHanded { equipment[.shield] = .barkBuckler }
+        }
+        return PlayerProfile(level: level, caps: 420, inventory: bag, equipment: equipment,
                              activeQuests: [.slipperySituation: 0], completedQuests: [.shellShock],
                              playerClass: playerClass)
     }

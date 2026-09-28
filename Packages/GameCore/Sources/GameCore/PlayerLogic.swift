@@ -213,13 +213,9 @@ extension GameSimulation {
 
     // MARK: - Stats
 
-    func bonus(of player: WorldEntity) -> StatBonus {
-        Self.equipmentBonus(player.player?.equipment ?? [:])
-    }
-
     /// Full-health stats for the player's level, class, and gear.
     func baseStats(for player: WorldEntity) -> CombatStats {
-        Progression.playerStats(level: player.stats.level, bonus: bonus(of: player), playerClass: player.player?.playerClass)
+        Self.playerStats(level: player.stats.level, data: player.player ?? PlayerData())
     }
 
     /// Recomputes stats after a gear change, keeping current HP/MP (clamped).
@@ -298,13 +294,22 @@ extension GameSimulation {
     }
 
     private mutating func equip(_ item: ItemID, player: inout WorldEntity) -> ActionFailure? {
-        guard var data = player.player, let slot = item.definition.equipSlot else { return .notUsable }
+        let definition = item.definition
+        guard var data = player.player, let slot = definition.equipSlot else { return .notUsable }
         guard data.inventory.count(of: item) > 0 else { return .missingItem }
-        guard player.stats.level >= item.definition.requiredLevel else { return .levelTooLow }
+        guard player.stats.level >= definition.requiredLevel else { return .levelTooLow }
+        if let required = definition.requiredClass, data.playerClass != required { return .wrongClass }
+
+        // Two-handed weapons and shields push each other off.
+        var freed: [EquipSlot] = [slot]
+        if definition.weaponType?.isTwoHanded == true { freed.append(.shield) }
+        if slot == .shield, data.equipment[.weapon]?.definition.weaponType?.isTwoHanded == true { freed.append(.weapon) }
 
         data.inventory.remove(item, count: 1)
-        if let previous = data.equipment[slot] {
-            data.inventory.add(previous, count: 1) // the slot we just freed guarantees room
+        for freedSlot in freed {
+            guard let previous = data.equipment[freedSlot] else { continue }
+            guard data.inventory.add(previous, count: 1) == 0 else { return .inventoryFull }
+            data.equipment[freedSlot] = nil
         }
         data.equipment[slot] = item
         player.player = data

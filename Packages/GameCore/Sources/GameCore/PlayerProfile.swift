@@ -54,7 +54,7 @@ extension GameSimulation {
         data.completedQuests = profile.completedQuests
         data.playerClass = level >= PlayerClass.requiredLevel ? profile.playerClass : nil
 
-        var stats = Progression.playerStats(level: level, bonus: Self.equipmentBonus(profile.equipment), playerClass: data.playerClass)
+        var stats = Self.playerStats(level: level, data: data)
         if let hp = profile.hp, hp > 0 { stats.hp = min(hp, stats.maxHP) }
         if let mp = profile.mp { stats.mp = min(max(0, mp), stats.maxMP) }
 
@@ -90,5 +90,11 @@ extension GameSimulation {
         EquipSlot.allCases.reduce(StatBonus()) { total, slot in
             total + (equipment[slot]?.definition.bonus ?? StatBonus())
         }
+    }
+
+    /// Full-health stats for a player's level, class, and gear.
+    static func playerStats(level: Int, data: PlayerData) -> CombatStats {
+        Progression.playerStats(level: level, bonus: equipmentBonus(data.equipment), playerClass: data.playerClass,
+                                weapon: data.equipment[.weapon]?.definition.weaponType)
     }
 }

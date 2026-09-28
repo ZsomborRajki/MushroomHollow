@@ -18,6 +18,8 @@ public struct ClassDefinition: Sendable {
     /// Auto-attack reach in meters (edge to edge). Above ~2 m the class fights at range.
     public let reach: Float
     public let skills: [SkillID]
+    /// Extra block chance while holding a shield.
+    public var blockBonus: Float = 0
 
     public var isRanged: Bool { reach > 2 }
 }
@@ -32,7 +34,7 @@ extension PlayerClass {
                 id: self, name: "Guard", role: "Tank",
                 description: "Thick bark, thicker skull. Soaks up hits and slams crowds.",
                 hpScale: 1.35, mpScale: 1, attackScale: 1, defenseScale: 1.5, reach: 0.9,
-                skills: [.barkSkin, .capSlam])
+                skills: [.barkSkin, .capSlam], blockBonus: 0.05)
         case .thornshot:
             ClassDefinition(
                 id: self, name: "Thornshot", role: "Ranged",

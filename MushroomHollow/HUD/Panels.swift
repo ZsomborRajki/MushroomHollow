@@ -142,6 +142,9 @@ private struct ItemDetail: View {
                         .foregroundStyle(item.tint)
                     VStack(alignment: .leading) {
                         Text(definition.name).font(.headline)
+                        if let gear = item.gearLine {
+                            Text(gear).font(.caption).foregroundStyle(.secondary)
+                        }
                         if let line = item.statLine {
                             Text(line).font(.caption.weight(.semibold)).foregroundStyle(.green)
                         }
@@ -156,6 +159,11 @@ private struct ItemDetail: View {
                     Text("Requires Lv \(definition.requiredLevel)")
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(tooLow ? .red : .secondary)
+                }
+                if let required = definition.requiredClass, player?.playerClass != required {
+                    Text("Requires \(required.definition.name)")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.red)
                 }
                 Text("Sells for \(definition.sellPrice) caps").font(.caption).foregroundStyle(.secondary)
                 Spacer(minLength: 4)
@@ -179,6 +187,9 @@ private struct ItemDetail: View {
                     stat("DEF", stats.defense)
                     stat("HP", stats.maxHP)
                     stat("MP", stats.maxMP)
+                    if stats.blockChance > 0 {
+                        stat("BLK", "\(Int((stats.blockChance * 100).rounded()))%")
+                    }
                 }
             }
         }
@@ -187,9 +198,13 @@ private struct ItemDetail: View {
     }
 
     private func stat(_ name: String, _ value: Int) -> some View {
+        stat(name, "\(value)")
+    }
+
+    private func stat(_ name: String, _ value: String) -> some View {
         VStack(spacing: 0) {
             Text(name).font(.caption2.weight(.bold)).foregroundStyle(.secondary)
-            Text("\(value)").font(.callout.weight(.semibold).monospacedDigit())
+            Text(value).font(.callout.weight(.semibold).monospacedDigit())
         }
     }
 }
