@@ -37,6 +37,12 @@ final class PlayerRig {
     private var expression = FacePainter.Expression.open
 
     private var swingStart: Double?
+    private var swing = Swing.left
+    private var comboIndex = 0
+    private var lastSwing = -Double.infinity
+    private let trail = SwingTrail()
+    /// How far the equipped blade reaches from the fist; nil when unarmed.
+    private var bladeReach: Float?
     private var hurtStart: Double?
     private var castStart: Double?
     private var cheerStart: Double?
@@ -72,6 +78,7 @@ final class PlayerRig {
         buildLegs()
         buildArms()
         buildHead()
+        hips.addChild(trail.entity)
         dress([], playerClass: nil)
     }
 
@@ -129,7 +136,7 @@ final class PlayerRig {
             arm.addPart(Meshes.torus(radius: 0.044, tube: 0.014), Materials.matte(SproutLook.trim), at: [0, -0.15, 0], scale: .one)
             arm.addCylinder(skin, at: [0, -0.19, 0], radius: 0.036, height: 0.08)
             let hand = Entity()
-            hand.position = [0, -0.25, 0]
+            hand.position = Self.hand
             hand.addSphere(skin, at: .zero, radius: 0.048)
             arm.addChild(hand)
             torso.addChild(arm)
@@ -220,6 +227,7 @@ final class PlayerRig {
         gear = []
         orb = nil
         halo = nil
+        bladeReach = nil
 
         var outfit = Materials.matte(SproutLook.tunic)
         var boots = Materials.matte(SproutLook.boots)
@@ -231,6 +239,9 @@ final class PlayerRig {
             switch item {
             case .twigSword, .thornRapier, .beetleBlade, .moonTalon:
                 attach(Self.makeWeapon(item), to: hands[1])
+                let blade = Self.blade(item)
+                bladeReach = blade.reach
+                trail.setTint(blade.trail)
             case .acornCap:
                 let acorn = Entity()
                 acorn.addSphere(Materials.matte(Palette.capBrown, roughness: 0.9), at: [0, 0.12, 0], radius: 0.17, squash: [1, 0.5, 1])
@@ -378,11 +389,68 @@ final class PlayerRig {
         return e
     }
 
+    /// How far each blade reaches from the fist, and the color of its swing trail.
+    private static func blade(_ item: ItemID) -> (reach: Float, trail: UIColor) {
+        switch item {
+        case .thornRapier: (0.7, UIColor(red: 1, green: 0.86, blue: 0.55, alpha: 1))
+        case .beetleBlade: (0.7, UIColor(red: 0.5, green: 0.72, blue: 1, alpha: 1))
+        case .moonTalon: (0.68, UIColor(red: 0.78, green: 0.9, blue: 1, alpha: 1))
+        default: (0.55, UIColor(red: 0.85, green: 1, blue: 0.72, alpha: 1))
+        }
+    }
+
     // MARK: - Animation
 
-    static let swingDuration = 0.36
+    static let swingDuration = 0.42
 
-    func playSwing(at time: Double) { swingStart = time }
+    /// The melee auto-attack combo: a fixed four-hit pattern, like Flyff.
+    enum Swing: CaseIterable {
+        case left, right, up, down
+
+        /// The weapon arm sweeps `sweep` radians from `from` toward `via` (torso space, from the
+        /// right shoulder) while the torso turns from `twist.0` to `twist.1`.
+        private var arc: (from: SIMD3<Float>, via: SIMD3<Float>, sweep: Float, twist: (Float, Float)) {
+            switch self {
+            case .left: ([-0.95, -0.15, -0.3], [0, -0.2, 1], 2.7, (-0.5, 0.45)) // right to left, across the chest
+            case .right: ([0.75, 0.05, 0.65], [-0.3, 0, 1], 2.8, (0.45, -0.5)) // backhand, left to right
+            case .up: ([-0.45, -0.8, -0.3], [-0.15, -0.1, 1], 2.9, (-0.2, 0.25)) // rising from the ground
+            case .down: ([-0.55, 0.8, -0.25], [-0.15, 0.2, 1], 2.5, (0.2, -0.1)) // overhead chop
+            }
+        }
+
+        /// Arm direction and the way the blade trails behind it, `s` of the way through the sweep.
+        func arm(_ s: Float) -> (direction: SIMD3<Float>, lean: SIMD3<Float>) {
+            let arc = arc
+            let from = simd_normalize(arc.from)
+            let axis = simd_normalize(simd_cross(from, arc.via))
+            let direction = simd_quatf(angle: arc.sweep * s, axis: axis).act(from)
+            return (direction, -simd_cross(axis, direction))
+        }
+
+        func twist(_ s: Float) -> Float {
+            arc.twist.0 + (arc.twist.1 - arc.twist.0) * s
+        }
+    }
+
+    /// Swing phases as fractions of `swingDuration`: wind up, strike, recover.
+    private static let strikeStart: Float = 0.22
+    private static let strikeEnd: Float = 0.52
+    /// How far back in swing progress the trail reaches.
+    private static let trailSpan: Float = 0.2
+    /// The wrist cocks the blade out along the arm while swinging.
+    private static let wristBend = simd_quatf(angle: 1.35, axis: [1, 0, 0])
+    private static let hand: SIMD3<Float> = [0, -0.25, 0]
+
+    func playSwing(at time: Double) {
+        if playerClass?.definition.isRanged != true {
+            // Start the pattern over after a pause in the fight.
+            if time - lastSwing > 2.5 { comboIndex = 0 }
+            swing = Swing.allCases[comboIndex % Swing.allCases.count]
+            comboIndex += 1
+            lastSwing = time
+        }
+        swingStart = time
+    }
     func playHurt(at time: Double) { hurtStart = time }
     func playCast(at time: Double) { castStart = time }
     func playCheer(at time: Double) { cheerStart = time }
@@ -395,7 +463,7 @@ final class PlayerRig {
 
     func animate(_ motion: Motion, time: Double, seed: Float) {
         let t = Float(time)
-        let swing = Self.progress(&swingStart, time, duration: Self.swingDuration)
+        let swingProgress = Self.progress(&swingStart, time, duration: Self.swingDuration)
         let hurt = Self.progress(&hurtStart, time, duration: 0.45)
         let cast = Self.progress(&castStart, time, duration: 0.7)
         let cheer = Self.progress(&cheerStart, time, duration: 1.4)
@@ -439,7 +507,10 @@ final class PlayerRig {
             nod = breath * 0.02
         }
 
-        if let p = swing, !motion.fainted {
+        var slash: (arm: simd_quatf, amount: Float)?
+        var slashProgress: Float?
+        let baseTwist = twist
+        if let p = swingProgress, !motion.fainted {
             if playerClass?.definition.isRanged == true {
                 // Point and release, turning the shooting shoulder forward.
                 let thrust = sin(p * .pi)
@@ -448,16 +519,11 @@ final class PlayerRig {
                 armSwing[0] = -0.4 * thrust
                 twist += 0.25 * thrust
             } else {
-                // Wind up overhead, then slash down across the front.
-                armSwing[1] = if p < 0.35 {
-                    -2.7 * Self.ease(p / 0.35)
-                } else if p < 0.6 {
-                    -2.7 + 2.3 * Self.ease((p - 0.35) / 0.25)
-                } else {
-                    -0.4 * (1 - Self.ease((p - 0.6) / 0.4))
-                }
-                armSpread[1] = 0.15
-                twist += 0.3 * sin(p * .pi)
+                // Cock back, whip through the arc, then ease back to the base pose.
+                let phase = Self.slashPhase(p)
+                slash = (Self.armPose(swing, phase.s), phase.amount)
+                slashProgress = p
+                twist += swing.twist(phase.s) * phase.amount
                 sproutSway += sin(p * .pi) * 0.4
             }
         }
@@ -467,6 +533,9 @@ final class PlayerRig {
 
         var armPose = (0..<2).map { i in
             simd_quatf(angle: Self.sides[i] * armSpread[i], axis: [0, 0, 1]) * simd_quatf(angle: armSwing[i], axis: [1, 0, 0])
+        }
+        if let slash {
+            armPose[1] = simd_slerp(armPose[1], slash.arm, slash.amount)
         }
         if motion.airborne, !motion.fainted {
             // Hanging on to the dandelion stalk.
@@ -503,6 +572,13 @@ final class PlayerRig {
             scarfTails[i].orientation = simd_quatf(angle: Self.sides[i] * 0.18, axis: [0, 0, 1])
                 * simd_quatf(angle: scarfLift + Float(i) * 0.08 + sin(t * 9 + Float(i)) * 0.04, axis: [1, 0, 0])
         }
+        let wrist = motion.airborne || cast != nil || cheer != nil ? 0 : slash?.amount ?? 0
+        hands[1].orientation = simd_slerp(simd_quatf(angle: 0, axis: [1, 0, 0]), Self.wristBend, wrist)
+        if let p = slashProgress, wrist > 0 {
+            updateTrail(p, baseTwist: baseTwist)
+        } else {
+            trail.hide()
+        }
         sprout.orientation = simd_quatf(angle: sproutSway, axis: [0, 0, 1])
         orb?.position = [0.42 + cos(t * 0.9) * 0.05, 1.2 + sin(t * 2) * 0.06, -0.05 + sin(t * 0.9) * 0.05]
         halo?.orientation = simd_quatf(angle: t * 0.8, axis: [0, 1, 0])
@@ -522,6 +598,59 @@ final class PlayerRig {
             expression = wanted
             face.model?.materials = [material]
         }
+    }
+
+    /// Where a melee swing is: `s` runs along the arc (a little negative while cocking back),
+    /// `amount` blends from the base pose into the swing and back out.
+    private static func slashPhase(_ p: Float) -> (s: Float, amount: Float) {
+        let windup: Float = -0.12
+        if p < strikeStart {
+            let x = ease(p / strikeStart)
+            return (windup * x, x)
+        } else if p < strikeEnd {
+            let x = (p - strikeStart) / (strikeEnd - strikeStart)
+            return (windup + (1 - windup) * (1 - pow(1 - x, 3)), 1)
+        } else {
+            return (1, 1 - ease((p - strikeEnd) / (1 - strikeEnd)))
+        }
+    }
+
+    /// Arm rotation pointing the weapon arm along the swing, the fist's forward (+Z) trailing.
+    private static func armPose(_ swing: Swing, _ s: Float) -> simd_quatf {
+        let (direction, lean) = swing.arm(s)
+        let y = -direction
+        let z = simd_normalize(lean - simd_dot(lean, direction) * direction)
+        return simd_quatf(simd_float3x3(simd_cross(y, z), y, z))
+    }
+
+    /// Sweeps the trail over where the blade was during the last `trailSpan` of the strike.
+    private func updateTrail(_ p: Float, baseTwist: Float) {
+        guard let reach = bladeReach else {
+            trail.hide()
+            return
+        }
+        let head = min(p, Self.strikeEnd)
+        let tail = max(Self.strikeStart, p - Self.trailSpan)
+        guard head > tail else {
+            trail.hide()
+            return
+        }
+        let shoulder = Self.shoulder * [Self.sides[1], 1, 1]
+        let hilt = Self.bladeDirection * 0.16
+        let tip = Self.bladeDirection * reach
+        let hand = Self.hand, wristBend = Self.wristBend
+        let samples = (0...SwingTrail.segments).map { i in
+            let s = Self.slashPhase(tail + (head - tail) * Float(i) / Float(SwingTrail.segments)).s
+            let torso = simd_quatf(angle: baseTwist + swing.twist(s), axis: [0, 1, 0])
+            let arm = Self.armPose(swing, s)
+            func place(_ point: SIMD3<Float>) -> SIMD3<Float> {
+                torso.act(shoulder + arm.act(hand + wristBend.act(point)))
+            }
+            return (hilt: place(hilt), tip: place(tip))
+        }
+        // Once the blade stops, the tail catches up and the whole ribbon fades.
+        let strength = p > Self.strikeEnd ? 1 - (p - Self.strikeEnd) / Self.trailSpan : 1
+        trail.show(samples, strength: strength)
     }
 
     /// 0...1 progress of a timed move, clearing it once it's over.

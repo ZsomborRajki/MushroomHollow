@@ -74,3 +74,22 @@ void skyGradient(realitykit::surface_parameters params)
 
     params.surface().set_emissive_color(color);
 }
+
+// Blade swing trail. uv.x runs from the oldest sample (0) to where the blade is now (1),
+// uv.y from the hilt (0) to the tip (1). custom_parameter = (r, g, b, strength).
+[[visible]]
+void swingTrail(realitykit::surface_parameters params)
+{
+    float2 uv = params.geometry().uv0();
+    float4 tint = params.uniforms().custom_parameter();
+    float fresh = uv.x;
+    float edge = saturate(uv.y);
+
+    // Thin near the hilt, strongest along the edge, fading into the past.
+    float alpha = pow(fresh, 1.3) * smoothstep(0.0, 0.35, edge) * (0.6 + 0.4 * edge) * tint.a;
+    // A white-hot streak right behind the tip.
+    half3 color = mix(half3(tint.rgb), half3(1.0), half(0.7 * pow(edge, 3.0) * fresh));
+
+    params.surface().set_emissive_color(color);
+    params.surface().set_opacity(half(saturate(alpha)));
+}
