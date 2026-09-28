@@ -19,7 +19,9 @@ struct GameView: View {
             .simultaneousGesture(cameraZoom)
             .simultaneousGesture(tapToTarget)
 
-            FloatingTextLayer(texts: session.floatingTexts)
+            // These read their fast-changing state themselves, so this body doesn't re-run each frame.
+            FloatingTextLayer(session: session)
+            HapticFeedback(session: session)
 
             if session.panel == nil {
                 if !session.isGamepadConnected {
@@ -48,7 +50,7 @@ struct GameView: View {
                 EmptyView()
             }
 
-            if session.hud.isFainted {
+            if session.isFainted {
                 FaintedOverlay(glyph: session.glyphs?.primary) {
                     session.perform(.primary)
                 }
@@ -57,17 +59,9 @@ struct GameView: View {
             }
         }
         .animation(.easeInOut(duration: 0.25), value: session.isGamepadConnected)
-        .animation(.easeInOut(duration: 0.4), value: session.hud.isFainted)
+        .animation(.easeInOut(duration: 0.4), value: session.isFainted)
         .animation(.snappy(duration: 0.25), value: session.panel)
         .animation(.snappy, value: session.nearbyNPC)
-        .sensoryFeedback(.impact(weight: .light), trigger: session.feedback.hitsTaken)
-        .sensoryFeedback(.impact(weight: .medium), trigger: session.feedback.kills)
-        .sensoryFeedback(.success, trigger: session.feedback.levelUps)
-        .sensoryFeedback(.error, trigger: session.feedback.failures)
-        .sensoryFeedback(.warning, trigger: session.feedback.fainted)
-        .sensoryFeedback(.warning, trigger: session.feedback.danger)
-        .sensoryFeedback(.selection, trigger: session.feedback.loot)
-        .sensoryFeedback(.selection, trigger: session.selection)
         .onChange(of: scenePhase) { _, phase in
             if phase != .active { session.saveNow() }
         }
@@ -77,35 +71,15 @@ struct GameView: View {
 
     @ViewBuilder
     private func gameplayControls(_ session: GameSession) -> some View {
-        if !session.hud.isFainted {
+        if !session.isFainted {
             ActionBar(session: session)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
                 .ignoresSafeArea()
                 .transition(.opacity)
 
-            // Utility row, top right: potions, flight, bag.
-            HStack(spacing: 12) {
-                ForEach(Array([ItemID.dewPotion, .nectarVial].enumerated()), id: \.element) { index, item in
-                    PotionButton(item: item, count: session.hud.player?.inventory.count(of: item) ?? 0,
-                                 cooldown: session.hud.player?.itemCooldown ?? 0, glyph: session.glyphs?.quickItems[index]) {
-                        session.perform(.quickItem(index))
-                    }
-                }
-                if session.hud.player?.canFly == true {
-                    let flying = session.hud.player?.isFlying == true
-                    RoundButton(symbol: flying ? "arrow.down.to.line" : "wind", size: 48, tint: .cyan, glyph: session.glyphs?.flight) {
-                        session.perform(.toggleFlight)
-                    }
-                    .accessibilityLabel(flying ? "Land" : "Fly")
-                    .transition(.scale.combined(with: .opacity))
-                }
-                RoundButton(symbol: "bag.fill", size: 48, glyph: session.glyphs?.menu) {
-                    session.perform(.toggleInventory)
-                }
-                .accessibilityLabel("Bag")
-            }
-            .padding()
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+            UtilityRow(session: session)
+                .padding()
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
 
             if let npc = session.nearbyNPC {
                 InteractPrompt(npc: npc, glyph: session.glyphs?.primary) {
@@ -147,5 +121,53 @@ struct GameView: View {
         SpatialTapGesture()
             .targetedToAnyEntity()
             .onEnded { value in session.tapped(value.entity) }
+    }
+}
+
+/// Utility row, top right: potions, flight, bag.
+private struct UtilityRow: View {
+    let session: GameSession
+
+    var body: some View {
+        let player = session.hud.player
+        HStack(spacing: 12) {
+            ForEach(Array([ItemID.dewPotion, .nectarVial].enumerated()), id: \.element) { index, item in
+                PotionButton(item: item, count: player?.inventory.count(of: item) ?? 0,
+                             isCoolingDown: (player?.itemCooldown ?? 0) > 0, glyph: session.glyphs?.quickItems[index]) {
+                    session.perform(.quickItem(index))
+                }
+            }
+            if player?.canFly == true {
+                let flying = player?.isFlying == true
+                RoundButton(symbol: flying ? "arrow.down.to.line" : "wind", size: 48, tint: .cyan, glyph: session.glyphs?.flight) {
+                    session.perform(.toggleFlight)
+                }
+                .accessibilityLabel(flying ? "Land" : "Fly")
+                .transition(.scale.combined(with: .opacity))
+            }
+            RoundButton(symbol: "bag.fill", size: 48, glyph: session.glyphs?.menu) {
+                session.perform(.toggleInventory)
+            }
+            .accessibilityLabel("Bag")
+        }
+    }
+}
+
+/// Phone haptics for game events. Its own view, so a hit only re-runs this tiny body.
+private struct HapticFeedback: View {
+    let session: GameSession
+
+    var body: some View {
+        Color.clear
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+            .sensoryFeedback(.impact(weight: .light), trigger: session.feedback.hitsTaken)
+            .sensoryFeedback(.impact(weight: .medium), trigger: session.feedback.kills)
+            .sensoryFeedback(.success, trigger: session.feedback.levelUps)
+            .sensoryFeedback(.error, trigger: session.feedback.failures)
+            .sensoryFeedback(.warning, trigger: session.feedback.fainted)
+            .sensoryFeedback(.warning, trigger: session.feedback.danger)
+            .sensoryFeedback(.selection, trigger: session.feedback.loot)
+            .sensoryFeedback(.selection, trigger: session.selection)
     }
 }

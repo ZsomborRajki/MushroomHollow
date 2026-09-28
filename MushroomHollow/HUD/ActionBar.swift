@@ -29,7 +29,7 @@ struct ActionBar: View {
                     .position(Self.attackCenter)
             } else {
                 ForEach(Array((player?.skills ?? []).enumerated()), id: \.element.id) { index, status in
-                    SkillButton(skill: status.id, status: status, glyph: glyphs.map { $0.skills[min(index, $0.skills.count - 1)] },
+                    SkillButton(session: session, skill: status.id, status: status, glyph: glyphs.map { $0.skills[min(index, $0.skills.count - 1)] },
                                 shiftGlyph: index >= 3 ? glyphs?.shift : nil) {
                         session.perform(.skill(index))
                     }
@@ -83,16 +83,13 @@ private struct ClimbButton: View {
 }
 
 private struct SkillButton: View {
+    let session: GameSession
     let skill: SkillID
+    /// Unlock and mana state only; the cooldown comes from `session.timers`.
     let status: SkillStatus?
     let glyph: String?
     var shiftGlyph: String?
     let action: () -> Void
-
-    private var cooldownFraction: Double {
-        guard let status, status.cooldownTotal > 0 else { return 0 }
-        return Double(status.cooldownRemaining / status.cooldownTotal)
-    }
 
     var body: some View {
         let unlocked = status?.isUnlocked ?? false
@@ -104,16 +101,7 @@ private struct SkillButton: View {
                     .font(.system(size: 22, weight: .semibold))
                     .foregroundStyle(unlocked ? skill.tint : .secondary)
 
-                // Cooldown sweep, like a clock hand wiping away.
-                if cooldownFraction > 0 {
-                    Circle()
-                        .trim(from: 0, to: cooldownFraction)
-                        .rotation(.degrees(-90))
-                        .scale(x: -1)
-                        .fill(.black.opacity(0.55))
-                    Text("\(Int(ceil(status?.cooldownRemaining ?? 0)))")
-                        .font(.headline.monospacedDigit())
-                }
+                CooldownSweep(session: session, skill: skill)
                 if !unlocked {
                     Text("Lv \(skill.definition.requiredLevel)")
                         .font(.caption2.weight(.bold))
@@ -143,10 +131,29 @@ private struct SkillButton: View {
     }
 }
 
+/// Cooldown sweep, like a clock hand wiping away. The only part of a skill button that
+/// watches the ticking timers, so a cooldown doesn't redraw the whole action bar.
+private struct CooldownSweep: View {
+    let session: GameSession
+    let skill: SkillID
+
+    var body: some View {
+        if let countdown = session.timers.skills[skill], countdown.remaining > 0 {
+            Circle()
+                .trim(from: 0, to: countdown.fraction)
+                .rotation(.degrees(-90))
+                .scale(x: -1)
+                .fill(.black.opacity(0.55))
+            Text("\(Int(ceil(countdown.remaining)))")
+                .font(.headline.monospacedDigit())
+        }
+    }
+}
+
 struct PotionButton: View {
     let item: ItemID
     let count: Int
-    let cooldown: Float
+    let isCoolingDown: Bool
     let glyph: String?
     let action: () -> Void
 
@@ -156,7 +163,7 @@ struct PotionButton: View {
                 Image(systemName: item.symbol)
                     .font(.system(size: 18, weight: .semibold))
                     .foregroundStyle(item.tint)
-                if cooldown > 0 {
+                if isCoolingDown {
                     Circle().fill(.black.opacity(0.45))
                 }
             }
@@ -244,27 +251,31 @@ struct FaintedOverlay: View {
     }
 }
 
-/// Damage numbers and XP popping out of the world.
+/// Damage numbers and XP popping out of the world. Redraws every frame while any are alive,
+/// so it's one `Canvas` (no per-label views) with a single shadow pass over all of them.
 struct FloatingTextLayer: View {
-    let texts: [FloatingText]
+    let session: GameSession
 
     var body: some View {
-        ZStack {
-            ForEach(texts) { text in
-                if let point = text.screenPosition {
-                    Text(text.text)
-                        .font(font(for: text.style))
-                        .foregroundStyle(color(for: text.style))
-                        .shadow(color: .black.opacity(0.7), radius: 2, y: 1)
-                        .scaleEffect(scale(for: text))
-                        .opacity(1 - pow(text.progress, 3))
-                        .position(x: point.x, y: point.y - text.progress * 50)
+        let texts = session.floatingTexts
+        Canvas { context, _ in
+            context.addFilter(.shadow(color: .black.opacity(0.7), radius: 2, y: 1))
+            context.drawLayer { layer in
+                for text in texts {
+                    guard let point = text.screenPosition else { continue }
+                    var label = layer
+                    let scale = scale(for: text)
+                    label.opacity = 1 - pow(text.progress, 3)
+                    label.translateBy(x: point.x, y: point.y - text.progress * 50)
+                    label.scaleBy(x: scale, y: scale)
+                    label.draw(Text(text.text).font(font(for: text.style)).foregroundStyle(color(for: text.style)), at: .zero)
                 }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .ignoresSafeArea()
         .allowsHitTesting(false)
+        .accessibilityHidden(true)
     }
 
     private func font(for style: FloatingText.Style) -> Font {

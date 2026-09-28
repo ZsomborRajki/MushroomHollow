@@ -25,11 +25,61 @@ struct BossInfo: Equatable {
     let isFighting: Bool
 }
 
+/// Slow-changing HUD data. The countdowns inside `player` (skill cooldowns, buff and potion
+/// timers) go stale on purpose: read them from `HUDTimers`, so ticking clocks don't redraw the HUD.
 struct HUDState: Equatable {
     var player: PlayerStatus?
     var target: TargetInfo?
     var boss: BossInfo?
     var isFainted: Bool { player.map { !$0.stats.isAlive } ?? false }
+
+    /// Equal apart from ticking countdowns (and sub-meter altitude, which the HUD doesn't show).
+    func matchesIgnoringCountdowns(_ other: HUDState) -> Bool {
+        guard target == other.target, boss == other.boss else { return false }
+        guard let a = player, let b = other.player else { return player == nil && other.player == nil }
+        // Keep in step with `PlayerStatus`: a field missing here never refreshes the HUD.
+        return a.id == b.id && a.stats == b.stats && a.xp == b.xp && a.xpToNextLevel == b.xpToNextLevel
+            && a.target == b.target && a.isEngaged == b.isEngaged && a.caps == b.caps
+            && a.inventory == b.inventory && a.equipment == b.equipment && a.quests == b.quests
+            && a.isSlowed == b.isSlowed && a.playerClass == b.playerClass
+            && a.canFly == b.canFly && a.isFlying == b.isFlying && Int(a.altitude) == Int(b.altitude)
+            && a.skills.map(\.id) == b.skills.map(\.id)
+            && a.skills.map(\.isUnlocked) == b.skills.map(\.isUnlocked)
+            && a.skills.map(\.canAfford) == b.skills.map(\.canAfford)
+            && a.buffs.map(\.id) == b.buffs.map(\.id)
+            && (a.itemCooldown > 0) == (b.itemCooldown > 0)
+    }
+}
+
+/// HUD countdowns, rounded to `step` seconds so they change ~10×/s instead of every tick.
+/// Only the rings that draw them read this, so the rest of the HUD stays still.
+struct HUDTimers: Equatable {
+    struct Countdown: Equatable {
+        var remaining: Float = 0
+        var total: Float = 0
+        var fraction: Double { total > 0 ? Double(min(1, remaining / total)) : 0 }
+    }
+
+    static let step: Float = 0.1
+
+    var skills: [SkillID: Countdown] = [:]
+    var buffs: [SkillID: Countdown] = [:]
+
+    init() {}
+
+    init(_ status: PlayerStatus?) {
+        guard let status else { return }
+        for skill in status.skills {
+            skills[skill.id] = Countdown(remaining: Self.round(skill.cooldownRemaining), total: skill.cooldownTotal)
+        }
+        for buff in status.buffs {
+            buffs[buff.skill] = Countdown(remaining: Self.round(buff.remaining), total: buff.total)
+        }
+    }
+
+    private static func round(_ seconds: Float) -> Float {
+        (max(0, seconds) / step).rounded(.up) * step
+    }
 }
 
 /// A damage number or similar label floating up from a point in the world.
@@ -119,6 +169,9 @@ struct InventoryCell: Identifiable, Equatable {
 final class GameSession {
     // HUD-facing state. Only written when it changes, to keep SwiftUI quiet.
     private(set) var hud = HUDState()
+    private(set) var timers = HUDTimers()
+    /// Mirrors `hud.isFainted`, so the root view doesn't have to watch all of `hud`.
+    private(set) var isFainted = false
     private(set) var glyphs: ControllerGlyphs?
     private(set) var floatingTexts: [FloatingText] = []
     private(set) var feed: [FeedLine] = []
@@ -150,6 +203,7 @@ final class GameSession {
     @ObservationIgnored private var updateSubscription: EventSubscription?
     @ObservationIgnored private var elapsed: Double = 0
     @ObservationIgnored private var slowRefresh: Double = 0
+    @ObservationIgnored private var hudTick: UInt64?
     @ObservationIgnored private var nextID = 0
     @ObservationIgnored private var toastExpiry: Double = 0
     @ObservationIgnored private var bannerExpiry: Double = 0
@@ -157,6 +211,7 @@ final class GameSession {
     @ObservationIgnored private var saveRequested = false
 
     static let floaterLifetime: Double = 1.1
+    static let maxFloatingTexts = 24
     /// Bag grid columns. The equipment slots form a small paper-doll grid to its left.
     static let inventoryColumns = 6
     static let equipmentColumns = 2
@@ -984,6 +1039,7 @@ final class GameSession {
         // Spread stacked numbers a little so they don't overlap.
         position.x += Float(nextID % 5 - 2) * 0.12
         floatingTexts.append(FloatingText(id: nextID, text: text, style: style, worldPosition: position, born: elapsed))
+        if floatingTexts.count > Self.maxFloatingTexts { floatingTexts.removeFirst(floatingTexts.count - Self.maxFloatingTexts) }
     }
 
     private func addFeed(symbol: String, text: String, tint: Color) {
@@ -1015,6 +1071,9 @@ final class GameSession {
 
     private func updateHUD() {
         let snapshot = host.currentSnapshot
+        // The snapshot only changes on sim ticks (20 Hz); skip the other frames.
+        guard snapshot.tick != hudTick else { return }
+        hudTick = snapshot.tick
         var state = HUDState(player: snapshot.viewer)
         if let viewer = snapshot.viewer, let targetID = viewer.target, let target = snapshot.entity(targetID) {
             state.target = TargetInfo(
@@ -1028,7 +1087,10 @@ final class GameSession {
             state.boss = BossInfo(id: bossID, name: boss.kind.displayName, hp: boss.hp, maxHP: boss.maxHP,
                                   isFighting: boss.target != nil)
         }
-        if state != hud { hud = state }
+        if !state.matchesIgnoringCountdowns(hud) { hud = state }
+        if state.isFainted != isFainted { isFainted = state.isFainted }
+        let timers = HUDTimers(snapshot.viewer)
+        if timers != self.timers { self.timers = timers }
     }
 
     private func updateFloatingTexts() {

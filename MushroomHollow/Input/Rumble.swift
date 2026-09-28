@@ -9,6 +9,8 @@ final class Rumble {
 
     private var engine: CHHapticEngine?
     private weak var controller: GCController?
+    /// Patterns are fixed, so build each once (combat plays them several times a second).
+    private var patterns: [Pulse: CHHapticPattern] = [:]
 
     /// Call when the active controller may have changed.
     func attach(to controller: GCController?) {
@@ -21,7 +23,13 @@ final class Rumble {
     }
 
     func play(_ pulse: Pulse) {
-        guard let engine else { return }
+        guard let engine, let pattern = pattern(for: pulse),
+              let player = try? engine.makePlayer(with: pattern) else { return }
+        try? player.start(atTime: CHHapticTimeImmediate)
+    }
+
+    private func pattern(for pulse: Pulse) -> CHHapticPattern? {
+        if let cached = patterns[pulse] { return cached }
         let events: [CHHapticEvent] = switch pulse {
         case .light:
             [transient(intensity: 0.45, sharpness: 0.6, at: 0)]
@@ -33,9 +41,9 @@ final class Rumble {
             [transient(intensity: 0.6, sharpness: 0.7, at: 0), transient(intensity: 0.8, sharpness: 0.7, at: 0.12),
              continuous(intensity: 0.7, sharpness: 0.4, at: 0.24, duration: 0.4)]
         }
-        guard let pattern = try? CHHapticPattern(events: events, parameters: []),
-              let player = try? engine.makePlayer(with: pattern) else { return }
-        try? player.start(atTime: CHHapticTimeImmediate)
+        let pattern = try? CHHapticPattern(events: events, parameters: [])
+        patterns[pulse] = pattern
+        return pattern
     }
 
     private func transient(intensity: Float, sharpness: Float, at time: TimeInterval) -> CHHapticEvent {

@@ -10,8 +10,7 @@ final class SwingTrail {
 
     let entity = ModelEntity()
     private let mesh: LowLevelMesh?
-    private var material: any RealityKit.Material
-    private var tint = SIMD3<Float>(1, 1, 1)
+    private var tint: SIMD3<Float>?
 
     private struct Vertex {
         var position: SIMD3<Float>
@@ -20,19 +19,27 @@ final class SwingTrail {
     }
 
     init() {
-        material = Self.makeMaterial()
         mesh = Self.makeMesh()
         if let mesh, let resource = try? MeshResource(from: mesh) {
-            entity.model = ModelComponent(mesh: resource, materials: [material])
+            entity.model = ModelComponent(mesh: resource, materials: [Self.makeMaterial()])
         }
         entity.components.set(DynamicLightShadowComponent(castsShadow: false))
+        entity.components.set(OpacityComponent(opacity: 1))
         entity.isEnabled = false
+        setTint(.white)
     }
 
+    /// Only touches the material when the color actually changes (on re-equipping), not per frame.
     func setTint(_ color: UIColor) {
         var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
         color.getRed(&r, green: &g, blue: &b, alpha: &a)
-        tint = [Float(r), Float(g), Float(b)]
+        let tint = SIMD3(Float(r), Float(g), Float(b))
+        guard tint != self.tint else { return }
+        self.tint = tint
+        if var custom = entity.model?.materials.first as? CustomMaterial {
+            custom.custom.value = SIMD4(tint, 1)
+            entity.model?.materials = [custom]
+        }
     }
 
     func hide() {
@@ -63,11 +70,8 @@ final class SwingTrail {
         mesh.parts.replaceAll([
             LowLevelMesh.Part(indexCount: (count - 1) * 6, topology: .triangle, bounds: BoundingBox(min: low, max: high)),
         ])
-        if var custom = material as? CustomMaterial {
-            custom.custom.value = SIMD4(tint, strength)
-            material = custom
-            entity.model?.materials = [custom]
-        }
+        // The fade rides on opacity, so the material never changes mid-swing.
+        entity.components.set(OpacityComponent(opacity: min(1, strength)))
         entity.isEnabled = true
     }
 

@@ -11,7 +11,7 @@ struct HUDView: View {
                 if let player = session.hud.player {
                     VStack(alignment: .leading, spacing: 6) {
                         PlayerFrame(status: player, zone: session.zone, timeOfDay: session.timeOfDay)
-                        BuffRow(buffs: player.buffs)
+                        BuffRow(session: session, buffs: player.buffs)
                     }
                 }
                 // The boss bar already shows the boss; don't repeat it in the target frame.
@@ -181,6 +181,8 @@ private struct BossBar: View {
 
 /// Active buffs with a draining ring.
 private struct BuffRow: View {
+    let session: GameSession
+    /// Which buffs are up; their timers come from `session.timers`.
     let buffs: [BuffStatus]
 
     var body: some View {
@@ -188,19 +190,30 @@ private struct BuffRow: View {
             ForEach(buffs) { buff in
                 ZStack {
                     Circle().fill(.black.opacity(0.35))
-                    Circle()
-                        .trim(from: 0, to: CGFloat(buff.total > 0 ? buff.remaining / buff.total : 0))
-                        .stroke(buff.skill.tint, lineWidth: 2.5)
-                        .rotationEffect(.degrees(-90))
+                    BuffRing(session: session, skill: buff.skill)
                     Image(systemName: buff.skill.symbol)
                         .font(.system(size: 13, weight: .bold))
                         .foregroundStyle(buff.skill.tint)
                 }
                 .frame(width: 30, height: 30)
-                .accessibilityLabel("\(buff.skill.definition.name), \(Int(buff.remaining)) seconds")
             }
         }
         .animation(.snappy, value: buffs.map(\.id))
+    }
+}
+
+/// The draining ring; the only part of the buff row that watches the ticking timers.
+private struct BuffRing: View {
+    let session: GameSession
+    let skill: SkillID
+
+    var body: some View {
+        let countdown = session.timers.buffs[skill] ?? .init()
+        Circle()
+            .trim(from: 0, to: countdown.fraction)
+            .stroke(skill.tint, lineWidth: 2.5)
+            .rotationEffect(.degrees(-90))
+            .accessibilityLabel("\(skill.definition.name), \(Int(countdown.remaining)) seconds")
     }
 }
 
