@@ -201,6 +201,8 @@ final class GameSession {
     @ObservationIgnored private var camera = OrbitCamera()
     @ObservationIgnored private var projector: RealityViewCameraContent?
     @ObservationIgnored private var updateSubscription: EventSubscription?
+    /// Frames left before the color grade can be installed (see `installColorGradeWhenReady`).
+    @ObservationIgnored private var colorGradeDelay = 3
     @ObservationIgnored private var elapsed: Double = 0
     @ObservationIgnored private var slowRefresh: Double = 0
     @ObservationIgnored private var hudTick: UInt64?
@@ -283,10 +285,6 @@ final class GameSession {
         content.camera = .virtual
         content.add(renderer.root)
         content.audioListener = renderer.camera
-        #if !targetEnvironment(simulator)
-        // Custom post-processing traps in the Simulator; the grade and fog run on device only.
-        content.renderingEffects.customPostProcessing = .effect(ColorGradeEffect(settings: renderer.atmosphere.grade))
-        #endif
         projector = content
         let sounds = renderer.sounds
         Task { await sounds.load() }
@@ -294,6 +292,16 @@ final class GameSession {
         updateSubscription = content.subscribe(to: SceneEvents.Update.self) { [weak self] event in
             self?.frame(deltaTime: event.deltaTime)
         }
+    }
+
+    /// RealityKit traps when custom post-processing is set before the active camera has
+    /// rendered (it force-unwraps the camera's view descriptors), so wait a few frames
+    /// instead of setting it in the `RealityView` make closure.
+    private func installColorGradeWhenReady() {
+        guard colorGradeDelay > 0 else { return }
+        colorGradeDelay -= 1
+        guard colorGradeDelay == 0 else { return }
+        projector?.renderingEffects.customPostProcessing = .effect(ColorGradeEffect(settings: renderer.atmosphere.grade))
     }
 
     func saveNow() {
@@ -362,6 +370,7 @@ final class GameSession {
     private func frame(deltaTime: TimeInterval) {
         let dt = Float(min(deltaTime, 0.1))
         elapsed += deltaTime
+        installColorGradeWhenReady()
 
         #if DEBUG
         if autoFight { driveAutoFight(deltaTime: deltaTime) }
