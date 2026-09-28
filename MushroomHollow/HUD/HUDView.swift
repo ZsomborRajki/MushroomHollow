@@ -14,7 +14,8 @@ struct HUDView: View {
                         BuffRow(buffs: player.buffs)
                     }
                 }
-                if let target = session.hud.target {
+                // The boss bar already shows the boss; don't repeat it in the target frame.
+                if let target = session.hud.target, target.id != session.hud.boss?.id {
                     TargetFrame(target: target)
                         .transition(.move(edge: .top).combined(with: .opacity))
                 }
@@ -40,6 +41,12 @@ struct HUDView: View {
                     .transition(.opacity)
                     .padding(.bottom, 8)
             }
+            // Bottom center keeps the (huge) boss itself in view.
+            if let boss = session.hud.boss {
+                BossBar(boss: boss)
+                    .padding(.bottom, 8)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
             if let player = session.hud.player {
                 XPBar(status: player)
             }
@@ -52,6 +59,7 @@ struct HUDView: View {
         }
         .padding()
         .animation(.snappy, value: session.hud.target?.id)
+        .animation(.snappy, value: session.hud.boss?.id)
         .animation(.bouncy, value: session.banner)
         .animation(.easeOut(duration: 0.2), value: session.toast)
         .animation(.snappy, value: session.feed)
@@ -128,6 +136,49 @@ private struct PlayerFrame: View {
     }
 }
 
+/// The world boss's health, with markers where its fight changes phase.
+private struct BossBar: View {
+    let boss: BossInfo
+
+    private var fraction: Double { boss.maxHP > 0 ? Double(boss.hp) / Double(boss.maxHP) : 0 }
+
+    var body: some View {
+        VStack(spacing: 4) {
+            HStack(spacing: 6) {
+                Image(systemName: "moon.stars.fill").foregroundStyle(.indigo)
+                Text(boss.name).font(.headline)
+                if boss.isFighting {
+                    Image(systemName: "flame.fill").foregroundStyle(.red).font(.caption)
+                }
+            }
+            GeometryReader { geometry in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(.black.opacity(0.45))
+                    Capsule()
+                        .fill(.linearGradient(colors: [.purple, .red], startPoint: .leading, endPoint: .trailing))
+                        .frame(width: geometry.size.width * fraction)
+                    // Phase thresholds: wing gusts below 60%, summons and enrage below 30%.
+                    ForEach([0.6, 0.3], id: \.self) { mark in
+                        Rectangle()
+                            .fill(.white.opacity(0.7))
+                            .frame(width: 2)
+                            .offset(x: geometry.size.width * mark)
+                    }
+                    Text("\(boss.hp) / \(boss.maxHP)")
+                        .font(.caption2.monospacedDigit().weight(.semibold))
+                        .frame(maxWidth: .infinity)
+                        .shadow(radius: 1)
+                }
+            }
+            .frame(width: 280, height: 14)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+        .glassEffect(.regular.tint(.purple.opacity(0.2)), in: .rect(cornerRadius: 16))
+        .animation(.easeOut(duration: 0.3), value: fraction)
+    }
+}
+
 /// Active buffs with a draining ring.
 private struct BuffRow: View {
     let buffs: [BuffStatus]
@@ -182,7 +233,7 @@ private struct TargetFrame: View {
             }
             StatBar(value: target.hp, max: target.maxHP, color: .red, label: nil)
         }
-        .frame(width: 220)
+        .frame(width: 200)
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
         .glassEffect(.regular, in: .rect(cornerRadius: 18))

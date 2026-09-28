@@ -15,6 +15,7 @@ enum ActorModels {
         case .mob(.beetle): buildBeetle(into: model)
         case .mob(.sporeBeast): buildSporeBeast(into: model)
         case .mob(.sporeling): buildSporeling(into: model)
+        case .mob(.mouse): buildMouse(into: model)
         case .mob(.owl): buildOwl(into: model)
         case .npc(.elderMorel): buildElderMorel(into: model)
         case .npc(.chanterelle): buildChanterelle(into: model)
@@ -89,6 +90,13 @@ enum ActorModels {
                 e.addCylinder(Materials.matte(Palette.leaf, roughness: 0.7), at: [0, 0.7, 0], radius: 0.285, height: 0.5)
             case .barkMail:
                 e.addCylinder(Materials.matte(Palette.bark, roughness: 1), at: [0, 0.72, 0], radius: 0.3, height: 0.55)
+            case .moonTalon:
+                let talon = Materials.glow(UIColor(red: 0.75, green: 0.85, blue: 1, alpha: 1))
+                e.addCylinder(talon, at: [0.33, 0.8, 0.3], radius: 0.035, height: 0.9, rotation: simd_quatf(angle: 0.9, axis: [1, 0, 0]))
+                e.addSphere(Materials.matte(Palette.boots), at: [0.33, 0.55, 0.05], radius: 0.06)
+            case .featherCloak:
+                e.addSphere(Materials.matte(Palette.owlFeather), at: [0, 0.8, -0.18], radius: 1, squash: [0.36, 0.5, 0.18])
+                e.addCylinder(Materials.matte(UIColor(red: 0.78, green: 0.68, blue: 0.52, alpha: 1)), at: [0, 0.7, 0], radius: 0.29, height: 0.55)
             case .mossBoots:
                 let moss = Materials.matte(Palette.darkMoss, roughness: 1)
                 e.addSphere(moss, at: [-0.11, 0.06, 0.03], radius: 0.11, squash: [1, 0.7, 1.3])
@@ -202,13 +210,59 @@ enum ActorModels {
         e.addPart(Meshes.roundedBox, Materials.matte(Palette.door), at: [-0.33, 0.7, 0], scale: [0.14, 0.32, 0.3])
     }
 
+    /// Wing entities are named so the renderer can flap and spread them.
+    static let owlWingNames = ["owl.wing.left", "owl.wing.right"]
+
     private static func buildOwl(into e: Entity) {
         let feather = Materials.matte(Palette.owlFeather)
-        e.addSphere(feather, at: [0, 2.6, 0], radius: 2.2, squash: [1, 1.2, 0.95])
-        e.addSphere(feather, at: [0, 5.0, 0.2], radius: 1.5)
-        let eye = Materials.glow(Palette.owlEye)
-        e.addSphere(eye, at: [-0.6, 5.1, 1.45], radius: 0.45, squash: [1, 1, 0.3])
-        e.addSphere(eye, at: [0.6, 5.1, 1.45], radius: 0.45, squash: [1, 1, 0.3])
+        let chest = Materials.matte(UIColor(red: 0.78, green: 0.68, blue: 0.52, alpha: 1))
+        let dark = Materials.matte(UIColor(red: 0.28, green: 0.2, blue: 0.14, alpha: 1))
+        e.addSphere(feather, at: [0, 2.5, 0], radius: 2.1, squash: [1, 1.2, 0.9])
+        e.addSphere(chest, at: [0, 2.3, 0.9], radius: 1.5, squash: [1, 1.15, 0.6])
+        for row in 0..<3 {
+            for column in -1...1 {
+                e.addSphere(dark, at: [Float(column) * 0.5, 1.7 + Float(row) * 0.55, 1.75], radius: 0.12, squash: [1.4, 0.6, 0.5])
+            }
+        }
+        // Head, facial disc, ear tufts, beak.
+        e.addSphere(feather, at: [0, 4.8, 0.15], radius: 1.45)
+        e.addSphere(chest, at: [0, 4.75, 1.05], radius: 1.1, squash: [1.15, 1, 0.45])
+        for side: Float in [-1, 1] {
+            e.addPart(Meshes.cone, feather, at: [side * 0.8, 6.2, 0], scale: [0.35, 0.9, 0.3],
+                      rotation: simd_quatf(angle: side * -0.35, axis: [0, 0, 1]))
+            e.addSphere(Materials.glow(Palette.owlEye), at: [side * 0.52, 4.95, 1.4], radius: 0.42, squash: [1, 1, 0.3])
+            e.addSphere(Materials.glossy(Palette.eye), at: [side * 0.52, 4.95, 1.52], radius: 0.2, squash: [1, 1, 0.3])
+        }
+        e.addPart(Meshes.cone, Materials.glossy(UIColor(red: 0.35, green: 0.3, blue: 0.25, alpha: 1)), at: [0, 4.45, 1.55],
+                  scale: [0.2, 0.5, 0.2], rotation: simd_quatf(angle: .pi, axis: [1, 0, 0]))
+        // Talons.
+        for side: Float in [-1, 1] {
+            e.addSphere(Materials.matte(Palette.shelfFungus), at: [side * 0.7, 0.2, 0.6], radius: 0.35, squash: [1, 0.5, 1.4])
+        }
+        // Wings: pivot at the shoulder so they can fold and spread.
+        for (index, side) in [Float(-1), 1].enumerated() {
+            let wing = Entity()
+            wing.name = owlWingNames[index]
+            wing.position = [side * 1.7, 3.6, -0.2]
+            wing.addSphere(feather, at: [side * 0.6, -1.3, 0], radius: 1, squash: [0.45, 1.6, 1.1])
+            wing.addSphere(dark, at: [side * 0.7, -2.4, -0.1], radius: 0.6, squash: [0.4, 1, 1])
+            e.addChild(wing)
+        }
+    }
+
+    private static func buildMouse(into e: Entity) {
+        let fur = Materials.matte(UIColor(red: 0.55, green: 0.47, blue: 0.4, alpha: 1))
+        let pink = Materials.matte(UIColor(red: 0.95, green: 0.7, blue: 0.7, alpha: 1))
+        e.addSphere(fur, at: [0, 0.35, -0.05], radius: 0.35, squash: [1, 0.9, 1.4])
+        e.addSphere(fur, at: [0, 0.45, 0.45], radius: 0.22)
+        e.addSphere(pink, at: [0, 0.42, 0.66], radius: 0.05)
+        for side: Float in [-1, 1] {
+            e.addCylinder(pink, at: [side * 0.15, 0.68, 0.4], radius: 0.13, height: 0.03,
+                          rotation: simd_quatf(angle: .pi / 2, axis: [1, 0, 0]))
+            e.addSphere(Materials.glossy(Palette.eye), at: [side * 0.09, 0.5, 0.62], radius: 0.035)
+        }
+        e.addCylinder(pink, at: [0, 0.25, -0.75], radius: 0.025, height: 0.7,
+                      rotation: simd_quatf(angle: 1.2, axis: [1, 0, 0]))
     }
 
     private static func addEyeStalks(to e: Entity, material: any RealityKit.Material, z: Float, baseY: Float) {

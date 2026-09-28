@@ -91,6 +91,13 @@ extension GameSimulation {
         tickTimers(&player)
         regenerate(&player)
 
+        // Being shoved: no control until it wears off.
+        if player.knockbackTicks > 0 {
+            player.knockbackTicks -= 1
+            move(&player, velocity: player.knockback)
+            return
+        }
+
         if isAirborne(player) {
             stepFlight(&player)
             return

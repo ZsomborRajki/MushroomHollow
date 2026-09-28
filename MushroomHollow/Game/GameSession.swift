@@ -16,9 +16,19 @@ struct TargetInfo: Equatable {
     let isFightingYou: Bool
 }
 
+/// The world boss's health bar, shown when you're near it.
+struct BossInfo: Equatable {
+    let id: EntityID
+    let name: String
+    let hp: Int
+    let maxHP: Int
+    let isFighting: Bool
+}
+
 struct HUDState: Equatable {
     var player: PlayerStatus?
     var target: TargetInfo?
+    var boss: BossInfo?
     var isFainted: Bool { player.map { !$0.stats.isAlive } ?? false }
 }
 
@@ -124,6 +134,9 @@ final class GameSession {
     @ObservationIgnored let host: LocalWorldHost
     @ObservationIgnored let input = InputHub()
     @ObservationIgnored private let rumble = Rumble()
+    @ObservationIgnored private let gameCenter = GameCenter()
+    @ObservationIgnored private var shakeUntil: Double = 0
+    @ObservationIgnored private var shakeStrength: Float = 0
     @ObservationIgnored let renderer: WorldRenderer
     @ObservationIgnored private let store: SaveStore?
     @ObservationIgnored private var camera = OrbitCamera()
@@ -181,6 +194,11 @@ final class GameSession {
         }
         panel = debug.panel
         if panel == .inventory { selection = Self.firstBagCell }
+        if debug.arguments.contains("-owl"), let arena = host.map.bossArena {
+            host.summonWorldBoss()
+            host.teleportPlayer(to: arena.center + (arena.center - arena.perch).normalizedOrZero * 6)
+            camera.yaw = AngleMath.yaw(facing: arena.center - arena.perch) + .pi
+        }
         if debug.arguments.contains("-fly") {
             host.send(.toggleFlight)
             input.touchClimb = 1
@@ -200,6 +218,7 @@ final class GameSession {
         projector = content
         let sounds = renderer.sounds
         Task { await sounds.load() }
+        gameCenter.authenticate()
         updateSubscription = content.subscribe(to: SceneEvents.Update.self) { [weak self] event in
             self?.frame(deltaTime: event.deltaTime)
         }
@@ -248,12 +267,14 @@ final class GameSession {
 
     func closePanel() {
         if panel != nil { renderer.sounds.playInterface(.uiMove) }
+        gameCenter.showAccessPoint(false)
         panel = nil
         selection = 0
     }
 
     private func openPanel(_ newPanel: Panel) {
         panel = newPanel
+        gameCenter.showAccessPoint(newPanel == .inventory)
         selection = newPanel == .inventory ? Self.firstBagCell : 0
         shopTab = .buy
         renderer.sounds.playInterface(.uiConfirm)
@@ -283,10 +304,18 @@ final class GameSession {
         renderer.render(host: host, time: elapsed)
         for event in host.drainEvents() { handle(event) }
 
+        // Big fights need a wider view.
+        camera.minimumDistance = hud.boss != nil ? 16 : 0
         if let player = renderer.renderedPosition(of: host.localPlayerID) {
             camera.follow(player, deltaTime: dt)
         }
-        renderer.placeCamera(at: camera.position(avoidingTrunkRadius: host.map.trunkCollisionRadius), lookingAt: camera.focus)
+        var cameraPosition = camera.position(avoidingTrunkRadius: host.map.trunkCollisionRadius)
+        if elapsed < shakeUntil {
+            // Screen shake for big impacts, fading out.
+            let fade = Float((shakeUntil - elapsed) / 0.4)
+            cameraPosition += SIMD3(sin(Float(elapsed) * 83), sin(Float(elapsed) * 97), cos(Float(elapsed) * 71)) * shakeStrength * fade
+        }
+        renderer.placeCamera(at: cameraPosition, lookingAt: camera.focus)
 
         updateHUD()
         updateFloatingTexts()
@@ -618,6 +647,36 @@ final class GameSession {
                 }
             case .sporeCloud:
                 renderer.sounds.play(.hiss, from: renderer.entity(for: entity))
+            case .swoop:
+                renderer.sounds.play(.screech, from: renderer.entity(for: entity))
+                if host.currentSnapshot.telegraphs.contains(where: { telegraph in
+                    guard let me = host.currentSnapshot.entity(me) else { return false }
+                    return telegraph.position.distance(to: me.position.xz) < GameSimulation.swoopRadius + 1
+                }) {
+                    feedback.danger += 1
+                    rumble.play(.danger)
+                }
+            case .swoopImpact:
+                renderer.sounds.play(.slam, from: renderer.entity(for: entity))
+                if let position = renderer.renderedPosition(of: entity) {
+                    let dust = UIColor(red: 0.75, green: 0.68, blue: 0.55, alpha: 1)
+                    renderer.effects.shockwave(at: position, radius: GameSimulation.swoopRadius + 1, color: dust, duration: 0.5, time: elapsed)
+                    renderer.effects.burst(at: position + [0, 0.5, 0], color: dust, count: 60, speed: 3,
+                                           size: 0.15, lifetime: 1, rise: 0.5, spread: 1.5, time: elapsed)
+                    shake(0.35)
+                }
+            case .gust:
+                renderer.sounds.play(.whoosh, from: renderer.entity(for: entity), gain: 2)
+            case .summon:
+                renderer.sounds.play(.hoot, from: renderer.entity(for: entity), gain: 2)
+                showToast("The owl calls for help!")
+            case .enrage:
+                renderer.sounds.play(.screech, from: renderer.entity(for: entity), gain: 4)
+                showBanner(Banner(title: "The Hollow Owl is enraged!", subtitle: "Its attacks come faster"))
+                if let position = renderer.renderedPosition(of: entity) {
+                    renderer.effects.burst(at: position + [0, 4, 0], color: .systemRed, count: 80, speed: 3,
+                                           size: 0.12, lifetime: 1.2, spread: 2, time: elapsed)
+                }
             }
 
         case let .died(entity, killer):
@@ -638,6 +697,8 @@ final class GameSession {
         case let .levelUp(player, level):
             guard player == me else { return }
             showBanner(Banner(title: "Level Up!", subtitle: "You are now level \(level)"))
+            if level >= 10 { gameCenter.report(.level10) }
+            if level >= 30 { gameCenter.report(.level30) }
             feedback.levelUps += 1
             renderer.sounds.playInterface(.levelUp, gain: 0)
             rumble.play(.celebrate)
@@ -696,6 +757,7 @@ final class GameSession {
             guard player == me else { return }
             closePanel()
             showBanner(Banner(title: "You are now a \(playerClass.definition.name)", subtitle: playerClass.definition.role))
+            gameCenter.report(.choseAPath)
             feedback.levelUps += 1
             renderer.sounds.playInterface(.classChosen, gain: 0)
             rumble.play(.celebrate)
@@ -709,9 +771,41 @@ final class GameSession {
 
         case let .flightChanged(player, isFlying):
             renderer.sounds.play(isFlying ? .takeoff : .land, from: renderer.entity(for: player), gain: -2)
+            if player == me, isFlying { gameCenter.report(.firstFlight) }
             if player == me, isFlying, let position = renderer.renderedPosition(of: player) {
                 renderer.effects.burst(at: position + [0, 0.3, 0], color: UIColor(white: 1, alpha: 1), count: 40,
                                        speed: 1.5, size: 0.05, lifetime: 1, rise: 1, spread: 0.5, time: elapsed)
+            }
+
+        case let .worldBossSpawned(entity, kind):
+            showBanner(Banner(title: "\(kind.displayName) has awoken!", subtitle: "It stirs in the Great Bough"))
+            addFeed(symbol: "moon.stars.fill", text: "World event: \(kind.displayName)", tint: .indigo)
+            renderer.sounds.playInterface(.horn, gain: 0)
+            renderer.sounds.play(.hoot, from: renderer.entity(for: entity), gain: 6)
+            rumble.play(.danger)
+
+        case .worldBossDeparted:
+            showBanner(Banner(title: "The Hollow Owl flies away", subtitle: "It will return another night"))
+            renderer.sounds.playInterface(.whoosh, gain: -4)
+
+        case let .worldBossDefeated(entity, participants):
+            showBanner(Banner(title: "The Hollow Owl is defeated!",
+                              subtitle: participants.count > 1 ? "\(participants.count) heroes share the spoils" : "The forest sleeps in peace"))
+            renderer.sounds.playInterface(.questDone, gain: 2)
+            rumble.play(.celebrate)
+            if participants.contains(me) { gameCenter.report(.owlSlayer) }
+            if let position = renderer.renderedPosition(of: entity) {
+                let gold = UIColor(red: 1, green: 0.85, blue: 0.4, alpha: 1)
+                renderer.effects.burst(at: position + [0, 3, 0], color: gold, count: 200, speed: 4,
+                                       size: 0.12, lifetime: 2.2, rise: 1.5, spread: 2.5, time: elapsed)
+                renderer.effects.shockwave(at: position, radius: 8, color: gold, duration: 1.2, time: elapsed)
+            }
+            requestSave()
+
+        case let .knockedBack(entity):
+            if entity == me {
+                rumble.play(.heavy)
+                shake(0.2)
             }
         }
     }
@@ -767,6 +861,11 @@ final class GameSession {
         if feed.count > 5 { feed.removeFirst(feed.count - 5) }
     }
 
+    private func shake(_ strength: Float) {
+        shakeStrength = strength
+        shakeUntil = elapsed + 0.4
+    }
+
     private func showToast(_ message: String) {
         toast = message
         toastExpiry = elapsed + 1.6
@@ -792,6 +891,11 @@ final class GameSession {
                 hp: target.hp, maxHP: target.maxHP,
                 levelDelta: target.level - viewer.stats.level,
                 isFightingYou: target.target == viewer.id)
+        }
+        if let bossID = host.simulation.worldBoss, let boss = snapshot.entity(bossID), boss.isAlive,
+           let me = snapshot.entity(host.localPlayerID), boss.position.xz.distance(to: me.position.xz) < 45 {
+            state.boss = BossInfo(id: bossID, name: boss.kind.displayName, hp: boss.hp, maxHP: boss.maxHP,
+                                  isFighting: boss.target != nil)
         }
         if state != hud { hud = state }
     }
@@ -820,6 +924,7 @@ final class GameSession {
         let glyphs = input.glyphs
         if glyphs != self.glyphs { self.glyphs = glyphs }
         rumble.attach(to: input.controller)
+        renderer.sounds.setBattleMusic(hud.boss?.isFighting == true, deltaTime: 0.25)
         renderer.sounds.setAmbience(night: renderer.atmosphere.nightFactor)
         let time = (host.currentSnapshot.timeOfDay * 96).rounded() / 96 // 15-minute steps
         if time != timeOfDay { timeOfDay = time }
@@ -873,13 +978,13 @@ final class GameSession {
 #if DEBUG
 /// Debug-only launch arguments for testing and screenshots:
 /// `-autofight`, `-demo` (geared level 8 character), `-spawn village|glade|maze|barkfall|fen`,
-/// `-panel bag|morel|shop`, `-time 0...1` (0.5 = noon), `-level N`, `-class guardian|thornshot|sporecaster|dewkeeper`,
+/// `-panel bag|morel|shop`, `-time 0...1` (0.5 = noon), `-level N`, `-class guardian|thornshot|sporecaster|dewkeeper`, `-owl` (summon the boss),
 /// `-resetSave`. Anything but `-resetSave` uses a throwaway save.
 private struct DebugLaunch {
     let arguments = ProcessInfo.processInfo.arguments
 
     var resetSave: Bool { arguments.contains("-resetSave") }
-    var isThrowaway: Bool { ["-autofight", "-demo", "-spawn", "-panel", "-time", "-level", "-class", "-fly"].contains { arguments.contains($0) } }
+    var isThrowaway: Bool { ["-autofight", "-demo", "-spawn", "-panel", "-time", "-level", "-class", "-fly", "-owl"].contains { arguments.contains($0) } }
 
     var timeOfDay: Float? { value(after: "-time").flatMap(Float.init) }
 

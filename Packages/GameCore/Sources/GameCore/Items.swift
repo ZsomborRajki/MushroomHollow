@@ -25,13 +25,13 @@ public enum ItemID: String, Codable, Sendable, CaseIterable {
     // Consumables
     case dewPotion, nectarVial
     // Materials
-    case snailShell, slugSlime, beetleHorn, sporeSac
+    case snailShell, slugSlime, beetleHorn, sporeSac, owlFeather
     // Weapons
-    case twigSword, thornRapier, beetleBlade
+    case twigSword, thornRapier, beetleBlade, moonTalon
     // Hats
     case acornCap, beetleHelm
     // Body
-    case leafTunic, barkMail
+    case leafTunic, barkMail, featherCloak
     // Boots
     case mossBoots
     // Key items
@@ -88,6 +88,8 @@ extension ItemID {
             item("Beetle Horn", "Hard as bark, twice as pointy.", .material, sell: 12, stack: 50)
         case .sporeSac:
             item("Spore Sac", "Do not squeeze.", .material, sell: 18, stack: 50)
+        case .owlFeather:
+            item("Hollow Owl Feather", "Soft as moonlight. Proof you survived the night.", .material, sell: 150, stack: 50)
         case .twigSword:
             item("Twig Sword", "Every hero starts somewhere.", .equipment(.weapon, StatBonus(attack: 4)),
                  level: 1, buy: 40, sell: 10)
@@ -97,6 +99,12 @@ extension ItemID {
         case .beetleBlade:
             item("Beetle-Horn Blade", "Glossy, sharp, and smug about it.", .equipment(.weapon, StatBonus(attack: 16, maxMP: 10)),
                  level: 9, sell: 120)
+        case .moonTalon:
+            item("Moonlit Talon", "Still cold from the night sky.", .equipment(.weapon, StatBonus(attack: 26, maxMP: 20)),
+                 level: 15, sell: 400)
+        case .featherCloak:
+            item("Feathered Cloak", "Woven from the Hollow Owl's down.", .equipment(.body, StatBonus(defense: 12, maxHP: 80)),
+                 level: 15, sell: 400)
         case .acornCap:
             item("Acorn Cap", "Fits snugly over a mushroom hat.", .equipment(.hat, StatBonus(defense: 2, maxHP: 10)),
                  level: 2, buy: 60, sell: 15)

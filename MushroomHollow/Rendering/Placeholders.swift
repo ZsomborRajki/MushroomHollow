@@ -48,6 +48,23 @@ enum Meshes {
     static let roundedBox = MeshResource.generateBox(size: 1, cornerRadius: 0.25)
     /// Flat annulus in the XZ plane, outer radius 1.
     static let ring = makeRing(inner: 0.82, outer: 1, segments: 64)
+    static let disc = makeRing(inner: 0, outer: 1, segments: 64)
+
+    /// A flat wedge in the XZ plane pointing along +Z, radius 1, ±`halfAngle`.
+    static func fan(halfAngle: Float, segments: Int = 24) -> MeshResource {
+        var positions: [SIMD3<Float>] = [.zero]
+        var indices: [UInt32] = []
+        for i in 0...segments {
+            let a = -halfAngle + 2 * halfAngle * Float(i) / Float(segments)
+            positions.append([sin(a), 0, cos(a)])
+            if i > 0 { indices += [0, UInt32(i), UInt32(i + 1)] }
+        }
+        var descriptor = MeshDescriptor(name: "fan")
+        descriptor.positions = MeshBuffers.Positions(positions)
+        descriptor.normals = MeshBuffers.Normals(Array(repeating: [0, 1, 0], count: positions.count))
+        descriptor.primitives = .triangles(indices)
+        return try! MeshResource.generate(from: [descriptor])
+    }
 
     private static func makeRing(inner: Float, outer: Float, segments: Int) -> MeshResource {
         var positions: [SIMD3<Float>] = []

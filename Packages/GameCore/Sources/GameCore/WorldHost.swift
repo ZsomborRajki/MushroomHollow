@@ -60,6 +60,13 @@ public final class LocalWorldHost: WorldHost {
         interpolationAlpha = Float(accumulator / tickDuration)
     }
 
+    /// Debug / game-master tool: bring out the world boss now.
+    public func summonWorldBoss() {
+        simulation.summonWorldBoss()
+        currentSnapshot = simulation.snapshot(for: localPlayerID)
+        previousSnapshot = currentSnapshot
+    }
+
     /// Debug / game-master tool.
     public func teleportPlayer(to point: Vec2) {
         simulation.teleport(localPlayerID, to: point)

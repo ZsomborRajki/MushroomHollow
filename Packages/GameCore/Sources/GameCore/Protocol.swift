@@ -42,6 +42,8 @@ public enum ActionFailure: String, Codable, Sendable {
 
 public enum MobAbility: String, Codable, Sendable {
     case hide, charge, sporeCloud, split
+    // The Hollow Owl
+    case swoop, swoopImpact, gust, summon, enrage
 }
 
 /// Things that happened during a tick, for effects, sounds, and HUD feedback.
@@ -67,6 +69,26 @@ public enum WorldEvent: Codable, Sendable, Equatable {
     case actionFailed(player: EntityID, reason: ActionFailure)
     case classChosen(player: EntityID, playerClass: PlayerClass)
     case flightChanged(player: EntityID, isFlying: Bool)
+    /// World events, announced to everyone.
+    case worldBossSpawned(entity: EntityID, kind: MobKind)
+    case worldBossDeparted(entity: EntityID)
+    case worldBossDefeated(entity: EntityID, participants: [EntityID])
+    case knockedBack(entity: EntityID)
+}
+
+/// A danger marker on the ground: get out before it goes off.
+public struct TelegraphSnapshot: Codable, Sendable, Equatable {
+    public enum Shape: Codable, Sendable, Equatable {
+        case circle(radius: Float)
+        /// A wedge from `position` toward `direction`.
+        case cone(direction: Vec2, radius: Float, halfAngle: Float)
+    }
+
+    public let source: EntityID
+    public let position: Vec2
+    public let shape: Shape
+    /// 0 when it appears, 1 when it goes off.
+    public let progress: Float
 }
 
 /// What a client needs to render one entity.
@@ -142,8 +164,9 @@ public struct WorldSnapshot: Codable, Sendable, Equatable {
     public let viewer: PlayerStatus?
     /// 0 = midnight, 0.25 = dawn, 0.5 = noon, 0.75 = dusk.
     public let timeOfDay: Float
+    public let telegraphs: [TelegraphSnapshot]
 
-    public static let empty = WorldSnapshot(tick: 0, entities: [], hazards: [], viewer: nil, timeOfDay: 0.4)
+    public static let empty = WorldSnapshot(tick: 0, entities: [], hazards: [], viewer: nil, timeOfDay: 0.4, telegraphs: [])
 
     public func entity(_ id: EntityID) -> EntitySnapshot? {
         entities.first { $0.id == id }

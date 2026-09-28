@@ -24,6 +24,8 @@ final class WorldRenderer {
 
     private let actorsRoot = Entity()
     private let hazardsRoot = Entity()
+    private let telegraphsRoot = Entity()
+    private var telegraphs: [String: (outline: ModelEntity, fill: ModelEntity)] = [:]
     private let sky: ModelEntity
     private let spores = Entity()
     private let selectionRing: ModelEntity
@@ -45,6 +47,7 @@ final class WorldRenderer {
         var playerClass: PlayerClass?
         var gearEntity: Entity?
         var glider: Entity?
+        var wings: [Entity] = []
         var telegraph: Entity?
         var lungeStart: Double?
         var hitStart: Double?
@@ -63,6 +66,7 @@ final class WorldRenderer {
         root.addChild(WorldBuilder.build(map))
         root.addChild(actorsRoot)
         root.addChild(hazardsRoot)
+        root.addChild(telegraphsRoot)
         root.addChild(effects.root)
 
         sky = ModelEntity(mesh: Meshes.sphere, materials: [Materials.sky])
@@ -133,6 +137,7 @@ final class WorldRenderer {
         }
 
         renderHazards(host.currentSnapshot.hazards)
+        renderTelegraphs(host.currentSnapshot.telegraphs)
         animateMarkers(time: time)
         updateSelection(host.currentSnapshot.viewer, time: time)
         effects.update(time: time)
@@ -226,6 +231,7 @@ final class WorldRenderer {
         entity.addChild(model)
         actorsRoot.addChild(entity)
         let view = ActorView(entity: entity, model: model, kind: snapshot.kind)
+        view.wings = ActorModels.owlWingNames.compactMap { model.findEntity(named: $0) }
 
         if snapshot.kind == .mob(.beetle) {
             // Red strip on the ground showing where the charge will go.
@@ -304,6 +310,8 @@ final class WorldRenderer {
             // Gastropods creep by rippling, not bouncing.
             let ripple = isMoving ? sin(t * 5 + seed) * 0.07 : sin(t * 1.2 + seed) * 0.015
             scale = [1 - ripple * 0.3, 1 - ripple * 0.5, 1 + ripple]
+        case .mob(.owl):
+            animateOwl(view, snapshot: snapshot, time: t)
         case .mob:
             offset.y = isMoving ? abs(sin(t * 8 + seed)) * 0.05 : 0
         case .npc:
@@ -324,6 +332,13 @@ final class WorldRenderer {
         case .charging:
             rotation = simd_quatf(angle: 0.15, axis: [1, 0, 0]) * rotation
             offset.y += abs(sin(t * 22)) * 0.08
+        case .soaring:
+            rotation = simd_quatf(angle: -0.15, axis: [1, 0, 0]) * rotation
+        case .diving:
+            rotation = simd_quatf(angle: 0.55, axis: [1, 0, 0]) * rotation
+        case .spreadingWings:
+            offset.x += sin(t * 40) * 0.05
+            scale *= [1.05, 1.05, 1.05]
         }
         if let telegraph = view.telegraph {
             telegraph.isEnabled = snapshot.pose == .windingUp
@@ -360,6 +375,76 @@ final class WorldRenderer {
         }
 
         view.model.transform = Transform(scale: scale, rotation: rotation, translation: offset)
+    }
+
+    /// Wings fold at rest, beat while airborne, and flare wide before a gust.
+    private func animateOwl(_ view: ActorView, snapshot: EntitySnapshot, time t: Float) {
+        let airborne = snapshot.position.y > 0.2 || snapshot.pose == .soaring || snapshot.pose == .diving
+        for (index, wing) in view.wings.enumerated() {
+            let side: Float = index == 0 ? -1 : 1
+            let angle: Float = switch snapshot.pose {
+            case .spreadingWings: 1.35 + sin(t * 30) * 0.05
+            case .diving: 0.5
+            default: airborne ? 0.7 + sin(t * 9) * 0.6 : (snapshot.isMoving ? 0.25 + sin(t * 6) * 0.1 : 0.08)
+            }
+            wing.orientation = simd_quatf(angle: -side * angle, axis: [0, 0, 1])
+        }
+    }
+
+    // MARK: - Telegraphs
+
+    /// Danger markers on the ground: an outline plus a fill that grows until it goes off.
+    private func renderTelegraphs(_ snapshots: [TelegraphSnapshot]) {
+        var seen = Set<String>()
+        for telegraph in snapshots {
+            let key: String
+            switch telegraph.shape {
+            case .circle: key = "circle-\(telegraph.source.rawValue)"
+            case .cone: key = "cone-\(telegraph.source.rawValue)"
+            }
+            seen.insert(key)
+            let parts = telegraphs[key] ?? makeTelegraph(key, shape: telegraph.shape)
+            let pulse = 0.55 + 0.25 * sin(Float(time) * 14)
+            switch telegraph.shape {
+            case let .circle(radius):
+                let position = SIMD3<Float>(telegraph.position.x, 0.05, telegraph.position.y)
+                parts.outline.position = position
+                parts.outline.scale = SIMD3(repeating: radius)
+                parts.fill.position = position + [0, 0.01, 0]
+                parts.fill.scale = SIMD3(repeating: max(0.05, radius * telegraph.progress))
+            case let .cone(direction, radius, _):
+                let transform = Transform(scale: SIMD3(repeating: radius),
+                                          rotation: simd_quatf(angle: AngleMath.yaw(facing: direction), axis: [0, 1, 0]),
+                                          translation: [telegraph.position.x, 0.05, telegraph.position.y])
+                parts.outline.transform = transform
+                var fill = transform
+                fill.scale = SIMD3(repeating: max(0.05, radius * telegraph.progress))
+                fill.translation.y += 0.01
+                parts.fill.transform = fill
+            }
+            parts.outline.components.set(OpacityComponent(opacity: pulse))
+        }
+        for (key, parts) in telegraphs where !seen.contains(key) {
+            parts.outline.removeFromParent()
+            parts.fill.removeFromParent()
+            telegraphs[key] = nil
+        }
+    }
+
+    private func makeTelegraph(_ key: String, shape: TelegraphSnapshot.Shape) -> (outline: ModelEntity, fill: ModelEntity) {
+        let mesh: MeshResource
+        switch shape {
+        case .circle: mesh = Meshes.disc
+        case let .cone(_, _, halfAngle): mesh = Meshes.fan(halfAngle: halfAngle)
+        }
+        let outline = ModelEntity(mesh: mesh, materials: [Self.translucent(UIColor(red: 1, green: 0.25, blue: 0.15, alpha: 1), opacity: 0.35)])
+        let fill = ModelEntity(mesh: mesh, materials: [Self.translucent(UIColor(red: 1, green: 0.55, blue: 0.2, alpha: 1), opacity: 0.5)])
+        for part in [outline, fill] {
+            part.components.set(DynamicLightShadowComponent(castsShadow: false))
+            telegraphsRoot.addChild(part)
+        }
+        telegraphs[key] = (outline, fill)
+        return (outline, fill)
     }
 
     // MARK: - Hazards

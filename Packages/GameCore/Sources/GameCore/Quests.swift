@@ -3,6 +3,7 @@ public enum QuestID: String, Codable, Sendable, CaseIterable {
     case slipperySituation
     case barkBeetles
     case sporeSeason
+    case hollowOwl
 }
 
 public enum QuestObjective: Sendable, Equatable {
@@ -86,6 +87,14 @@ extension QuestID {
                 objective: .collect(.sporeSac, count: 5),
                 rewardXP: 1500, rewardCaps: 300,
                 rewardItems: [ItemStack(item: .beetleBlade, count: 1)])
+        case .hollowOwl:
+            QuestDefinition(
+                id: self, title: "The Hollow Owl",
+                story: "On dark nights something vast perches in the Great Bough. It took my grandmother's hat. Bring the forest peace.",
+                giver: .elderMorel, requiredLevel: 15, prerequisite: .sporeSeason,
+                objective: .defeat(.owl, count: 1),
+                rewardXP: 3000, rewardCaps: 600,
+                rewardItems: [ItemStack(item: .dewPotion, count: 5), ItemStack(item: .nectarVial, count: 5)])
         }
     }
 }

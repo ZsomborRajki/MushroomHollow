@@ -8,6 +8,10 @@ struct OrbitCamera {
     /// Radians above the horizon.
     var pitch: Float = 0.38
     var distance: Float = 8
+    /// Pull the camera back at least this far (e.g. to fit a giant boss on screen).
+    var minimumDistance: Float = 0
+    /// What the camera actually uses: `distance`, eased toward `minimumDistance` when that's larger.
+    private var effectiveDistance: Float = 8
 
     static let pitchRange: ClosedRange<Float> = 0.06...1.3
     static let distanceRange: ClosedRange<Float> = 3...18
@@ -24,6 +28,8 @@ struct OrbitCamera {
     }
 
     mutating func follow(_ target: SIMD3<Float>, deltaTime: Float) {
+        let wanted = max(distance, minimumDistance)
+        effectiveDistance += (wanted - effectiveDistance) * (1 - exp(-2.5 * deltaTime))
         let goal = target + [0, Self.lookHeight, 0]
         if !hasFocus {
             focus = goal
@@ -36,7 +42,7 @@ struct OrbitCamera {
 
     /// Camera position, pulled in so it never ends up inside the trunk.
     func position(avoidingTrunkRadius trunkRadius: Float) -> SIMD3<Float> {
-        var d = distance
+        var d = effectiveDistance
         while true {
             let p = focus + offset(distance: d)
             if p.xz.length > trunkRadius + 0.5 || d <= Self.distanceRange.lowerBound {

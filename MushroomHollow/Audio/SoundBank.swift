@@ -8,13 +8,16 @@ final class SoundBank {
     private let interface = Entity()
     private let dayAmbience = Entity()
     private let nightAmbience = Entity()
+    private let music = Entity()
+    private var musicController: AudioPlaybackController?
+    private var musicLevel: Float = 0
     private var resources: [Sound: AudioFileResource] = [:]
     private var dayController: AudioPlaybackController?
     private var nightController: AudioPlaybackController?
     private var lastNight: Float = -1
 
     init() {
-        for entity in [interface, dayAmbience, nightAmbience] {
+        for entity in [interface, dayAmbience, nightAmbience, music] {
             entity.components.set(AmbientAudioComponent())
             root.addChild(entity)
         }
@@ -31,6 +34,10 @@ final class SoundBank {
         }
         if let day = resources[.ambienceDay] { dayController = dayAmbience.playAudio(day) }
         if let night = resources[.ambienceNight] { nightController = nightAmbience.playAudio(night) }
+        if let theme = resources[.bossTheme] {
+            musicController = music.playAudio(theme)
+            musicController?.gain = -80
+        }
         setAmbience(night: max(lastNight, 0), force: true)
     }
 
@@ -55,6 +62,17 @@ final class SoundBank {
         lastNight = night
         dayController?.gain = decibels(1 - night) - 10
         nightController?.gain = decibels(night) - 8
+    }
+
+    /// Fades the boss theme in or out; call a few times a second.
+    func setBattleMusic(_ active: Bool, deltaTime: Double) {
+        let target: Float = active ? 1 : 0
+        let step = Float(deltaTime / (active ? 1.5 : 3)) // fade in fast, out slowly
+        musicLevel = musicLevel < target ? min(target, musicLevel + step) : max(target, musicLevel - step)
+        musicController?.gain = musicLevel > 0.001 ? decibels(musicLevel) - 6 : -80
+        // Hush the forest while the fight is on.
+        dayController?.gain = decibels((1 - max(lastNight, 0)) * (1 - musicLevel * 0.7)) - 10
+        nightController?.gain = decibels(max(lastNight, 0) * (1 - musicLevel * 0.7)) - 8
     }
 
     private func decibels(_ level: Float) -> Double {

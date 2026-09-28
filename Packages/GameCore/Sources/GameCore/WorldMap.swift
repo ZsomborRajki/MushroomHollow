@@ -58,6 +58,15 @@ public struct Zone: Codable, Sendable {
     public let levels: ClosedRange<Int>?
 }
 
+/// Where the world boss lives.
+public struct BossArena: Codable, Sendable {
+    public let kind: MobKind
+    public let center: Vec2
+    public let radius: Float
+    /// The fallen branch it perches beside.
+    public let perch: Vec2
+}
+
 public struct MobSpawnArea: Codable, Sendable {
     public let kind: MobKind
     public let center: Vec2
@@ -80,6 +89,7 @@ public struct WorldMap: Codable, Sendable {
     public let mobSpawns: [MobSpawnArea]
     public let npcs: [NPCPlacement]
     public let zones: [Zone]
+    public let bossArena: BossArena?
     public let colliders: [Collider]
 
     public init(
@@ -93,7 +103,8 @@ public struct WorldMap: Codable, Sendable {
         playerSpawn: Vec2,
         mobSpawns: [MobSpawnArea],
         npcs: [NPCPlacement],
-        zones: [Zone]
+        zones: [Zone],
+        bossArena: BossArena? = nil
     ) {
         self.boundaryRadius = boundaryRadius
         self.trunkRadius = trunkRadius
@@ -106,6 +117,7 @@ public struct WorldMap: Codable, Sendable {
         self.mobSpawns = mobSpawns
         self.npcs = npcs
         self.zones = zones
+        self.bossArena = bossArena
 
         var colliders: [Collider] = [.circle(center: .zero, radius: trunkCollisionRadius)]
         for root in roots {
@@ -211,12 +223,19 @@ extension WorldMap {
         let maze = areaCenter(degrees: 120, distance: 46)
         let barkfall = areaCenter(degrees: 176, distance: 47)
         let fen = areaCenter(degrees: 233, distance: 48)
+        let bough = areaCenter(degrees: 296, distance: 52)
+        let boughSide = Vec2(bough.y, -bough.x).normalizedOrZero
+
+        // The fallen bough: a thick branch lying along the far edge of the owl's arena.
+        let fallenBranch = TreeRoot(
+            points: [0, 1, 2, 3].map { i in bough + bough.normalizedOrZero * 13 + boughSide * (Float(i) * 6 - 9) },
+            radii: [1.8, 1.6, 1.4, 1.0])
 
         return WorldMap(
             boundaryRadius: 85,
             trunkRadius: trunkRadius,
             trunkCollisionRadius: trunkRadius + 2,
-            roots: roots,
+            roots: roots + [fallenBranch],
             houses: houses,
             villageCenter: villageCenter,
             villageRadius: 17,
@@ -238,8 +257,10 @@ extension WorldMap {
                 Zone(name: "Root Maze", center: maze, radius: 17, levels: 3...7),
                 Zone(name: "Barkfall Hollow", center: barkfall, radius: 17, levels: 7...11),
                 Zone(name: "Spore Fen", center: fen, radius: 17, levels: 10...15),
+                Zone(name: "The Great Bough", center: bough, radius: 17, levels: 15...20),
                 Zone(name: "The Forest Floor", center: .zero, radius: 200, levels: nil),
-            ]
+            ],
+            bossArena: BossArena(kind: .owl, center: bough, radius: 14, perch: bough + bough.normalizedOrZero * 4)
         )
     }()
 }

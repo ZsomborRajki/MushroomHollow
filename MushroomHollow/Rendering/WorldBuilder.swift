@@ -17,6 +17,7 @@ enum WorldBuilder {
         for house in map.houses { world.addChild(makeHouse(house, random: &random)) }
         addDecorations(map, to: world, random: &random)
         addZoneDressing(map, to: world, random: &random)
+        if let arena = map.bossArena { addBossArena(arena, to: world, random: &random) }
         addMarketStall(map, to: world)
         if let grass = makeGrass(map, random: &random) { world.addChild(grass) }
         return world
@@ -217,6 +218,29 @@ enum WorldBuilder {
                 break
             }
         }
+    }
+
+    /// The Great Bough: pale moonlit ground, scattered feathers and pellets, cold light.
+    private static func addBossArena(_ arena: BossArena, to world: Entity, random: inout SeededRandom) {
+        let ground = Materials.matte(UIColor(red: 0.3, green: 0.32, blue: 0.3, alpha: 1), roughness: 1)
+        world.addCylinder(ground, at: [arena.center.x, 0.008, arena.center.y], radius: arena.radius, height: 0.01)
+        let feather = Materials.matte(UIColor(red: 0.85, green: 0.78, blue: 0.66, alpha: 1), roughness: 1)
+        let pellet = Materials.matte(UIColor(red: 0.45, green: 0.43, blue: 0.4, alpha: 1), roughness: 1)
+        for _ in 0..<18 {
+            let p = random.point(inDiscAt: arena.center, radius: arena.radius + 4)
+            let rotation = simd_quatf(angle: random.float(in: 0...(2 * .pi)), axis: [0, 1, 0])
+            world.addPart(Meshes.sphere, feather, at: [p.x, 0.04, p.y], scale: [0.25, 0.03, 1.1] * random.float(in: 0.7...1.5), rotation: rotation)
+        }
+        for _ in 0..<10 {
+            let p = random.point(inDiscAt: arena.center, radius: arena.radius)
+            world.addSphere(pellet, at: [p.x, 0.15, p.y], radius: random.float(in: 0.25...0.4), squash: [1, 0.7, 1.5])
+        }
+        let moonlight = PointLight()
+        moonlight.light.color = UIColor(red: 0.6, green: 0.7, blue: 1, alpha: 1)
+        moonlight.light.intensity = 14000
+        moonlight.light.attenuationRadius = 24
+        moonlight.position = [arena.center.x, 8, arena.center.y]
+        world.addChild(moonlight)
     }
 
     /// Crates and a little sign next to the trader.

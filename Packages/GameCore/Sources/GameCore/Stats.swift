@@ -55,9 +55,13 @@ extension MobKind {
         case .sporeling:
             MobStats(level: 10, maxHP: 60, attack: 16, defense: 4, xp: 25, aggroRadius: 8,
                      chaseSpeed: 4.5, attackInterval: 1.2, reach: 0.4, respawnSeconds: 0)
+        case .mouse:
+            MobStats(level: 12, maxHP: 90, attack: 20, defense: 4, xp: 30, aggroRadius: 12,
+                     chaseSpeed: 5.5, attackInterval: 1, reach: 0.4, respawnSeconds: 0)
         case .owl:
-            MobStats(level: 30, maxHP: 20_000, attack: 90, defense: 30, xp: 8_000, aggroRadius: 14,
-                     chaseSpeed: 5, attackInterval: 2.2, reach: 2, respawnSeconds: 1_800)
+            // Tuned for a geared level 15–18 player solo; a party makes it comfortable.
+            MobStats(level: 16, maxHP: 3_500, attack: 38, defense: 10, xp: 1_200, aggroRadius: 14,
+                     chaseSpeed: 5, attackInterval: 1.6, reach: 1.2, respawnSeconds: 0)
         }
     }
 }

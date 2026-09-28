@@ -10,7 +10,7 @@ public struct EntityID: Hashable, Comparable, Codable, Sendable, CustomStringCon
 }
 
 public enum MobKind: String, Codable, Sendable, CaseIterable {
-    case snail, slug, beetle, sporeBeast, sporeling, owl
+    case snail, slug, beetle, sporeBeast, sporeling, mouse, owl
 
     public var displayName: String {
         switch self {
@@ -19,6 +19,7 @@ public enum MobKind: String, Codable, Sendable, CaseIterable {
         case .beetle: "Beetle"
         case .sporeBeast: "Spore Beast"
         case .sporeling: "Sporeling"
+        case .mouse: "Field Mouse"
         case .owl: "The Hollow Owl"
         }
     }
@@ -31,7 +32,8 @@ public enum MobKind: String, Codable, Sendable, CaseIterable {
         case .beetle: 0.7
         case .sporeBeast: 0.9
         case .sporeling: 0.4
-        case .owl: 3.0
+        case .mouse: 0.45
+        case .owl: 2.6
         }
     }
 
@@ -43,6 +45,7 @@ public enum MobKind: String, Codable, Sendable, CaseIterable {
         case .beetle: 1.6
         case .sporeBeast: 1.1
         case .sporeling: 1.4
+        case .mouse: 2
         case .owl: 3.0
         }
     }
@@ -67,6 +70,12 @@ public enum Pose: String, Codable, Sendable {
     /// Beetle lowering its head before a charge. Get out of the way!
     case windingUp
     case charging
+    /// Owl rising before a swoop.
+    case soaring
+    /// Owl diving onto the marked spot.
+    case diving
+    /// Owl spreading its wings before a gust.
+    case spreadingWings
 }
 
 struct CombatState: Codable, Sendable {
@@ -126,6 +135,26 @@ struct MobBrain: Codable, Sendable {
     /// Ticks until the mob's special ability is ready again.
     var abilityTimer = 0
     var hasHidden = false
+    /// World bosses only.
+    var boss: BossBrain?
+}
+
+/// Extra state for the world boss's scripted fight.
+struct BossBrain: Codable, Sendable {
+    enum Action: Codable, Sendable {
+        case none
+        case swoopWindup(target: Vec2, ticksLeft: Int)
+        case swoopDive(from: Vec2, to: Vec2, ticksLeft: Int)
+        case gustWindup(direction: Vec2, ticksLeft: Int)
+    }
+
+    var action = Action.none
+    var swoopTimer = 0
+    var gustTimer = 0
+    var summonsDone = 0
+    var enraged = false
+    /// Everyone who has hurt the boss this fight shares the rewards.
+    var damagers: Set<EntityID> = []
 }
 
 public struct WorldEntity: Codable, Sendable {
@@ -151,11 +180,20 @@ public struct WorldEntity: Codable, Sendable {
     var player: PlayerData?
     /// Ticks since death (mob corpses linger briefly).
     var deathTicks = 0
+    /// Players: being shoved (e.g. by the owl's wing gust); no control until it ends.
+    var knockback: Vec2 = .zero
+    var knockbackTicks = 0
 
     public var isMoving: Bool { velocity.xz.length > 0.05 }
 
     public var pose: Pose {
-        switch brain?.state {
+        switch brain?.boss?.action {
+        case .swoopWindup: return .soaring
+        case .swoopDive: return .diving
+        case .gustWindup: return .spreadingWings
+        case .some(.none), nil: break
+        }
+        return switch brain?.state {
         case .hiding: .hiding
         case .windingUp: .windingUp
         case .charging: .charging

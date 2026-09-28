@@ -11,6 +11,9 @@ extension ItemID {
         case .slugSlime: "humidity.fill"
         case .beetleHorn: "arrowtriangle.up.fill"
         case .sporeSac: "circle.hexagongrid.fill"
+        case .owlFeather: "bird.fill"
+        case .moonTalon: "moon.fill"
+        case .featherCloak: "tshirt.fill"
         case .twigSword: "line.diagonal"
         case .thornRapier: "wand.and.rays"
         case .beetleBlade: "bolt.fill"
@@ -29,6 +32,8 @@ extension ItemID {
         case .slugSlime: Color(red: 0.8, green: 0.8, blue: 0.3)
         case .beetleHorn: Color(red: 0.4, green: 0.55, blue: 0.95)
         case .sporeSac: .purple
+        case .owlFeather, .featherCloak: Color(red: 0.85, green: 0.75, blue: 0.6)
+        case .moonTalon: Color(red: 0.75, green: 0.85, blue: 1)
         case .twigSword, .leafTunic, .mossBoots: .green
         case .thornRapier, .acornCap: .orange
         case .beetleBlade, .beetleHelm: .cyan

@@ -9,9 +9,10 @@ nonisolated enum Sound: CaseIterable, Sendable {
     case uiMove, uiConfirm, error
     case poof, windup, whoosh, hiss
     case takeoff, land
-    case ambienceDay, ambienceNight
+    case hoot, screech, horn, slam
+    case ambienceDay, ambienceNight, bossTheme
 
-    var isLooping: Bool { self == .ambienceDay || self == .ambienceNight }
+    var isLooping: Bool { self == .ambienceDay || self == .ambienceNight || self == .bossTheme }
 }
 
 /// A tiny offline synthesizer: oscillators, noise, envelopes, and a one-pole filter.
@@ -98,6 +99,33 @@ nonisolated enum SoundSynth {
             return mix(
                 sweepNoise(duration: 0.3, from: 1500, to: 200, volume: 0.35, decay: 12),
                 tone(duration: 0.15, volume: 0.35, decay: 25) { t in 90 - t * 200 })
+        case .hoot:
+            // "Hoo... hoo-hoo", low and breathy.
+            let hoo = { (pitch: Double, length: Double) in
+                mix(tone(duration: length, volume: 0.45, envelope: .swell) { t in pitch - t * 30 + sin(t * 30) * 3 },
+                    lowpass(noise(duration: length, volume: 0.08, envelope: .swell), cutoff: 600))
+            }
+            var out = hoo(330, 0.5)
+            add(hoo(300, 0.25), into: &out, at: 0.75)
+            add(hoo(290, 0.4), into: &out, at: 1.05)
+            return out
+        case .screech:
+            return mix(
+                tone(duration: 0.7, volume: 0.25, envelope: .swell, shape: .saw) { t in 2100 - t * 1500 + sin(t * 70) * 60 },
+                highpass(noise(duration: 0.7, volume: 0.25, envelope: .swell), amount: 0.9))
+        case .horn:
+            // A distant warning horn for world events.
+            return mix(
+                tone(duration: 2.2, volume: 0.35, envelope: .swell, shape: .saw) { _ in 110 },
+                tone(duration: 2.2, volume: 0.25, envelope: .swell, shape: .saw) { _ in 164.8 },
+                tone(duration: 2.2, volume: 0.2, envelope: .swell) { _ in 220 })
+                .map { $0 * 0.8 }
+        case .slam:
+            return mix(
+                tone(duration: 0.6, volume: 0.9, decay: 7) { t in 40 + 70 * exp(-t * 9) },
+                sweepNoise(duration: 0.5, from: 1500, to: 120, volume: 0.6, decay: 8))
+        case .bossTheme:
+            return bossTheme()
         case .ambienceDay:
             return dayAmbience()
         case .ambienceNight:
@@ -122,6 +150,29 @@ nonisolated enum SoundSynth {
             }
         }
         return out
+    }
+
+    /// An 8-bar loop: pounding drums, a minor bass line, and a tense pulse on top.
+    private static func bossTheme() -> [Float] {
+        let beat = 60.0 / 132
+        let bars = 4
+        let duration = beat * 4 * Double(bars)
+        var out = [Float](repeating: 0, count: Int(duration * sampleRate))
+        let kick = tone(duration: 0.3, volume: 0.7, decay: 14) { t in 45 + 90 * exp(-t * 30) }
+        let snare = sweepNoise(duration: 0.18, from: 5000, to: 1500, volume: 0.35, decay: 22)
+        // A minor: A2, C3, E3, G2 roots per bar.
+        let roots: [Double] = [110, 130.8, 164.8, 98]
+        for step in 0..<(bars * 8) {
+            let when = Double(step) * beat / 2
+            if step % 4 == 0 || step % 8 == 3 { add(kick, into: &out, at: when) }
+            if step % 4 == 2 { add(snare, into: &out, at: when) }
+            let root = roots[step / 8]
+            add(tone(duration: beat / 2, volume: 0.28, decay: 6, shape: .saw) { _ in root / 2 }, into: &out, at: when)
+            // Staccato pulse, an octave and a fifth up.
+            let pulse = step % 2 == 0 ? root * 2 : root * 3
+            add(tone(duration: beat / 4, volume: 0.1, decay: 20, shape: .square) { _ in pulse }, into: &out, at: when)
+        }
+        return Array(out.prefix(Int(duration * sampleRate)))
     }
 
     private static func nightAmbience() -> [Float] {

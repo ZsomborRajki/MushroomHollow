@@ -12,6 +12,7 @@ extension MobKind {
         case .beetle: 8...14
         case .sporeBeast: 14...22
         case .sporeling: 2...4
+        case .mouse: 3...6
         case .owl: 500...800
         }
     }
@@ -40,8 +41,13 @@ extension MobKind {
              DropEntry(item: .barkMail, chance: 0.02, count: 1...1)]
         case .sporeling:
             [DropEntry(item: .sporeSac, chance: 0.1, count: 1...1)]
+        case .mouse:
+            [DropEntry(item: .dewPotion, chance: 0.15, count: 1...1)]
         case .owl:
-            []
+            [DropEntry(item: .owlFeather, chance: 1, count: 2...4),
+             DropEntry(item: .moonTalon, chance: 0.35, count: 1...1),
+             DropEntry(item: .featherCloak, chance: 0.35, count: 1...1),
+             DropEntry(item: .nectarVial, chance: 1, count: 3...5)]
         }
     }
 }

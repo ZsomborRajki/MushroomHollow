@@ -19,11 +19,15 @@ extension GameSimulation {
         let stats = kind.stats
         if mob.combat.attackTimer > 0 { mob.combat.attackTimer -= 1 }
         if brain.abilityTimer > 0 { brain.abilityTimer -= 1 }
+        if brain.boss != nil, stepBoss(&mob, brain: &brain) {
+            mob.brain = brain
+            return
+        }
 
         // Aggressive mobs notice players that wander too close.
         switch brain.state {
         case .idle, .wander:
-            if let prey = findPrey(for: mob, brain: brain, radius: stats.aggroRadius) {
+            if let prey = findPrey(for: mob, brain: brain, radius: stats.aggroRadius, reachesFlyers: brain.boss != nil) {
                 mob.combat.target = prey
                 mob.combat.engaged = true
                 brain.state = .engaged
@@ -88,6 +92,10 @@ extension GameSimulation {
             if toHome.length < 1 {
                 mob.stats.hp = mob.stats.maxHP
                 brain.hasHidden = false
+                if brain.boss != nil {
+                    // A reset boss fight starts over.
+                    brain.boss = BossBrain(swoopTimer: Self.ticks(4), gustTimer: Self.ticks(6))
+                }
                 brain.state = .idle(ticksLeft: Self.ticks(2))
                 move(&mob, velocity: .zero)
             } else {
@@ -116,7 +124,7 @@ extension GameSimulation {
         let stats = kind.stats
         guard let preyID = mob.combat.target,
               let prey = entities[preyID], prey.stats.isAlive,
-              prey.position.y <= Self.reachableAltitude,
+              brain.boss != nil || prey.position.y <= Self.reachableAltitude,
               mob.position.xz.distance(to: brain.home) <= brain.leashRadius + Self.leashSlack
         else {
             mob.combat = CombatState()
@@ -158,18 +166,19 @@ extension GameSimulation {
         } else {
             move(&mob, velocity: .zero)
             if mob.combat.attackTimer <= 0 {
-                mob.combat.attackTimer = Self.ticks(stats.attackInterval)
+                let enraged = brain.boss?.enraged == true
+                mob.combat.attackTimer = Self.ticks(stats.attackInterval * (enraged ? 0.7 : 1))
                 dealDamage(from: &mob, to: preyID, multiplier: 1, skill: nil)
             }
         }
     }
 
-    private func findPrey(for mob: WorldEntity, brain: MobBrain, radius: Float) -> EntityID? {
+    private func findPrey(for mob: WorldEntity, brain: MobBrain, radius: Float, reachesFlyers: Bool = false) -> EntityID? {
         guard radius > 0 else { return nil }
         var best: (id: EntityID, distance: Float)?
         for id in order {
             guard let e = entities[id], e.kind == .player, e.stats.isAlive,
-                  e.position.y <= Self.reachableAltitude else { continue }
+                  reachesFlyers || e.position.y <= Self.reachableAltitude else { continue }
             let distance = gap(mob, e)
             guard distance <= radius,
                   e.position.xz.distance(to: brain.home) <= brain.leashRadius + Self.leashSlack

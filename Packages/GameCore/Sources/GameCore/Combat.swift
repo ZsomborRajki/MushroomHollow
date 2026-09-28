@@ -20,6 +20,7 @@ extension GameSimulation {
         target.combat.lastCombatTick = tick
         events.append(.damage(source: attacker.id, target: targetID, amount: amount, isCritical: isCritical, skill: skill))
 
+        if attacker.kind == .player { target.brain?.boss?.damagers.insert(attacker.id) }
         if target.stats.isAlive {
             provoke(&target, by: attacker.id)
         } else {
@@ -29,6 +30,7 @@ extension GameSimulation {
                     awardXP(to: &attacker, for: kind)
                     recordKill(of: kind, by: &attacker)
                     rollLoot(for: kind, into: &attacker)
+                    if target.brain?.boss != nil { rewardBossParticipants(target, killer: &attacker) }
                 }
                 if kind == .sporeBeast {
                     splitIntoSporelings(from: targetID, at: target.position.xz, angryAt: attacker.id)

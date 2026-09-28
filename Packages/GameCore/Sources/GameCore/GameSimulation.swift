@@ -32,6 +32,8 @@ public struct GameSimulation: Sendable {
     var respawnQueue: [PendingRespawn] = []
     var hazards: [Hazard] = []
     var nextHazardID: UInt32 = 0
+    var bossID: EntityID?
+    var lastBossNight: Int?
     /// Events produced by the tick in progress.
     var events: [WorldEvent] = []
 
@@ -91,7 +93,8 @@ public struct GameSimulation: Sendable {
             },
             hazards: hazardSnapshots,
             viewer: viewer.flatMap(playerStatus),
-            timeOfDay: timeOfDay
+            timeOfDay: timeOfDay,
+            telegraphs: telegraphSnapshots
         )
     }
 
@@ -160,6 +163,7 @@ public struct GameSimulation: Sendable {
         stepHazards()
         removeCorpses()
         processRespawns()
+        updateWorldBoss()
         return events
     }
 
@@ -243,7 +247,8 @@ public struct GameSimulation: Sendable {
 
     /// Mobs shouldn't stack on top of each other: push overlapping pairs apart.
     private mutating func separateMobs() {
-        let mobs = order.filter { entities[$0].map { $0.kind.isMob && $0.stats.isAlive } ?? false }
+        // The owl is too big to shove around.
+        let mobs = order.filter { entities[$0].map { $0.kind.isMob && $0.stats.isAlive && $0.kind != .mob(.owl) } ?? false }
         guard mobs.count > 1 else { return }
         var positions = mobs.map { entities[$0]!.position.xz }
         let radii = mobs.map { entities[$0]!.radius }

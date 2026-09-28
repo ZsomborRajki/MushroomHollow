@@ -56,7 +56,8 @@ extension MobKind {
         case .beetle: 1.1
         case .sporeBeast: 2.0
         case .sporeling: 0.9
-        case .owl: 7.0
+        case .mouse: 0.9
+        case .owl: 6.8
         }
     }
 }
