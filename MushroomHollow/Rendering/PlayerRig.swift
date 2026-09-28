@@ -46,6 +46,10 @@ final class PlayerRig {
     private var hurtStart: Double?
     private var castStart: Double?
     private var cheerStart: Double?
+    /// 0 relaxed ... 1 in the battle stance; eases toward the wanted pose each frame.
+    private var stance: Float = 0
+    private var lastCombat = -Double.infinity
+    private var lastFrame: Double?
 
     /// +1 is the character's left (+X), -1 their right (-X). Index 1 holds the weapon.
     private static let sides: [Float] = [1, -1]
@@ -418,6 +422,17 @@ final class PlayerRig {
             }
         }
 
+        /// How the body follows the arm: torso lean (forward is positive) and lift while cocking
+        /// back and at the strike, how far the front foot steps in, and how much the feet widen.
+        var body: (coilLean: Float, strikeLean: Float, coilLift: Float, strikeLift: Float, step: Float, spread: Float) {
+            switch self {
+            case .left: (-0.08, 0.26, 0, 0, 0.38, 0.06)
+            case .right: (-0.06, 0.2, 0, 0, 0.3, 0.1)
+            case .up: (0.28, -0.14, 0, 0.07, 0.18, 0.12) // scoop low, then rise onto the toes
+            case .down: (-0.22, 0.4, 0.03, 0, 0.5, 0.1) // rear back, then drive down into a lunge
+            }
+        }
+
         /// Arm direction and the way the blade trails behind it, `s` of the way through the sweep.
         func arm(_ s: Float) -> (direction: SIMD3<Float>, lean: SIMD3<Float>) {
             let arc = arc
@@ -442,6 +457,7 @@ final class PlayerRig {
     private static let hand: SIMD3<Float> = [0, -0.25, 0]
 
     func playSwing(at time: Double) {
+        lastCombat = time
         if playerClass?.definition.isRanged != true {
             // Start the pattern over after a pause in the fight.
             if time - lastSwing > 2.5 { comboIndex = 0 }
@@ -451,7 +467,10 @@ final class PlayerRig {
         }
         swingStart = time
     }
-    func playHurt(at time: Double) { hurtStart = time }
+    func playHurt(at time: Double) {
+        hurtStart = time
+        lastCombat = time
+    }
     func playCast(at time: Double) { castStart = time }
     func playCheer(at time: Double) { cheerStart = time }
 
@@ -459,19 +478,53 @@ final class PlayerRig {
         var moving = false
         var airborne = false
         var fainted = false
+        /// Fighting something (the sim's `EntitySnapshot.target`).
+        var engaged = false
     }
+
+    /// The battle-ready pose, weapon arm at index 1: feet staggered with the left foot forward,
+    /// hips turned side-on, torso leaning in, and the blade raised in front (or the aim arm out).
+    private struct Stance {
+        var legSwing: [Float]
+        var legSpread: Float
+        var hipYaw: Float
+        var twist: Float
+        var lean: Float
+        var armSwing: [Float]
+        var armSpread: [Float]
+        var wrist: Float
+    }
+
+    private static let meleeStance = Stance(legSwing: [-0.36, 0.3], legSpread: 0.16, hipYaw: -0.38, twist: 0.1, lean: 0.16,
+                                            armSwing: [-1, -1.25], armSpread: [0.5, 0.22], wrist: 0.3)
+    private static let rangedStance = Stance(legSwing: [-0.22, 0.2], legSpread: 0.17, hipYaw: -0.45, twist: 0.12, lean: 0.06,
+                                             armSwing: [-1.1, -0.35], armSpread: [0.2, 0.45], wrist: 0)
+    /// How long the stance lingers after the last swing or hit.
+    private static let stanceLinger = 4.0
 
     func animate(_ motion: Motion, time: Double, seed: Float) {
         let t = Float(time)
+        let dt = Float(min(max(time - (lastFrame ?? time), 0), 0.1))
+        lastFrame = time
+        let ranged = playerClass?.definition.isRanged == true
         let swingProgress = Self.progress(&swingStart, time, duration: Self.swingDuration)
         let hurt = Self.progress(&hurtStart, time, duration: 0.45)
         let cast = Self.progress(&castStart, time, duration: 0.7)
         let cheer = Self.progress(&cheerStart, time, duration: 1.4)
 
+        // Square up while fighting, and relax a few seconds after the last exchange.
+        let fighting = motion.engaged || time - lastCombat < Self.stanceLinger
+        let ready = fighting && !motion.moving && !motion.airborne && !motion.fainted && cheer == nil
+        stance += ((ready ? 1 : 0) - stance) * min(1, dt * 6)
+
         var armSwing: [Float] = [0, 0] // about X; negative swings forward and up
         var armSpread: [Float] = [0.28, 0.28]
         var legSwing: [Float] = [0, 0] // about X; positive swings back
+        var legSpread: [Float] = [0, 0] // about Z; positive moves the foot outward
+        var hipYaw: Float = 0
         var twist: Float = 0
+        var lean: Float = 0 // torso pitch; positive leans forward
+        var wrist: Float = 0
         var nod: Float = 0
         var tilt: Float = 0
         var lift: Float = 0
@@ -506,31 +559,73 @@ final class PlayerRig {
             tilt = sin(t * 0.8 + seed) * 0.07
             nod = breath * 0.02
         }
+        let strideTwist = twist
+
+        if stance > 0.001 {
+            // Bouncing lightly on the balls of the feet, Flyff style.
+            let k = Self.ease(stance)
+            let pose = ranged ? Self.rangedStance : Self.meleeStance
+            let bounce = sin(t * 5.5 + seed)
+            func blend(_ value: inout Float, _ target: Float) { value += (target - value) * k }
+            for i in 0..<2 {
+                blend(&legSwing[i], pose.legSwing[i])
+                blend(&legSpread[i], pose.legSpread)
+                blend(&armSwing[i], pose.armSwing[i] + bounce * 0.08)
+                blend(&armSpread[i], pose.armSpread[i])
+            }
+            blend(&hipYaw, pose.hipYaw)
+            blend(&twist, pose.twist)
+            blend(&lean, pose.lean + bounce * 0.04)
+            blend(&wrist, pose.wrist)
+            blend(&tilt, 0)
+            blend(&lift, bounce * 0.006)
+            blend(&scarfLift, 0.3 + bounce * 0.05)
+        }
 
         var slash: (arm: simd_quatf, amount: Float)?
         var slashProgress: Float?
-        let baseTwist = twist
+        let base = (twist: twist, lean: lean)
         if let p = swingProgress, !motion.fainted {
-            if playerClass?.definition.isRanged == true {
+            if ranged {
                 // Point and release, turning the shooting shoulder forward.
                 let thrust = sin(p * .pi)
-                armSwing[1] = -1.5 * thrust
-                armSpread[1] = 0.1
-                armSwing[0] = -0.4 * thrust
+                armSwing[1] += (-1.5 - armSwing[1]) * thrust
+                armSpread[1] += (0.1 - armSpread[1]) * thrust
+                armSwing[0] += (-0.4 - armSwing[0]) * thrust
                 twist += 0.25 * thrust
+                hipYaw += 0.15 * thrust
+                lean += 0.1 * thrust
             } else {
-                // Cock back, whip through the arc, then ease back to the base pose.
+                // Cock back, whip through the arc, then ease back to the base pose. The hips
+                // turn and the front foot steps in with the blade.
                 let phase = Self.slashPhase(p)
                 slash = (Self.armPose(swing, phase.s), phase.amount)
                 slashProgress = p
-                twist += swing.twist(phase.s) * phase.amount
+                let body = Self.slashBody(swing, p)
+                hipYaw += body.hipYaw
+                twist += body.twist
+                lean += body.lean
+                lift += body.lift
+                legSwing[0] -= body.step
+                legSwing[1] += body.step * 0.7
+                for i in 0..<2 { legSpread[i] += body.spread }
+                // The free arm flings back and out for balance.
+                armSwing[0] += (0.5 - armSwing[0]) * body.impact * 0.6
+                armSpread[0] += 0.35 * body.impact
+                scarfLift += body.impact * 0.5
                 sproutSway += sin(p * .pi) * 0.4
             }
         }
         if let p = hurt, !motion.fainted {
             nod -= 0.2 * sin(p * .pi)
+            lean -= 0.12 * sin(p * .pi)
         }
+        // Keep the eyes on the foe while the body turns and leans under them.
+        let look = -(hipYaw + twist - strideTwist) * 0.6
+        nod -= lean * 0.6
 
+        var raise: Float = 0 // arms up for a cast or cheer
+        var torsoArch: Float = 0
         var armPose = (0..<2).map { i in
             simd_quatf(angle: Self.sides[i] * armSpread[i], axis: [0, 0, 1]) * simd_quatf(angle: armSwing[i], axis: [1, 0, 0])
         }
@@ -549,10 +644,12 @@ final class PlayerRig {
                 armPose[i] = simd_slerp(armPose[i], raised, amount)
             }
             nod -= 0.15 * amount
+            raise = amount
+            torsoArch = 0.1 * amount
         }
         if let p = cheer, !motion.fainted, !motion.airborne {
             // Two happy hops with waving arms.
-            lift = abs(sin(p * 2 * .pi)) * 0.16
+            lift += abs(sin(p * 2 * .pi)) * 0.16
             let amount = Self.ease(min(1, p / 0.15) * min(1, (1 - p) / 0.2))
             for i in 0..<2 {
                 let wave = simd_quatf(angle: Self.sides[i] * sin(t * 18) * 0.3, axis: [0, 0, 1])
@@ -560,22 +657,33 @@ final class PlayerRig {
                 armPose[i] = simd_slerp(armPose[i], raised, amount)
             }
             nod -= 0.12 * amount
+            raise = max(raise, amount)
         }
 
-        body.position.y = lift
-        torso.orientation = simd_quatf(angle: twist, axis: [0, 1, 0])
+        var drop: Float = 0
+        if !motion.moving, !motion.airborne, !motion.fainted {
+            // Sink so the planted foot stays on the ground as the legs spread and stagger.
+            let reach = (0..<2).map { cos(legSwing[$0]) * cos(legSpread[$0]) }.max() ?? 1
+            drop = Self.hipHeight * (1 - reach)
+        }
+        body.position.y = lift - drop
+        hips.orientation = simd_quatf(angle: hipYaw, axis: [0, 1, 0])
+        torso.orientation = Self.torsoRotation(twist, lean - torsoArch)
         torso.scale = [1 + breath * 0.008, 1 + breath * 0.012, 1 + breath * 0.008]
-        head.orientation = simd_quatf(angle: nod, axis: [1, 0, 0]) * simd_quatf(angle: tilt, axis: [0, 0, 1])
+        head.orientation = simd_quatf(angle: look, axis: [0, 1, 0]) * simd_quatf(angle: nod, axis: [1, 0, 0])
+            * simd_quatf(angle: tilt, axis: [0, 0, 1])
         for i in 0..<2 {
             arms[i].orientation = armPose[i]
-            legs[i].orientation = simd_quatf(angle: legSwing[i], axis: [1, 0, 0])
+            legs[i].orientation = simd_quatf(angle: Self.sides[i] * legSpread[i], axis: [0, 0, 1])
+                * simd_quatf(angle: legSwing[i], axis: [1, 0, 0])
             scarfTails[i].orientation = simd_quatf(angle: Self.sides[i] * 0.18, axis: [0, 0, 1])
                 * simd_quatf(angle: scarfLift + Float(i) * 0.08 + sin(t * 9 + Float(i)) * 0.04, axis: [1, 0, 0])
         }
-        let wrist = motion.airborne || cast != nil || cheer != nil ? 0 : slash?.amount ?? 0
-        hands[1].orientation = simd_slerp(simd_quatf(angle: 0, axis: [1, 0, 0]), Self.wristBend, wrist)
-        if let p = slashProgress, wrist > 0 {
-            updateTrail(p, baseTwist: baseTwist)
+        let slashWrist = motion.airborne || cast != nil || cheer != nil ? 0 : slash?.amount ?? 0
+        let wristAmount = motion.airborne ? 0 : (wrist + (1 - wrist) * slashWrist) * (1 - raise)
+        hands[1].orientation = simd_slerp(simd_quatf(angle: 0, axis: [1, 0, 0]), Self.wristBend, wristAmount)
+        if let p = slashProgress, slashWrist > 0 {
+            updateTrail(p, baseTwist: base.twist, baseLean: base.lean)
         } else {
             trail.hide()
         }
@@ -615,6 +723,39 @@ final class PlayerRig {
         }
     }
 
+    /// Whole-body motion for one moment of a melee swing, added on top of the base pose.
+    private struct SlashBody {
+        var hipYaw: Float
+        var twist: Float
+        var lean: Float
+        var lift: Float
+        /// Radians the front leg steps forward (the back leg pushes back a bit less).
+        var step: Float
+        var spread: Float
+        /// 0...1, peaking mid-strike.
+        var impact: Float
+    }
+
+    private static func slashBody(_ swing: Swing, _ p: Float) -> SlashBody {
+        let phase = slashPhase(p)
+        let s = min(max(phase.s, 0), 1)
+        let coil = phase.amount * (1 - ease(s / 0.5))
+        let follow = phase.amount * ease(s)
+        let impact = phase.amount * sin(s * .pi)
+        // The hips lead the turn and the shoulders finish it.
+        let turn = swing.twist(phase.s) * phase.amount
+        let body = swing.body
+        return SlashBody(hipYaw: turn * 0.4, twist: turn * 0.6,
+                         lean: body.coilLean * coil + body.strikeLean * follow,
+                         lift: body.coilLift * coil + body.strikeLift * impact,
+                         step: body.step * follow, spread: body.spread * min(1, coil + follow), impact: impact)
+    }
+
+    /// Torso orientation in hips space: turned by `twist`, then leaning along its own facing.
+    private static func torsoRotation(_ twist: Float, _ lean: Float) -> simd_quatf {
+        simd_quatf(angle: twist, axis: [0, 1, 0]) * simd_quatf(angle: lean, axis: [1, 0, 0])
+    }
+
     /// Arm rotation pointing the weapon arm along the swing, the fist's forward (+Z) trailing.
     private static func armPose(_ swing: Swing, _ s: Float) -> simd_quatf {
         let (direction, lean) = swing.arm(s)
@@ -624,7 +765,7 @@ final class PlayerRig {
     }
 
     /// Sweeps the trail over where the blade was during the last `trailSpan` of the strike.
-    private func updateTrail(_ p: Float, baseTwist: Float) {
+    private func updateTrail(_ p: Float, baseTwist: Float, baseLean: Float) {
         guard let reach = bladeReach else {
             trail.hide()
             return
@@ -639,9 +780,14 @@ final class PlayerRig {
         let hilt = Self.bladeDirection * 0.16
         let tip = Self.bladeDirection * reach
         let hand = Self.hand, wristBend = Self.wristBend
+        // The trail lives under the hips, so past samples are placed relative to where the hips face now.
+        let hipsNow = Self.slashBody(swing, p).hipYaw
         let samples = (0...SwingTrail.segments).map { i in
-            let s = Self.slashPhase(tail + (head - tail) * Float(i) / Float(SwingTrail.segments)).s
-            let torso = simd_quatf(angle: baseTwist + swing.twist(s), axis: [0, 1, 0])
+            let q = tail + (head - tail) * Float(i) / Float(SwingTrail.segments)
+            let s = Self.slashPhase(q).s
+            let body = Self.slashBody(swing, q)
+            let torso = simd_quatf(angle: body.hipYaw - hipsNow, axis: [0, 1, 0])
+                * Self.torsoRotation(baseTwist + body.twist, baseLean + body.lean)
             let arm = Self.armPose(swing, s)
             func place(_ point: SIMD3<Float>) -> SIMD3<Float> {
                 torso.act(shoulder + arm.act(hand + wristBend.act(point)))

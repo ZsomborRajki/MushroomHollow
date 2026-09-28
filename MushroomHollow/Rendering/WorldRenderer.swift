@@ -383,7 +383,8 @@ final class WorldRenderer {
         }
 
         view.model.transform = Transform(scale: scale, rotation: rotation, translation: offset)
-        view.rig?.animate(PlayerRig.Motion(moving: isMoving, airborne: view.glider != nil, fainted: view.deathStart != nil),
+        view.rig?.animate(PlayerRig.Motion(moving: isMoving, airborne: view.glider != nil, fainted: view.deathStart != nil,
+                                            engaged: snapshot.target != nil),
                           time: time, seed: seed)
     }
 
