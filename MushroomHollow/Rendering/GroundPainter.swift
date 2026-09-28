@@ -157,9 +157,27 @@ enum GroundPainter {
         }
     }
 
+    /// Just the contact shadows, white on black, for the ink style to fill with hatching.
+    static func paintShadowMask(_ map: WorldMap, size: Int) -> UIImage {
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        format.opaque = true
+        format.preferredRange = .standard
+        let pixels = CGFloat(size)
+        return UIGraphicsImageRenderer(size: CGSize(width: pixels, height: pixels), format: format).image { context in
+            let cg = context.cgContext
+            UIColor.black.setFill()
+            context.fill(CGRect(x: 0, y: 0, width: pixels, height: pixels))
+            let scale = pixels / CGFloat(2 * extent)
+            cg.scaleBy(x: scale, y: scale)
+            cg.translateBy(x: CGFloat(extent), y: CGFloat(extent))
+            paintShadows(map, in: cg, color: UIColor(white: 1, alpha: 0.9))
+        }
+    }
+
     /// Dark soft pools under everything standing on the ground.
-    private static func paintShadows(_ map: WorldMap, in cg: CGContext) {
-        let shadow = UIColor(red: 0.06, green: 0.1, blue: 0.04, alpha: 0.5)
+    private static func paintShadows(_ map: WorldMap, in cg: CGContext,
+                                     color shadow: UIColor = UIColor(red: 0.06, green: 0.1, blue: 0.04, alpha: 0.5)) {
         for boulder in map.boulders {
             blot(cg, at: boulder.position, radius: boulder.radius * 1.5, color: shadow)
         }

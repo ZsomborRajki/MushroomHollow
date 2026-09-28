@@ -190,6 +190,11 @@ final class ColorAtlas {
     }
 
     func materials() -> (solid: any RealityKit.Material, foliage: any RealityKit.Material) {
+        if ArtStyle.isInk, let base = texture({ $0.color }), let glow = texture({ $0.glow ? $0.color : .black }),
+           let solid = InkMaterials.atlas(base: base, glow: glow, doubleSided: false),
+           let foliage = InkMaterials.atlas(base: base, glow: glow, doubleSided: true) {
+            return (solid, foliage)
+        }
         var material = PhysicallyBasedMaterial()
         material.roughness = 0.85
         material.metallic = .init(floatLiteral: 0)

@@ -1,0 +1,266 @@
+import Foundation
+import GameCore
+import Metal
+import RealityKit
+import UIKit
+
+/// Which look the world is drawn in. Chosen at launch (materials are built once and cached):
+/// a client preference, never part of `PlayerProfile`. DEBUG builds also take `-style ink|classic`.
+nonisolated enum ArtStyle: String, CaseIterable, Sendable {
+    /// Hand-drawn: ink lines that boil, flat two-tone fills, hatching (see InkStyle).
+    case ink
+    /// The original lit, shadowed, physically based look.
+    case classic
+
+    static let defaultsKey = "artStyle"
+
+    static let current: ArtStyle = {
+        #if DEBUG
+        let arguments = ProcessInfo.processInfo.arguments
+        if let index = arguments.firstIndex(of: "-style"), arguments.indices.contains(index + 1),
+           let style = ArtStyle(rawValue: arguments[index + 1]) {
+            return style
+        }
+        #endif
+        return UserDefaults.standard.string(forKey: defaultsKey).flatMap(ArtStyle.init(rawValue:)) ?? .ink
+    }()
+
+    static var isInk: Bool { current == .ink }
+}
+
+/// Tuning for the ink style.
+nonisolated enum InkStyle {
+    /// Lines, hatching, and outlines are redrawn this many times a second ("on threes" at 24 fps).
+    /// World.metal's `boilFrame` must match.
+    static let boilRate: Float = 8
+    static let hullName = "inkHull"
+
+    /// Outline width (meters, as seen from 8 m) for an actor: bold on the boss, finer on small critters.
+    static func hullWidth(for kind: EntityKind) -> Float {
+        switch kind {
+        case .player: 0.022
+        case .npc: 0.022
+        case .mob(.owl): 0.06
+        case let .mob(mob): min(0.03, max(0.014, mob.radius * 0.05))
+        }
+    }
+
+    /// Radius of the hatched blob shadow under an actor.
+    static func shadowRadius(for kind: EntityKind) -> Float {
+        switch kind {
+        case .player: 0.42
+        case .npc: 0.5
+        case .mob(.owl): 3.2
+        case let .mob(mob): mob.radius * 1.25
+        }
+    }
+}
+
+// MARK: - Lighting
+
+/// The toon materials are unlit, so the sun doesn't reach them: instead every ink material samples
+/// this tiny shared texture (lit and shadow multipliers, ink color, key direction), and `Atmosphere`
+/// rewrites it as the day turns. One texture update restyles every material at once, with no
+/// per-material parameters to push.
+@MainActor
+final class ToonLighting {
+    struct Values: Equatable {
+        var key = SIMD3<Float>(1, 1, 1)
+        var shadow = SIMD3<Float>(0.62, 0.66, 0.8)
+        var hatch: Float = 1
+        var ink = SIMD3<Float>(0.12, 0.09, 0.08)
+        var direction = simd_normalize(SIMD3<Float>(0.45, 0.8, 0.4))
+        var rim: Float = 1
+    }
+
+    static let shared = ToonLighting()
+
+    let resource: TextureResource?
+    private let texture: LowLevelTexture?
+    private let queue: (any MTLCommandQueue)?
+    private let staging: (any MTLBuffer)?
+    private var current: Values?
+
+    private init() {
+        let device = MTLCreateSystemDefaultDevice()
+        queue = device?.makeCommandQueue()
+        staging = device?.makeBuffer(length: 4 * 4 * MemoryLayout<Float16>.stride, options: .storageModeShared)
+        let descriptor = LowLevelTexture.Descriptor(textureType: .type2D, pixelFormat: .rgba16Float, width: 4, height: 1,
+                                                    depth: 1, mipmapLevelCount: 1, textureUsage: [.shaderRead])
+        texture = try? LowLevelTexture(descriptor: descriptor)
+        resource = texture.flatMap { try? TextureResource(from: $0) }
+        set(Values())
+    }
+
+    func set(_ values: Values) {
+        guard values != current, let texture, let queue, let staging,
+              let commandBuffer = queue.makeCommandBuffer() else { return }
+        current = values
+        let texels: [SIMD4<Float>] = [SIMD4(values.key, 1), SIMD4(values.shadow, values.hatch),
+                                      SIMD4(values.ink, 1), SIMD4(values.direction, values.rim)]
+        let halves = staging.contents().bindMemory(to: Float16.self, capacity: 16)
+        for (i, texel) in texels.enumerated() {
+            for c in 0..<4 { halves[i * 4 + c] = Float16(texel[c]) }
+        }
+        let target = texture.replace(using: commandBuffer)
+        if let blit = commandBuffer.makeBlitCommandEncoder() {
+            blit.copy(from: staging, sourceOffset: 0, sourceBytesPerRow: 4 * 4 * MemoryLayout<Float16>.stride,
+                      sourceBytesPerImage: 4 * 4 * MemoryLayout<Float16>.stride, sourceSize: MTLSize(width: 4, height: 1, depth: 1),
+                      to: target, destinationSlice: 0, destinationLevel: 0, destinationOrigin: MTLOrigin())
+            blit.endEncoding()
+        }
+        commandBuffer.commit()
+    }
+}
+
+// MARK: - Materials
+
+/// The ink style's materials (Shaders/World.metal). Each returns nil if the shaders can't be
+/// loaded, and the caller falls back to the classic material.
+@MainActor
+enum InkMaterials {
+    private static var cache: [String: any RealityKit.Material] = [:]
+
+    private static func make(_ surface: String, geometry: String? = nil) -> CustomMaterial? {
+        guard let library = Materials.shaderLibrary, let lighting = ToonLighting.shared.resource,
+              var material = try? CustomMaterial(
+                  surfaceShader: .init(named: surface, in: library),
+                  geometryModifier: geometry.map { .init(named: $0, in: library) },
+                  lightingModel: .unlit)
+        else { return nil }
+        material.custom = .init(value: [0, 0, 1, 1], texture: .init(lighting))
+        return material
+    }
+
+    private static func cached(_ key: String, _ build: () -> (any RealityKit.Material)?) -> (any RealityKit.Material)? {
+        if let hit = cache[key] { return hit }
+        guard let material = build() else { return nil }
+        cache[key] = material
+        return material
+    }
+
+    /// Flat two-tone fill with hatching in the shade; `shine` adds a cartoon highlight and rim.
+    static func toon(_ color: UIColor, shine: Bool) -> (any RealityKit.Material)? {
+        cached("toon-\(color.description)-\(shine)") {
+            guard var material = make("toonSurface") else { return nil }
+            material.baseColor = .init(tint: color)
+            material.custom.value = [0, shine ? 1 : 0, 1, 1]
+            return material
+        }
+    }
+
+    static func translucent(_ color: UIColor, opacity: Float) -> (any RealityKit.Material)? {
+        cached("translucent-\(color.description)-\(opacity)") {
+            guard var material = make("toonSurface") else { return nil }
+            material.baseColor = .init(tint: color)
+            material.custom.value = [0, 0, 0, opacity]
+            material.blending = .transparent(opacity: .init(floatLiteral: 1))
+            material.faceCulling = .none
+            return material
+        }
+    }
+
+    /// A painted texture (the face), toon shaded, lightly hatched.
+    static func textured(_ texture: TextureResource) -> (any RealityKit.Material)? {
+        guard var material = make("toonTextured") else { return nil }
+        material.baseColor = .init(tint: .white, texture: .init(texture))
+        material.custom.value = [0, 0, 0.5, 1]
+        return material
+    }
+
+    /// Batched scenery: the color atlas, glowing colors in the emissive atlas, wobbly outlines.
+    static func atlas(base: TextureResource, glow: TextureResource, doubleSided: Bool) -> (any RealityKit.Material)? {
+        guard var material = make("toonAtlas", geometry: "toonWobble") else { return nil }
+        material.baseColor = .init(tint: .white, texture: .init(base))
+        material.emissiveColor = .init(color: .black, texture: .init(glow))
+        material.custom.value = [0.05, 0, 1, 1]
+        if doubleSided { material.faceCulling = .none }
+        return material
+    }
+
+    /// The forest floor, with its contact shadows (white = shadow) to fill with hatching.
+    static func ground(_ painting: TextureResource, shadows: TextureResource) -> (any RealityKit.Material)? {
+        guard var material = make("inkGround") else { return nil }
+        material.baseColor = .init(tint: .white, texture: .init(painting))
+        material.roughness = .init(scale: 1, texture: .init(shadows))
+        material.custom.value = [0, 0, 0, 1]
+        return material
+    }
+
+    static let grass: (any RealityKit.Material)? = {
+        guard var material = make("grassInk", geometry: "grassSway") else { return nil }
+        material.faceCulling = .none
+        return material
+    }()
+
+    static let water: (any RealityKit.Material)? = {
+        guard var material = make("waterInk") else { return nil }
+        material.blending = .transparent(opacity: .init(floatLiteral: 1))
+        return material
+    }()
+
+    /// The outline shell for inverted-hull outlines.
+    static func hull(width: Float) -> (any RealityKit.Material)? {
+        cached("hull-\(width)") {
+            guard var material = make("inkHullSurface", geometry: "inkHullPush") else { return nil }
+            material.custom.value = [width, 0, 0, 1]
+            material.faceCulling = .front
+            return material
+        }
+    }
+
+    static let blobShadow: (any RealityKit.Material)? = {
+        guard let texture = InkPainter.blobShadow(), var material = make("inkBlobShadow") else { return nil }
+        material.baseColor = .init(tint: .white, texture: .init(texture))
+        material.custom.value = [0, 0, 0, 0.75]
+        material.blending = .transparent(opacity: .init(floatLiteral: 1))
+        return material
+    }()
+}
+
+// MARK: - Outlines and shadows
+
+extension Entity {
+    /// Gives every solid part under this entity an inverted-hull outline (a child sharing its mesh).
+    /// Safe to call again after parts are added (gear, a glider): outlined parts are skipped.
+    /// Tiny bits (eye glints) and glowing or see-through parts get none.
+    func addInkHulls(width: Float, minimumSize: Float = 0.05) {
+        guard ArtStyle.isInk, let material = InkMaterials.hull(width: width) else { return }
+        addInkHulls(material, root: self, minimumSize: minimumSize)
+    }
+
+    private func addInkHulls(_ material: any RealityKit.Material, root: Entity, minimumSize: Float) {
+        for child in Array(children) where child.name != InkStyle.hullName {
+            if let part = child as? ModelEntity, let model = part.model, !model.materials.isEmpty,
+               model.materials.allSatisfy(Self.takesOutline),
+               !part.children.contains(where: { $0.name == InkStyle.hullName }) {
+                let size = model.mesh.bounds.extents * part.scale(relativeTo: root)
+                if max(size.x, size.y, size.z) >= minimumSize {
+                    let hull = ModelEntity(mesh: model.mesh, materials: Array(repeating: material, count: model.materials.count))
+                    hull.name = InkStyle.hullName
+                    hull.components.set(DynamicLightShadowComponent(castsShadow: false))
+                    part.addChild(hull)
+                }
+            }
+            child.addInkHulls(material, root: root, minimumSize: minimumSize)
+        }
+    }
+
+    /// Opaque toon surfaces only (glowing `UnlitMaterial`s and see-through parts stay clean).
+    private static func takesOutline(_ material: any RealityKit.Material) -> Bool {
+        guard let custom = material as? CustomMaterial, custom.faceCulling != .front else { return false }
+        if case .opaque = custom.blending { return true }
+        return false
+    }
+
+    /// A hatched ink shadow on the ground, for actors (the ink style has no shadow maps).
+    static func makeBlobShadow(radius: Float) -> ModelEntity? {
+        guard let material = InkMaterials.blobShadow else { return nil }
+        let shadow = ModelEntity(mesh: InkPainter.shadowPlane, materials: [material])
+        shadow.name = "blobShadow"
+        shadow.scale = SIMD3(repeating: radius)
+        shadow.position.y = 0.04
+        shadow.components.set(DynamicLightShadowComponent(castsShadow: false))
+        return shadow
+    }
+}

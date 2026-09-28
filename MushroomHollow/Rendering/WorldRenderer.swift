@@ -62,6 +62,9 @@ final class WorldRenderer {
         var glider: Entity?
         var wings: [Entity] = []
         var telegraph: Entity?
+        /// The ink style's drawn shadow; it stays on the ground under hovering and flying actors.
+        var shadow: Entity?
+        var shadowRadius: Float = 0
         var lungeStart: Double?
         var hitStart: Double?
         var deathStart: Double?
@@ -156,6 +159,12 @@ final class WorldRenderer {
                 rotation = simd_quatf(from: [0, 1, 0], to: normal) * rotation
             }
             view.entity.transform = Transform(scale: .one, rotation: rotation, translation: worldPosition)
+            if let shadow = view.shadow {
+                let lift = max(0, position.y)
+                shadow.position.y = 0.04 - lift
+                shadow.scale = SIMD3(repeating: view.shadowRadius * max(0.4, 1 - lift / 14))
+                if shadow.isEnabled != current.isAlive { shadow.isEnabled = current.isAlive }
+            }
 
             if !current.isAlive, view.deathStart == nil {
                 view.deathStart = time
@@ -349,6 +358,14 @@ final class WorldRenderer {
         let view = ActorView(entity: entity, model: model, kind: snapshot.kind)
         view.rig = rig
         view.wings = ActorModels.wingNames.compactMap { model.findEntity(named: $0) }
+        if ArtStyle.isInk {
+            model.addInkHulls(width: InkStyle.hullWidth(for: snapshot.kind))
+            if let shadow = Entity.makeBlobShadow(radius: InkStyle.shadowRadius(for: snapshot.kind)) {
+                entity.addChild(shadow)
+                view.shadow = shadow
+                view.shadowRadius = InkStyle.shadowRadius(for: snapshot.kind)
+            }
+        }
 
         if case let .mob(kind) = snapshot.kind, kind.charges {
             // Red strip on the ground showing where the charge will go.
@@ -369,6 +386,7 @@ final class WorldRenderer {
 
     private func updateGear(_ view: ActorView, _ gear: [ItemID], playerClass: PlayerClass?) {
         view.rig?.dress(gear, playerClass: playerClass)
+        view.model.addInkHulls(width: InkStyle.hullWidth(for: view.kind))
         view.gear = gear
         view.playerClass = playerClass
     }
@@ -378,6 +396,7 @@ final class WorldRenderer {
         if airborne, view.glider == nil {
             let glider = ActorModels.makeGlider(grip: PlayerRig.gliderGrip)
             glider.components.set(Self.makePollenTrail())
+            glider.addInkHulls(width: InkStyle.hullWidth(for: view.kind))
             view.model.addChild(glider)
             view.glider = glider
         } else if !airborne, let glider = view.glider {

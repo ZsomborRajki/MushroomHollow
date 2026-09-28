@@ -23,6 +23,13 @@ enum TerrainBuilder {
         } else {
             material.baseColor = .init(tint: Palette.moss)
         }
+        var groundMaterial: any RealityKit.Material = material
+        if ArtStyle.isInk, let cgImage = painting.cgImage, let mask = GroundPainter.paintShadowMask(map, size: 1024).cgImage,
+           let texture = try? TextureResource(image: cgImage, options: .init(semantic: .color)),
+           let shadows = try? TextureResource(image: mask, options: .init(semantic: .raw)),
+           let ink = InkMaterials.ground(texture, shadows: shadows) {
+            groundMaterial = ink
+        }
 
         // Heights once on a shared grid, so neighboring tiles meet exactly.
         let n = Int((2 * extent / spacing).rounded()) + 1
@@ -64,7 +71,7 @@ enum TerrainBuilder {
                     }
                 }
                 guard let resource = mesh.resource(named: "ground") else { continue }
-                let tile = ModelEntity(mesh: resource, materials: [material])
+                let tile = ModelEntity(mesh: resource, materials: [groundMaterial])
                 tile.name = "Ground \(tileColumn),\(tileRow)"
                 world.addChild(tile)
             }

@@ -339,7 +339,7 @@ final class GameSession {
         guard colorGradeDelay > 0 else { return }
         colorGradeDelay -= 1
         guard colorGradeDelay == 0 else { return }
-        //projector?.renderingEffects.customPostProcessing = .effect(ColorGradeEffect(settings: renderer.atmosphere.grade))
+        projector?.renderingEffects.customPostProcessing = .effect(ColorGradeEffect(settings: renderer.atmosphere.grade))
     }
 
     func saveNow() {

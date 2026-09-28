@@ -215,6 +215,7 @@ enum Materials {
     private static var cache: [String: any RealityKit.Material] = [:]
 
     static func matte(_ color: UIColor, roughness: Float = 0.85) -> any RealityKit.Material {
+        if ArtStyle.isInk, let toon = InkMaterials.toon(color, shine: roughness < 0.5) { return toon }
         let key = "matte-\(color.description)-\(roughness)"
         if let cached = cache[key] { return cached }
         var material = PhysicallyBasedMaterial()
@@ -227,6 +228,7 @@ enum Materials {
 
     /// See-through (insect wings, webs).
     static func translucent(_ color: UIColor, opacity: Float) -> any RealityKit.Material {
+        if ArtStyle.isInk, let toon = InkMaterials.translucent(color, opacity: opacity) { return toon }
         let key = "translucent-\(color.description)-\(opacity)"
         if let cached = cache[key] { return cached }
         var material = PhysicallyBasedMaterial()
@@ -255,6 +257,7 @@ enum Materials {
 
     /// Grass with Metal wind sway and a height/position color gradient.
     static let grass: any RealityKit.Material = {
+        if ArtStyle.isInk, let ink = InkMaterials.grass { return ink }
         guard let library = shaderLibrary,
               var material = try? CustomMaterial(
                   surfaceShader: .init(named: "grassSurface", in: library),
@@ -272,6 +275,7 @@ enum Materials {
 
     /// Lake water: see-through in the shallows, glinting ripples (Shaders/World.metal).
     static let water: any RealityKit.Material = {
+        if ArtStyle.isInk, let ink = InkMaterials.water { return ink }
         guard let library = shaderLibrary,
               var material = try? CustomMaterial(surfaceShader: .init(named: "waterSurface", in: library), lightingModel: .lit)
         else {

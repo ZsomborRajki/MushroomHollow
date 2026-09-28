@@ -22,9 +22,13 @@ final class Atmosphere {
     init(map: WorldMap, sky: ModelEntity) {
         self.sky = sky
 
-        var shadow = DirectionalLightComponent.Shadow(shadowProjection: .automatic(maximumDistance: 45), depthBias: 1.5)
-        shadow.cascades = .automatic
-        sun.shadow = shadow
+        // Ink-style surfaces are unlit (ToonLighting shades them) and actors get drawn blob
+        // shadows, so shadow maps would only cost time.
+        if !ArtStyle.isInk {
+            var shadow = DirectionalLightComponent.Shadow(shadowProjection: .automatic(maximumDistance: 45), depthBias: 1.5)
+            shadow.cascades = .automatic
+            sun.shadow = shadow
+        }
         root.addChild(sun)
 
         lantern.light.color = Palette.windowGlow
@@ -77,16 +81,41 @@ final class Atmosphere {
         let fogDay = SIMD3<Float>(0.6, 0.68, 0.5), fogDusk = SIMD3<Float>(0.75, 0.52, 0.38), fogNight = SIMD3<Float>(0.05, 0.07, 0.13)
         var fog = mix(fogDay, fogDusk, dusk * (1 - nightFactor))
         fog = mix(fog, fogNight, nightFactor)
-        grade.set(GradeUniforms(
+        var uniforms = GradeUniforms(
             tint: SIMD4(tint, 1.05 - 0.35 * nightFactor),
             fog: SIMD4(fog, 0.012 + 0.008 * nightFactor),
-            settings: [0.22 + 0.2 * nightFactor, 0.85 * nightFactor, 0, 0]))
+            settings: [0.22 + 0.2 * nightFactor, 0.85 * nightFactor, 0, 0])
+        if ArtStyle.isInk {
+            applyInk(to: &uniforms, dusk: dusk * (1 - nightFactor))
+        }
+        grade.set(uniforms)
 
         let rate = (nightFactor * 30).rounded()
         if rate != fireflyRate {
             fireflyRate = rate
             fireflies.components.set(Self.makeFireflies(birthRate: rate))
         }
+    }
+
+    /// The ink style's day and night: brighter fills by day, a softer grade (the toon lighting does
+    /// the dimming), and lines that go from ink to pale chalk after dark.
+    private func applyInk(to uniforms: inout GradeUniforms, dusk: Float) {
+        let night = nightFactor
+        var key = mix([1, 1, 0.97], [1.08, 0.86, 0.7], dusk)
+        key = mix(key, [0.5, 0.58, 0.86], night)
+        var shadow = mix([0.62, 0.66, 0.8], [0.62, 0.5, 0.62], dusk)
+        shadow = mix(shadow, [0.26, 0.32, 0.55], night)
+        let ink = mix([0.12, 0.09, 0.08], [0.72, 0.82, 1.0], night)
+        ToonLighting.shared.set(.init(key: key, shadow: shadow, hatch: 1 - 0.4 * night, ink: ink,
+                                      direction: simd_normalize(SIMD3<Float>(0.45, 0.8, 0.4)), rim: 1 - 0.5 * night))
+
+        // The materials already dim at night: grade gentler than the classic look, keep it colorful.
+        let tint = mix(mix([1, 1, 1], [1.04, 0.94, 0.86], dusk), [0.62, 0.7, 0.95], night)
+        uniforms.tint = SIMD4(tint, 1.08 - 0.3 * night)
+        uniforms.settings.x = 0.18 + 0.18 * night
+        uniforms.ink = [0, 0.75, 0.9, 0.05]
+        uniforms.inkColor = SIMD4(ink, 0.9 - 0.2 * night)
+        uniforms.inkShape = [0, 55, 140, 1]
     }
 
     private static func makeFireflies(birthRate: Float) -> ParticleEmitterComponent {

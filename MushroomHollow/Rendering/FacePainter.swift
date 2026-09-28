@@ -48,6 +48,7 @@ enum FacePainter {
             material.baseColor = .init(tint: SproutLook.skin)
             return material
         }
+        if ArtStyle.isInk, let ink = InkMaterials.textured(painted) { return ink }
         material.baseColor = .init(texture: .init(painted))
         return material
     }
