@@ -12,6 +12,8 @@ public enum PlayerCommand: Codable, Sendable, Equatable {
 
     // Items
     case useItem(ItemID)
+    /// Collect a ground drop within reach (walking over drops also collects them).
+    case pickupDrop(UInt32)
     /// Equips `item` at `upgrade` from the bag.
     case equip(ItemID, upgrade: Int = 0)
     case unequip(EquipSlot)
@@ -105,6 +107,18 @@ public struct TelegraphSnapshot: Codable, Sendable, Equatable {
     public let progress: Float
 }
 
+/// A personal reward resting on the ground until its owner collects it.
+public enum GroundDropKind: Codable, Sendable, Equatable {
+    case caps(Int)
+    case item(ItemID, count: Int)
+}
+
+public struct GroundDropSnapshot: Codable, Sendable, Equatable, Identifiable {
+    public let id: UInt32
+    public let position: Vec2
+    public let kind: GroundDropKind
+}
+
 /// What a client needs to render one entity.
 public struct EntitySnapshot: Codable, Sendable, Equatable, Identifiable {
     public let id: EntityID
@@ -180,12 +194,14 @@ public struct WorldSnapshot: Codable, Sendable, Equatable {
     public let tick: UInt64
     public let entities: [EntitySnapshot]
     public let hazards: [HazardSnapshot]
+    public let drops: [GroundDropSnapshot]
     public let viewer: PlayerStatus?
     /// 0 = midnight, 0.25 = dawn, 0.5 = noon, 0.75 = dusk.
     public let timeOfDay: Float
     public let telegraphs: [TelegraphSnapshot]
 
-    public static let empty = WorldSnapshot(tick: 0, entities: [], hazards: [], viewer: nil, timeOfDay: 0.4, telegraphs: [])
+    public static let empty = WorldSnapshot(tick: 0, entities: [], hazards: [], drops: [], viewer: nil,
+                                            timeOfDay: 0.4, telegraphs: [])
 
     public func entity(_ id: EntityID) -> EntitySnapshot? {
         entities.first { $0.id == id }

@@ -40,16 +40,27 @@ struct OrbitCamera {
         }
     }
 
-    /// Camera position, pulled in so it never ends up inside the trunk.
-    func position(avoidingTrunkRadius trunkRadius: Float) -> SIMD3<Float> {
+    /// Camera position, pulled in so it never ends up inside the trunk or behind a hill,
+    /// and never below the ground.
+    func position(avoidingTrunkRadius trunkRadius: Float, groundHeight: (Vec2) -> Float) -> SIMD3<Float> {
         var d = effectiveDistance
         while true {
             let p = focus + offset(distance: d)
-            if p.xz.length > trunkRadius + 0.5 || d <= Self.distanceRange.lowerBound {
-                return SIMD3(p.x, max(p.y, 0.3), p.z)
+            let clear = p.xz.length > trunkRadius + 0.5 && !terrainBlocks(from: focus, to: p, groundHeight: groundHeight)
+            if clear || d <= Self.distanceRange.lowerBound {
+                return SIMD3(p.x, max(p.y, groundHeight(p.xz) + 0.4), p.z)
             }
             d -= 0.25
         }
+    }
+
+    /// Whether the ground rises into the line of sight between the player and the camera.
+    private func terrainBlocks(from a: SIMD3<Float>, to b: SIMD3<Float>, groundHeight: (Vec2) -> Float) -> Bool {
+        for step in 1...4 {
+            let p = a + (b - a) * (Float(step) / 4)
+            if groundHeight(p.xz) > p.y - 0.25 { return true }
+        }
+        return false
     }
 
     /// Camera-relative movement basis on the ground plane.

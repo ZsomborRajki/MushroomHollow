@@ -38,7 +38,7 @@ extension GameSimulation {
                 if attacker.kind == .player {
                     awardXP(to: &attacker, for: kind)
                     recordKill(of: kind, by: &attacker)
-                    rollLoot(for: kind, into: &attacker)
+                    rollLoot(for: kind, ownedBy: attacker, at: target.position.xz)
                     if target.brain?.boss != nil { rewardBossParticipants(target, killer: &attacker) }
                 }
                 if let offspring = kind.splitsInto {

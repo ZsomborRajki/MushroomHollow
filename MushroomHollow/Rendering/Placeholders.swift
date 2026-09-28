@@ -87,8 +87,6 @@ enum Meshes {
     /// Flat annulus in the XZ plane, outer radius 1.
     static let ring = makeRing(inner: 0.82, outer: 1, segments: 64)
     static let disc = makeRing(inner: 0, outer: 1, segments: 64)
-    /// A very thin annulus, for a trail that circles the world.
-    static let trailRing = makeRing(inner: 0.985, outer: 1, segments: 256)
     /// Unit sphere with texture coordinates: u = 0.5 faces +Z, v = 1 at the top.
     static let uvSphere = makeUVSphere(rings: 32, segments: 48)
     /// Round at the top (y = 1), pointed at the bottom (y = -1), radius 1. Hair locks, leaves, petals.
@@ -269,6 +267,17 @@ enum Materials {
             return fallback
         }
         material.faceCulling = .none
+        return material
+    }()
+
+    /// Lake water: see-through in the shallows, glinting ripples (Shaders/World.metal).
+    static let water: any RealityKit.Material = {
+        guard let library = shaderLibrary,
+              var material = try? CustomMaterial(surfaceShader: .init(named: "waterSurface", in: library), lightingModel: .lit)
+        else {
+            return translucent(UIColor(red: 0.3, green: 0.55, blue: 0.6, alpha: 1), opacity: 0.7)
+        }
+        material.blending = .transparent(opacity: .init(floatLiteral: 1))
         return material
     }()
 

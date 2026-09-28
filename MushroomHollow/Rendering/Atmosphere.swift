@@ -37,7 +37,7 @@ final class Atmosphere {
 
     /// Call every frame; does real work only when the time has moved noticeably.
     func update(timeOfDay: Float, focus: SIMD3<Float>) {
-        fireflies.position = [focus.x, 0, focus.z]
+        fireflies.position = [focus.x, focus.y - 1.3, focus.z]
         guard abs(timeOfDay - lastApplied) > 0.0005 else { return }
         lastApplied = timeOfDay
 

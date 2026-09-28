@@ -32,6 +32,8 @@ public struct GameSimulation: Sendable {
     var respawnQueue: [PendingRespawn] = []
     var hazards: [Hazard] = []
     var nextHazardID: UInt32 = 0
+    var drops: [GroundDrop] = []
+    var nextDropID: UInt32 = 0
     var bossID: EntityID?
     var lastBossNight: Int?
     /// Events produced by the tick in progress.
@@ -92,6 +94,9 @@ public struct GameSimulation: Sendable {
                     playerClass: e.player?.playerClass, isFlying: e.isFlying)
             },
             hazards: hazardSnapshots,
+            drops: drops.filter { viewer == nil || $0.owner == viewer }.map {
+                GroundDropSnapshot(id: $0.id, position: $0.position, kind: $0.kind)
+            },
             viewer: viewer.flatMap(playerStatus),
             timeOfDay: timeOfDay,
             telegraphs: telegraphSnapshots
@@ -161,6 +166,7 @@ public struct GameSimulation: Sendable {
         }
         separateMobs()
         stepHazards()
+        stepDrops()
         removeCorpses()
         processRespawns()
         updateWorldBoss()
@@ -186,18 +192,24 @@ public struct GameSimulation: Sendable {
         entities[id]?.position.xz = map.resolve(point, radius: radius)
     }
 
+    /// How far a hunting-ground mob chases from its own spot before giving up (plus `leashSlack`).
+    static let mobLeashRadius: Float = 12
+    /// How far it strolls from its spot when nobody's around.
+    static let mobWanderRadius: Float = 5
+
+    /// Spawns a mob somewhere in its area, as far from everyone else as a few tries can find,
+    /// so hunting grounds stay spread out and fights are usually one on one.
     mutating func spawnMob(areaIndex: Int) {
         let area = map.mobSpawns[areaIndex]
         let kind = area.kind
-        var spot = area.center
-        for _ in 0..<16 {
+        var best: (spot: Vec2, room: Float)?
+        for _ in 0..<12 {
             let candidate = random.point(inDiscAt: area.center, radius: area.radius)
-            if !map.isBlocked(candidate, radius: kind.radius) {
-                spot = candidate
-                break
-            }
+            guard !map.isBlocked(candidate, radius: kind.radius + 0.3) else { continue }
+            let room = distanceToNearestCreature(from: candidate)
+            if best == nil || room > best!.room { best = (candidate, room) }
         }
-        spot = map.resolve(spot, radius: kind.radius)
+        let spot = map.resolve(best?.spot ?? area.center, radius: kind.radius)
         insert(WorldEntity(
             id: makeID(),
             kind: .mob(kind),
@@ -207,12 +219,24 @@ public struct GameSimulation: Sendable {
             moveSpeed: kind.wanderSpeed,
             stats: kind.stats.combatStats,
             brain: MobBrain(
-                home: area.center,
-                leashRadius: area.radius,
+                home: spot,
+                leashRadius: Self.mobLeashRadius,
+                wanderRadius: Self.mobWanderRadius,
                 spawnArea: areaIndex,
                 state: .idle(ticksLeft: random.int(in: 0...(Self.tickRate * 4)))
             )
         ))
+    }
+
+    /// Distance to the closest living mob or player.
+    private func distanceToNearestCreature(from point: Vec2) -> Float {
+        var nearest = Float.greatestFiniteMagnitude
+        for id in order {
+            guard let e = entities[id], e.stats.isAlive else { continue }
+            if case .npc = e.kind { continue }
+            nearest = min(nearest, e.position.xz.distance(to: point))
+        }
+        return nearest
     }
 
     private mutating func applyCommands() {

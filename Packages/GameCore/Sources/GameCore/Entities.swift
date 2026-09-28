@@ -201,6 +201,8 @@ struct MobBrain: Codable, Sendable {
 
     var home: Vec2
     var leashRadius: Float
+    /// How far from home it strolls when idle (0: anywhere within the leash).
+    var wanderRadius: Float = 0
     /// nil for mobs that shouldn't respawn (e.g. sporelings).
     var spawnArea: Int?
     var state: State

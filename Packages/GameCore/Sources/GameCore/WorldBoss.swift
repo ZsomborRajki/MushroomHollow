@@ -178,7 +178,7 @@ extension GameSimulation {
             guard var player = entities[id], player.stats.isAlive else { continue }
             awardXP(to: &player, for: kind)
             recordKill(of: kind, by: &player)
-            rollLoot(for: kind, into: &player)
+            rollLoot(for: kind, ownedBy: player, at: boss.position.xz)
             entities[id] = player
         }
         events.append(.worldBossDefeated(entity: boss.id, participants: participants))
@@ -250,4 +250,3 @@ extension GameSimulation {
         }
     }
 }
-

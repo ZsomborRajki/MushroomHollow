@@ -2,18 +2,15 @@
 #include <RealityKit/RealityKit.h>
 using namespace metal;
 
-// Grass blades are authored with their base at y = 0 and tips up to ~0.7 m.
-constant float kGrassHeight = 0.7;
-
+// Grass blades sit at their own ground height; uv0.y runs from 0 at the root to height / 0.7 m at the tip.
 [[visible]]
 void grassSway(realitykit::geometry_parameters params)
 {
-    float3 local = params.geometry().model_position();
     float3 world = params.geometry().world_position();
     float t = params.uniforms().time();
 
     // Only the upper part of a blade bends.
-    float bend = saturate(local.y / kGrassHeight);
+    float bend = saturate(params.geometry().uv0().y);
     bend *= bend;
 
     // Slow rolling gusts across the floor, plus a quick per-blade flutter.
@@ -27,7 +24,7 @@ void grassSway(realitykit::geometry_parameters params)
 [[visible]]
 void grassSurface(realitykit::surface_parameters params)
 {
-    float h = saturate(params.geometry().model_position().y / kGrassHeight);
+    float h = saturate(params.geometry().uv0().y);
     float3 w = params.geometry().world_position();
     float patch = sin(w.x * 0.21) * sin(w.z * 0.17) * 0.5 + 0.5;
 
@@ -35,6 +32,32 @@ void grassSurface(realitykit::surface_parameters params)
     half3 tip = mix(half3(0.36, 0.55, 0.16), half3(0.60, 0.62, 0.22), half(patch));
     params.surface().set_base_color(mix(root, tip, half(h)));
     params.surface().set_roughness(0.85);
+}
+
+// Lake water. uv0.x is the depth under this point (0 at the shore, 1 in the deeps): clear and
+// greenish in the shallows, dark blue in the middle, with drifting glints and a pale rim at the shore.
+[[visible]]
+void waterSurface(realitykit::surface_parameters params)
+{
+    float depth = saturate(params.geometry().uv0().x);
+    float3 w = params.geometry().world_position();
+    float t = params.uniforms().time();
+
+    half3 shallow = half3(0.36, 0.6, 0.5);
+    half3 deep = half3(0.06, 0.2, 0.3);
+    half3 color = mix(shallow, deep, half(smoothstep(0.0, 0.7, depth)));
+
+    // Two crossing sets of ripples; their crests catch the light.
+    float ripple = sin(w.x * 1.1 + w.z * 0.4 + t * 1.3) * sin(w.z * 0.9 - w.x * 0.3 - t * 1.1);
+    float glint = pow(saturate(ripple), 10.0) * 0.35;
+    float foam = 1.0 - smoothstep(0.0, 0.08, depth);
+    color = mix(color, half3(0.85, 0.9, 0.85), half(foam * 0.5));
+
+    params.surface().set_base_color(color);
+    params.surface().set_emissive_color(half3(glint) * half3(0.9, 1.0, 0.95));
+    params.surface().set_roughness(0.08);
+    params.surface().set_metallic(0);
+    params.surface().set_opacity(half(mix(0.45, 0.88, smoothstep(0.0, 0.6, depth))));
 }
 
 // Unlit gradient on the inside of the sky sphere: dark leafy canopy overhead, light

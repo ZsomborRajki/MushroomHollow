@@ -185,8 +185,12 @@ extension GameSimulation {
     }
 
     private mutating func pickWanderTarget(for mob: WorldEntity, brain: MobBrain) -> Vec2 {
+        let radius = brain.wanderRadius > 0 ? brain.wanderRadius : brain.leashRadius
+        // Hunting-ground mobs stay inside their area, so each species keeps to its half.
+        let area = brain.spawnArea.map { map.mobSpawns[$0] }
         for _ in 0..<6 {
-            let candidate = random.point(inDiscAt: brain.home, radius: brain.leashRadius)
+            let candidate = random.point(inDiscAt: brain.home, radius: radius)
+            if let area, candidate.distance(to: area.center) > area.radius { continue }
             if !map.isBlocked(candidate, radius: mob.radius) {
                 return candidate
             }

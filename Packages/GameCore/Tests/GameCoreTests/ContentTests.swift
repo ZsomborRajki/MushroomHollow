@@ -59,17 +59,84 @@ import Testing
 
     // MARK: - Loot
 
-    @Test func killsPayCapsAndDropLoot() throws {
+    @Test func killsLeaveCapsAndItemsOnTheGroundUntilCollected() throws {
         var sim = GameSimulation(seed: 21)
         let player = sim.spawnPlayer(profile: PlayerProfile())
         setLevel(8, player, in: &sim)
         var events: [WorldEvent] = []
-        for _ in 0..<8 { events += try slay(.snail, player, in: &sim) }
+        for _ in 0..<8 {
+            events += try slay(.snail, player, in: &sim)
+            for drop in sim.snapshot(for: player).drops {
+                sim.teleport(player, to: drop.position)
+                sim.enqueue(.pickupDrop(drop.id), from: player)
+                events += sim.step()
+            }
+        }
 
         let status = try #require(sim.playerStatus(player))
         #expect(status.caps > 0)
         #expect(status.inventory.count(of: .snailShell) > 0)
         #expect(events.contains { if case .itemReceived(player, .snailShell, _) = $0 { true } else { false } })
+    }
+
+    @Test func groundDropsRequireOwnershipAndProximity() throws {
+        var sim = GameSimulation(seed: 22)
+        let owner = sim.spawnPlayer()
+        let other = sim.spawnPlayer()
+        let startingCaps = try #require(sim.playerStatus(owner)).caps
+        let mob = try #require(sim.snapshot().entities.first { $0.kind == .mob(.snail) })
+        let ownerEntity = try #require(sim.entity(owner))
+        sim.rollLoot(for: .snail, ownedBy: ownerEntity, at: mob.position.xz)
+        let drop = try #require(sim.snapshot(for: owner).drops.first)
+        #expect(sim.snapshot(for: other).drops.isEmpty)
+        #expect(sim.playerStatus(owner)?.caps == startingCaps)
+
+        sim.enqueue(.pickupDrop(drop.id), from: other)
+        #expect(sim.step().contains(.actionFailed(player: other, reason: .notAvailable)))
+        sim.enqueue(.pickupDrop(drop.id), from: owner)
+        #expect(sim.step().contains(.actionFailed(player: owner, reason: .tooFar)))
+
+        sim.teleport(owner, to: drop.position)
+        sim.enqueue(.pickupDrop(drop.id), from: owner)
+        let events = sim.step()
+        #expect(events.contains { if case .capsChanged(owner, _) = $0 { true } else { false } })
+        #expect(sim.snapshot(for: owner).drops.allSatisfy { $0.id != drop.id })
+    }
+
+    @Test func nearbyDropsAreCollectedAfterTheirDisplayDelay() throws {
+        var sim = GameSimulation(seed: 24)
+        let player = sim.spawnPlayer()
+        let origin = try #require(sim.entity(player)).position.xz
+        let initialCaps = try #require(sim.playerStatus(player)).caps
+        let owner = try #require(sim.entity(player))
+        sim.rollLoot(for: .snail, ownedBy: owner, at: origin)
+        #expect(sim.snapshot(for: player).drops.contains { if case .caps = $0.kind { true } else { false } })
+
+        _ = run(&sim, seconds: 0.5)
+        #expect(sim.playerStatus(player)?.caps == initialCaps)
+        let events = run(&sim, seconds: 0.5)
+        #expect(events.contains { if case .capsChanged(player, _) = $0 { true } else { false } })
+        #expect(sim.playerStatus(player)?.caps ?? 0 > initialCaps)
+    }
+
+    @Test func fullBagKeepsDropOnGround() throws {
+        var bag = Inventory()
+        for _ in 0..<Inventory.capacity { bag.add(.twigSword, count: 1) }
+        var sim = GameSimulation(seed: 23)
+        let player = sim.spawnPlayer(profile: PlayerProfile(inventory: bag))
+        let origin = try #require(sim.entity(player)).position.xz
+        sim.drops.append(GroundDrop(id: 1, owner: player, position: origin, kind: .item(.snailShell, count: 2),
+                                    availableAtTick: 0, expiresAtTick: 1_000))
+        sim.nextDropID = 1
+
+        _ = sim.step()
+        #expect(sim.snapshot(for: player).drops.count == 1)
+        #expect(sim.playerStatus(player)?.inventory.count(of: .snailShell) == 0)
+
+        sim.entities[player]?.player?.inventory = Inventory()
+        let events = sim.step()
+        #expect(events.contains(.itemReceived(player: player, item: .snailShell, count: 2)))
+        #expect(sim.snapshot(for: player).drops.isEmpty)
     }
 
     // MARK: - Shop

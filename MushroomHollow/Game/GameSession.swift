@@ -3,6 +3,7 @@ import GameCore
 import Observation
 import RealityKit
 import SwiftUI
+import UIKit
 
 /// What the HUD shows about the current target.
 struct TargetInfo: Equatable {
@@ -123,6 +124,30 @@ struct FeedbackTriggers: Equatable {
 enum Panel: Equatable {
     case inventory
     case npc(NPCID)
+    case map
+}
+
+/// Live marks for the map screen.
+struct MapMarkers {
+    struct Mob {
+        let position: Vec2
+        let isHostile: Bool
+        let isFighting: Bool
+    }
+
+    var player: (position: Vec2, yaw: Float)?
+    /// Where the camera looks, on the ground plane.
+    var viewDirection: Vec2 = Vec2(0, -1)
+    var mobs: [Mob] = []
+    var bossAwake = false
+}
+
+/// A hunting ground an active quest sends you to.
+struct QuestTarget: Identifiable {
+    let id: String
+    let title: String
+    let center: Vec2
+    let radius: Float
 }
 
 enum ShopTab: Int, CaseIterable {
@@ -185,6 +210,12 @@ final class GameSession {
     private(set) var shopTab = ShopTab.buy
     /// At the blacksmith: spend a Ward Charm on risky upgrades.
     private(set) var protectUpgrades = false
+    /// Half the width of ground the map shows, in meters (pinch or LB/RB to change).
+    private(set) var mapSpan = GameSession.mapFullSpan
+    /// Sound off (remembered on this device).
+    private(set) var isMuted = UserDefaults.standard.bool(forKey: GameSession.mutedKey)
+    /// Where the map is centered after panning; nil follows you (or shows the whole hollow, zoomed out).
+    private(set) var mapCenter: Vec2?
     private(set) var timeOfDay: Float = 0.4
     private(set) var debugText = ""
 
@@ -211,6 +242,7 @@ final class GameSession {
     @ObservationIgnored private var bannerExpiry: Double = 0
     @ObservationIgnored private var nextAutosave: Double = 20
     @ObservationIgnored private var saveRequested = false
+    @ObservationIgnored private var paintedMap: UIImage?
 
     static let floaterLifetime: Double = 1.1
     static let maxFloatingTexts = 24
@@ -252,6 +284,7 @@ final class GameSession {
         host = LocalWorldHost(profile: profile)
         #endif
         renderer = WorldRenderer(map: host.map)
+        renderer.sounds.isMuted = isMuted
         // Start behind the player, looking at the giant trunk.
         if let player = host.currentSnapshot.entity(host.localPlayerID) {
             camera.yaw = player.yaw + .pi
@@ -294,6 +327,11 @@ final class GameSession {
         }
     }
 
+    func setViewportSize(_ size: CGSize) {
+        guard size.height > 0 else { return }
+        renderer.viewportAspect = Float(size.width / size.height)
+    }
+
     /// RealityKit traps when custom post-processing is set before the active camera has
     /// rendered (it force-unwraps the camera's view descriptors), so wait a few frames
     /// instead of setting it in the `RealityView` make closure.
@@ -301,7 +339,7 @@ final class GameSession {
         guard colorGradeDelay > 0 else { return }
         colorGradeDelay -= 1
         guard colorGradeDelay == 0 else { return }
-        projector?.renderingEffects.customPostProcessing = .effect(ColorGradeEffect(settings: renderer.atmosphere.grade))
+        //projector?.renderingEffects.customPostProcessing = .effect(ColorGradeEffect(settings: renderer.atmosphere.grade))
     }
 
     func saveNow() {
@@ -322,6 +360,10 @@ final class GameSession {
     func tapped(_ entity: Entity) {
         var current: Entity? = entity
         while let e = current {
+            if let drop = e.components[GroundDropComponent.self] {
+                host.send(.pickupDrop(drop.id))
+                return
+            }
             if let link = e.components[SimEntityComponent.self] {
                 input.enqueue(.select(link.id))
                 return
@@ -338,6 +380,15 @@ final class GameSession {
             selection = index
             renderer.sounds.playInterface(.uiMove)
         }
+    }
+
+    static let mutedKey = "soundMuted"
+
+    func toggleMute() {
+        isMuted.toggle()
+        renderer.sounds.isMuted = isMuted
+        UserDefaults.standard.set(isMuted, forKey: Self.mutedKey)
+        if !isMuted { renderer.sounds.playInterface(.uiConfirm) }
     }
 
     func setShopTab(_ tab: ShopTab) {
@@ -403,7 +454,8 @@ final class GameSession {
         if let player = renderer.renderedPosition(of: host.localPlayerID) {
             camera.follow(player, deltaTime: dt)
         }
-        var cameraPosition = camera.position(avoidingTrunkRadius: host.map.trunkCollisionRadius)
+        let map = host.map
+        var cameraPosition = camera.position(avoidingTrunkRadius: map.trunkCollisionRadius) { map.surfaceHeight(at: $0) }
         if elapsed < shakeUntil {
             // Screen shake for big impacts, fading out.
             let fade = Float((shakeUntil - elapsed) / 0.4)
@@ -484,6 +536,13 @@ final class GameSession {
                 openPanel(.inventory)
             }
 
+        case .toggleMap:
+            if panel == .map {
+                closePanel()
+            } else {
+                openPanel(.map)
+            }
+
         case let .quickItem(index):
             host.send(.useItem(index == 0 ? .dewPotion : .nectarVial))
 
@@ -501,6 +560,10 @@ final class GameSession {
         switch input {
         case .back:
             closePanel()
+        case .confirm where panel == .map:
+            cycleMapZoom()
+        case .previousTab where panel == .map, .nextTab where panel == .map:
+            stepMapZoom(zoomIn: input == .nextTab)
         case .confirm:
             activateSelection()
         case .previousTab, .nextTab:
@@ -540,6 +603,15 @@ final class GameSession {
             guard count > 0 else { return }
             if direction == .up { selection = max(0, selection - 1) }
             if direction == .down { selection = min(count - 1, selection + 1) }
+        case .map:
+            let step = mapSpan * 0.3
+            let offset: Vec2 = switch direction {
+            case .up: Vec2(0, -step)
+            case .down: Vec2(0, step)
+            case .left: Vec2(-step, 0)
+            default: Vec2(step, 0)
+            }
+            setMapView(span: mapSpan, center: effectiveMapCenter + offset)
         case nil:
             break
         }
@@ -575,8 +647,102 @@ final class GameSession {
             case let .chooseClass(playerClass): host.send(.chooseClass(playerClass))
             case .none: break
             }
+        case .map:
+            cycleMapZoom()
         case nil:
             break
+        }
+    }
+
+    // MARK: - Map
+
+    static let mapFullSpan: Float = 306
+    static let mapSpanRange: ClosedRange<Float> = 30...mapFullSpan
+    /// Zoom stops for buttons: the whole hollow, a region, the area around you.
+    private static let mapZoomStops: [Float] = [mapFullSpan, 125, 55]
+
+    /// What the map is centered on right now.
+    var effectiveMapCenter: Vec2 {
+        if let mapCenter { return mapCenter }
+        guard mapSpan < Self.mapFullSpan * 0.9 else { return .zero }
+        return host.currentSnapshot.entity(host.localPlayerID)?.position.xz ?? .zero
+    }
+
+    /// Pinch, drag, and button zoom all end here. Keeps the view over the hollow.
+    func setMapView(span: Float, center: Vec2?) {
+        mapSpan = min(max(span, Self.mapSpanRange.lowerBound), Self.mapSpanRange.upperBound)
+        guard var center else {
+            mapCenter = nil
+            return
+        }
+        let limit = max(0, Self.mapFullSpan - mapSpan)
+        if center.length > limit { center = center.normalizedOrZero * limit }
+        mapCenter = center
+    }
+
+    /// Back to following you.
+    func recenterMap() {
+        mapCenter = nil
+        renderer.sounds.playInterface(.uiMove)
+    }
+
+    /// A / Space / the button: whole hollow → region → around you → whole hollow.
+    func cycleMapZoom() {
+        let next = Self.mapZoomStops.first { $0 < mapSpan - 1 } ?? Self.mapFullSpan
+        setMapView(span: next, center: nil)
+        renderer.sounds.playInterface(.uiMove)
+    }
+
+    /// LB/RB, Q/E: one stop in or out, keeping the current center.
+    func stepMapZoom(zoomIn: Bool) {
+        let span = zoomIn ? (Self.mapZoomStops.first { $0 < mapSpan - 1 } ?? Self.mapSpanRange.lowerBound)
+                          : (Self.mapZoomStops.last { $0 > mapSpan + 1 } ?? Self.mapFullSpan)
+        setMapView(span: span, center: mapCenter)
+        renderer.sounds.playInterface(.uiMove)
+    }
+
+    var map: WorldMap { host.map }
+
+    /// The illustrated map, painted the first time it's opened.
+    var mapImage: UIImage {
+        if let paintedMap { return paintedMap }
+        let image = MapPainter.paint(host.map, ground: renderer.groundPainting)
+        paintedMap = image
+        return image
+    }
+
+    /// Where you are and what's around you, read fresh each time (the map redraws a few times a second).
+    var mapMarkers: MapMarkers {
+        let snapshot = host.currentSnapshot
+        var markers = MapMarkers(viewDirection: camera.groundForward)
+        if let me = snapshot.entity(host.localPlayerID) {
+            markers.player = (me.position.xz, me.yaw)
+            markers.mobs = snapshot.entities.compactMap { entity in
+                guard case let .mob(kind) = entity.kind, entity.isAlive, kind != .owl,
+                      entity.position.xz.distance(to: me.position.xz) < 90 else { return nil }
+                return MapMarkers.Mob(position: entity.position.xz, isHostile: kind.stats.aggroRadius > 0,
+                                      isFighting: entity.target == host.localPlayerID)
+            }
+        }
+        if let boss = host.simulation.worldBoss { markers.bossAwake = snapshot.entity(boss)?.isAlive == true }
+        return markers
+    }
+
+    /// Hunting grounds your active quests send you to.
+    var questTargets: [QuestTarget] {
+        (hud.player?.quests ?? []).flatMap { status -> [QuestTarget] in
+            guard case .active = status.state else { return [] }
+            let quest = status.id.definition
+            let kinds: [MobKind] = switch quest.objective {
+            case let .defeat(kind, _): [kind]
+            case let .collect(item, _): MobKind.allCases.filter { $0.canDrop(item) }
+            }
+            if kinds.contains(.owl), let arena = host.map.bossArena {
+                return [QuestTarget(id: "\(quest.id)-owl", title: quest.title, center: arena.center, radius: arena.radius)]
+            }
+            return host.map.mobSpawns.filter { kinds.contains($0.kind) }.map { area in
+                QuestTarget(id: "\(quest.id)-\(area.kind)", title: quest.title, center: area.center, radius: area.radius)
+            }
         }
     }
 
@@ -883,6 +1049,7 @@ final class GameSession {
             guard player == me, delta > 0 else { return }
             addFeed(symbol: "circle.circle.fill", text: "+\(delta) caps", tint: .yellow)
             renderer.sounds.playInterface(.coin, gain: -8)
+            requestSave()
 
         case let .itemReceived(player, item, count):
             guard player == me else { return }
@@ -1180,8 +1347,8 @@ final class GameSession {
 
 #if DEBUG
 /// Debug-only launch arguments for testing and screenshots:
-/// `-autofight`, `-demo` (geared level 8 character), `-spawn village|glade|maze|barkfall|fen`,
-/// `-panel bag|morel|shop|smith`, `-time 0...1` (0.5 = noon), `-level N`, `-class guardian|thornshot|sporecaster|dewkeeper`
+/// `-autofight`, `-demo` (geared level 8 character), `-spawn village|lake|glade|maze|barkfall|fen|meadow|...`,
+/// `-panel bag|morel|shop|smith|map`, `-time 0...1` (0.5 = noon), `-level N`, `-class guardian|thornshot|sporecaster|dewkeeper`
 /// (wielding the class weapon), `-weapon sword|axe|maul|bow|wand|staff` (plus a shield if one fits), `-owl` (summon the boss),
 /// `-resetSave`. Anything but `-resetSave` uses a throwaway save.
 private struct DebugLaunch {
@@ -1239,6 +1406,7 @@ private struct DebugLaunch {
         case "morel": .npc(.elderMorel)
         case "shop": .npc(.chanterelle)
         case "smith": .npc(.shiitake)
+        case "map": .map
         default: nil
         }
     }
@@ -1262,6 +1430,9 @@ private struct DebugLaunch {
         default: nil
         }
         if value(after: "-spawn") == "village" { return map.villageCenter + Vec2(0, 3) }
+        if value(after: "-spawn") == "lake", let lake = map.terrain.lakes.first {
+            return lake.discs[0].center + Vec2(lake.discs[0].radius + 4, 0)
+        }
         guard let kind, let area = map.mobSpawns.first(where: { $0.kind == kind }) else { return nil }
         return area.center + Vec2(-4, 4)
     }

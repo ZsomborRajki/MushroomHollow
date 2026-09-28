@@ -49,6 +49,9 @@ extension GameSimulation {
         case let .useItem(item):
             if let failure = useItem(item, player: &player) { fail(failure, player) }
 
+        case let .pickupDrop(id):
+            if let failure = collectDrop(id, for: &player) { fail(failure, player) }
+
         case let .equip(item, upgrade):
             if let failure = equip(Gear(item, upgrade: upgrade), player: &player) { fail(failure, player) }
 
@@ -164,7 +167,9 @@ extension GameSimulation {
     private func stepFlight(_ player: inout WorldEntity) {
         let dt = Self.tickDuration
         let vertical = player.isFlying ? player.climbIntent * Self.climbSpeed : -Self.glideDescentSpeed
-        player.position.y = max(0, min(Self.maxAltitude, player.position.y + vertical * dt))
+        // Over deep water the seed skims the surface instead of setting you down in it.
+        let floor = map.isOverDeepWater(player.position.xz) ? WorldMap.waterHoverAltitude : 0
+        player.position.y = max(floor, min(Self.maxAltitude, player.position.y + vertical * dt))
         player.combat.engaged = false
         player.combat.queuedSkill = nil
 

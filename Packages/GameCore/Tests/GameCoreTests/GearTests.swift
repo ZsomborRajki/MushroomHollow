@@ -272,26 +272,25 @@ import Testing
     @Test func classSetPiecesDropForTheKillersClass() throws {
         var sim = GameSimulation(seed: 9)
         let player = sim.spawnPlayer(profile: PlayerProfile(level: 16, playerClass: .thornshot))
-        var hero = try #require(sim.entities[player])
+        let hero = try #require(sim.entities[player])
         for _ in 0..<40 {
-            sim.rollLoot(for: .owl, into: &hero)
-            hero.player?.inventory = Inventory() // keep the bag from filling up
+            sim.rollLoot(for: .owl, ownedBy: hero, at: hero.position.xz)
         }
-        let received = sim.events.compactMap { event -> ItemID? in
-            if case let .itemReceived(_, item, _) = event, item.definition.rarity == .set { item } else { nil }
+        let received = sim.drops.compactMap { drop -> ItemID? in
+            if case let .item(item, _) = drop.kind, item.definition.rarity == .set, drop.owner == player { item } else { nil }
         }
         #expect(!received.isEmpty)
         #expect(received.allSatisfy { $0.definition.set == .briar })
 
         // A classless sprout never gets class set pieces.
         let sprout = sim.spawnPlayer(profile: PlayerProfile(level: 14))
-        var kid = try #require(sim.entities[sprout])
-        sim.events.removeAll()
+        let kid = try #require(sim.entities[sprout])
         for _ in 0..<40 {
-            sim.rollLoot(for: .owl, into: &kid)
-            kid.player?.inventory = Inventory()
+            sim.rollLoot(for: .owl, ownedBy: kid, at: kid.position.xz)
         }
-        #expect(!sim.events.contains { if case let .itemReceived(_, item, _) = $0 { item.definition.rarity == .set } else { false } })
+        #expect(!sim.drops.contains {
+            if case let .item(item, _) = $0.kind, $0.owner == sprout { item.definition.rarity == .set } else { false }
+        })
     }
 
     // MARK: - Saves

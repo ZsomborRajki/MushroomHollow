@@ -20,6 +20,8 @@ enum InputAction: Equatable {
     /// Tapped a specific entity in the world.
     case select(EntityID)
     case toggleInventory
+    /// Open or close the world map.
+    case toggleMap
     /// 0 = HP potion, 1 = MP potion.
     case quickItem(Int)
     case toggleFlight
@@ -51,6 +53,7 @@ struct ControllerGlyphs: Equatable {
     var previousTarget = "lb.rectangle.roundedbottom"
     var nextTarget = "rb.rectangle.roundedbottom"
     var menu = "line.3.horizontal.circle"
+    var map = "rectangle.on.rectangle.circle"
     var quickItems = ["dpad.left.filled", "dpad.right.filled"]
 }
 
@@ -93,6 +96,7 @@ final class InputHub {
         glyphs.previousTarget = pad.leftShoulder.sfSymbolsName ?? glyphs.previousTarget
         glyphs.nextTarget = pad.rightShoulder.sfSymbolsName ?? glyphs.nextTarget
         glyphs.menu = pad.buttonMenu.sfSymbolsName ?? glyphs.menu
+        glyphs.map = pad.buttonOptions?.sfSymbolsName ?? glyphs.map
         return glyphs
     }
 
@@ -165,6 +169,7 @@ final class InputHub {
             button("pad.left", pad.dpad.left.isPressed, .quickItem(0))
             button("pad.right", pad.dpad.right.isPressed, .quickItem(1))
             button("pad.menu", pad.buttonMenu.isPressed, .toggleInventory)
+            button("pad.options", pad.buttonOptions?.isPressed ?? false, .toggleMap)
         }
 
         if let keys = GCKeyboard.coalesced?.keyboardInput {
@@ -191,6 +196,7 @@ final class InputHub {
             button("key.6", down(.six), .quickItem(0))
             button("key.7", down(.seven), .quickItem(1))
             button("key.i", down(.keyI), .toggleInventory)
+            button("key.m", down(.keyM), .toggleMap)
             button("key.g", down(.keyG), .toggleFlight)
             if down(.keyR) { frame.climb += 1 }
             if down(.keyC) { frame.climb -= 1 }
@@ -211,6 +217,7 @@ final class InputHub {
             button("pad.lb", pad.leftShoulder.isPressed, .menu(.previousTab))
             button("pad.rb", pad.rightShoulder.isPressed, .menu(.nextTab))
             button("pad.menu", pad.buttonMenu.isPressed, .toggleInventory)
+            button("pad.options", pad.buttonOptions?.isPressed ?? false, .toggleMap)
         }
 
         if let keys = GCKeyboard.coalesced?.keyboardInput {
@@ -224,6 +231,7 @@ final class InputHub {
             button("key.q", down(.keyQ), .menu(.previousTab))
             button("key.e", down(.keyE), .menu(.nextTab))
             button("key.i", down(.keyI), .toggleInventory)
+            button("key.m", down(.keyM), .toggleMap)
         }
     }
 

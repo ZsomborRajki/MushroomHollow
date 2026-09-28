@@ -15,6 +15,9 @@ struct GameView: View {
                 session.attach(to: &content)
             }
             .ignoresSafeArea()
+            .onGeometryChange(for: CGSize.self, of: { $0.size }) { _, size in
+                session.setViewportSize(size)
+            }
             .gesture(cameraOrbit)
             .simultaneousGesture(cameraZoom)
             .simultaneousGesture(tapToTarget)
@@ -45,6 +48,9 @@ struct GameView: View {
                     .transition(.scale(scale: 0.95).combined(with: .opacity))
             case let .npc(npc):
                 NPCPanel(session: session, npc: npc)
+                    .transition(.scale(scale: 0.95).combined(with: .opacity))
+            case .map:
+                MapPanel(session: session)
                     .transition(.scale(scale: 0.95).combined(with: .opacity))
             case nil:
                 EmptyView()
@@ -145,6 +151,15 @@ private struct UtilityRow: View {
                 .accessibilityLabel(flying ? "Land" : "Fly")
                 .transition(.scale.combined(with: .opacity))
             }
+            RoundButton(symbol: session.isMuted ? "speaker.slash.fill" : "speaker.wave.2.fill", size: 48,
+                        tint: session.isMuted ? .gray : .white, glyph: nil) {
+                session.toggleMute()
+            }
+            .accessibilityLabel(session.isMuted ? "Unmute" : "Mute")
+            RoundButton(symbol: "map.fill", size: 48, glyph: session.glyphs?.map) {
+                session.perform(.toggleMap)
+            }
+            .accessibilityLabel("Map")
             RoundButton(symbol: "bag.fill", size: 48, glyph: session.glyphs?.menu) {
                 session.perform(.toggleInventory)
             }

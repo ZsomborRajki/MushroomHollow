@@ -149,7 +149,11 @@ import Testing
         }.first
         #expect(Set(defeated ?? []) == Set(heroes))
         for hero in heroes {
-            #expect((sim.playerStatus(hero)?.inventory.count(of: .owlFeather) ?? 0) >= 2)
+            let collected = sim.playerStatus(hero)?.inventory.count(of: .owlFeather) ?? 0
+            let onGround = sim.snapshot(for: hero).drops.reduce(0) { total, drop in
+                if case let .item(.owlFeather, count) = drop.kind { total + count } else { total }
+            }
+            #expect(collected + onGround >= 2)
         }
     }
 

@@ -49,13 +49,23 @@ public struct NPCPlacement: Codable, Sendable {
     public let yaw: Float
 }
 
-/// A named region, shown in the HUD.
+/// A named region, shown in the HUD and on the map.
 public struct Zone: Codable, Sendable {
     public let name: String
     public let center: Vec2
     public let radius: Float
-    /// Suggested level range, for the HUD.
+    /// Suggested level range, for the HUD. nil: nothing hunts here.
     public let levels: ClosedRange<Int>?
+    /// One line about the place, for the map and the arrival banner.
+    public let blurb: String?
+
+    public init(name: String, center: Vec2, radius: Float, levels: ClosedRange<Int>?, blurb: String? = nil) {
+        self.name = name
+        self.center = center
+        self.radius = radius
+        self.levels = levels
+        self.blurb = blurb
+    }
 }
 
 /// Where the world boss lives.
@@ -75,7 +85,7 @@ public struct MobSpawnArea: Codable, Sendable {
 }
 
 /// Static layout of the world. Both the simulation (collision, spawns) and the client
-/// (placeholder geometry) build from this, so they always agree.
+/// (geometry, the map screen) build from this, so they always agree.
 public struct WorldMap: Codable, Sendable {
     public let boundaryRadius: Float
     public let trunkRadius: Float
@@ -90,7 +100,15 @@ public struct WorldMap: Codable, Sendable {
     public let npcs: [NPCPlacement]
     public let zones: [Zone]
     public let bossArena: BossArena?
+    public let terrain: Terrain
+    public let trails: [Trail]
+    public let plants: [Plant]
+    public let boulders: [Boulder]
+    public let twigs: [Twig]
     public let colliders: [Collider]
+    /// Too deep to walk (flyers and gliders pass over).
+    public let waterColliders: [Collider]
+    private let grid: ColliderGrid
 
     public init(
         boundaryRadius: Float,
@@ -104,7 +122,12 @@ public struct WorldMap: Codable, Sendable {
         mobSpawns: [MobSpawnArea],
         npcs: [NPCPlacement],
         zones: [Zone],
-        bossArena: BossArena? = nil
+        bossArena: BossArena? = nil,
+        terrain: Terrain = Terrain(),
+        trails: [Trail] = [],
+        plants: [Plant] = [],
+        boulders: [Boulder] = [],
+        twigs: [Twig] = []
     ) {
         self.boundaryRadius = boundaryRadius
         self.trunkRadius = trunkRadius
@@ -118,7 +141,26 @@ public struct WorldMap: Codable, Sendable {
         self.npcs = npcs
         self.zones = zones
         self.bossArena = bossArena
+        self.terrain = terrain
+        self.trails = trails
+        self.plants = plants
+        self.boulders = boulders
+        self.twigs = twigs
 
+        var colliders = Self.structureColliders(trunkCollisionRadius: trunkCollisionRadius, roots: roots, houses: houses, npcs: npcs)
+        colliders += boulders.map(\.collider)
+        colliders += twigs.map(\.collider)
+        for plant in plants where plant.collisionRadius > 0 {
+            colliders.append(.circle(center: plant.position, radius: plant.collisionRadius))
+        }
+        self.colliders = colliders
+        waterColliders = terrain.lakes.flatMap(\.deepWater)
+        grid = ColliderGrid(colliders: colliders, extent: boundaryRadius + 20)
+    }
+
+    /// The trunk (always first), roots, houses, and NPCs.
+    private static func structureColliders(trunkCollisionRadius: Float, roots: [TreeRoot], houses: [MushroomHouse],
+                                           npcs: [NPCPlacement]) -> [Collider] {
         var colliders: [Collider] = [.circle(center: .zero, radius: trunkCollisionRadius)]
         for root in roots {
             for i in 0..<(root.points.count - 1) {
@@ -132,19 +174,29 @@ public struct WorldMap: Codable, Sendable {
         for npc in npcs {
             colliders.append(.circle(center: npc.position, radius: 0.45))
         }
-        self.colliders = colliders
+        return colliders
     }
 
-    /// Roots, houses, and NPCs are shorter than this; above it only the trunk is in the way.
+    /// Roots, rocks, stalks, houses, and NPCs are shorter than this; above it only the trunk is in the way.
     public static let obstacleHeight: Float = 6
+    /// Below this altitude deep water blocks you; a glider hovers at `waterHoverAltitude` over it.
+    public static let wadeAltitude: Float = 0.5
+    public static let waterHoverAltitude: Float = 1
 
     /// Pushes a circle out of every collider and back inside the world boundary.
-    /// Above `obstacleHeight` only the trunk (always the first collider) blocks.
+    /// Above `obstacleHeight` only the trunk (always the first collider) blocks; deep water only
+    /// blocks below `wadeAltitude`.
     public func resolve(_ point: Vec2, radius: Float, altitude: Float = 0) -> Vec2 {
         var p = point
-        let active = altitude > Self.obstacleHeight ? colliders.prefix(1) : colliders[...]
+        let nearby = altitude > Self.obstacleHeight ? [0] : grid.candidates(near: point, radius: radius + 1)
+        let water = altitude < Self.wadeAltitude ? waterColliders : []
         for _ in 0..<2 {
-            for collider in active {
+            for index in nearby {
+                if let push = colliders[index].separation(for: p, radius: radius) {
+                    p += push
+                }
+            }
+            for collider in water {
                 if let push = collider.separation(for: p, radius: radius) {
                     p += push
                 }
@@ -166,37 +218,57 @@ public struct WorldMap: Codable, Sendable {
         npcs.first { $0.id == npc }
     }
 
+    /// Whether something walking there would overlap an obstacle, deep water, or the edge of the world.
     public func isBlocked(_ point: Vec2, radius: Float) -> Bool {
         if point.length > boundaryRadius - radius { return true }
-        return colliders.contains { $0.separation(for: point, radius: radius) != nil }
+        if isOverDeepWater(point, radius: radius) { return true }
+        return grid.candidates(near: point, radius: radius).contains { colliders[$0].separation(for: point, radius: radius) != nil }
+    }
+
+    /// Too deep to wade here.
+    public func isOverDeepWater(_ point: Vec2, radius: Float = 0) -> Bool {
+        waterColliders.contains { $0.separation(for: point, radius: radius) != nil }
+    }
+
+    /// Ground height (meters) at a point.
+    public func groundHeight(at point: Vec2) -> Float {
+        terrain.height(at: point)
+    }
+
+    /// Where something standing, swimming, or hovering at altitude 0 sits: the ground, or a lake's surface.
+    public func surfaceHeight(at point: Vec2) -> Float {
+        terrain.surfaceHeight(at: point)
     }
 }
 
 // MARK: - The Mushroom Hollow layout
 
 extension WorldMap {
-    /// The forest floor under the giant tree. The trunk is at the origin; +Z is "south",
-    /// where Capstone Village sits between two roots.
+    /// The forest floor under the giant tree: a wide, shallow bowl. The trunk is at the origin;
+    /// +Z is "south", where Capstone Village sits between two roots. An inner ring of hunting
+    /// grounds lies between the roots, an outer ring on a trail at radius 190, and Dewdrop Lake
+    /// glitters between the two, southwest of the village.
     public static let mushroomHollow: WorldMap = {
         let trunkRadius: Float = 13
 
         // Root angles in degrees (0 = +Z). The gap around 0° holds the village.
         let rootAngles: [Float] = [-30, 30, 92, 148, 205, 262]
-        let distances: [Float] = [10, 18, 27, 36, 45, 53]
-        let radii: [Float] = [3.4, 2.6, 1.9, 1.3, 0.85, 0.5]
+        let distances: [Float] = [10, 19, 29, 40, 51, 62]
+        let radii: [Float] = [3.4, 2.7, 2.0, 1.4, 0.9, 0.55]
         let roots = rootAngles.enumerated().map { index, degrees in
             let angle = degrees * .pi / 180
             let outward = AngleMath.direction(forYaw: angle)
             let side = Vec2(outward.y, -outward.x)
             let points = distances.enumerated().map { i, d in
                 // A gentle, deterministic wiggle so roots don't look ruler-straight.
-                let wiggle = sin(Float(i) * 1.7 + Float(index) * 2.3) * Float(i) * 0.9
+                let wiggle = sin(Float(i) * 1.7 + Float(index) * 2.3) * Float(i) * 1.1
                 return outward * d + side * wiggle
             }
             return TreeRoot(points: points, radii: radii)
         }
 
         let villageCenter = Vec2(0, 36)
+        let villageRadius: Float = 17
         let houseSpots: [(Vec2, Float, Float)] = [
             (Vec2(-7.5, 28), 1.2, 3.2),
             (Vec2(7.5, 29), 1.0, 2.8),
@@ -214,86 +286,196 @@ extension WorldMap {
                 capRadius: stemRadius * 2.6
             )
         }
+        let npcs = [
+            NPCPlacement(id: .elderMorel, position: villageCenter + Vec2(-3.2, -2.5), yaw: 0.6),
+            NPCPlacement(id: .chanterelle, position: villageCenter + Vec2(3.6, -1.5), yaw: -0.9),
+            NPCPlacement(id: .shiitake, position: villageCenter + Vec2(0.5, -6), yaw: 0.1),
+        ]
 
-        func areaCenter(degrees: Float, distance: Float) -> Vec2 {
+        func at(_ degrees: Float, _ distance: Float) -> Vec2 {
             AngleMath.direction(forYaw: degrees * .pi / 180) * distance
         }
 
         // The inner ring, between the roots.
-        let glade = areaCenter(degrees: 60, distance: 44)
-        let maze = areaCenter(degrees: 120, distance: 46)
-        let barkfall = areaCenter(degrees: 176, distance: 47)
-        let fen = areaCenter(degrees: 233, distance: 48)
-        let bough = areaCenter(degrees: 296, distance: 52)
+        let innerDistance: Float = 74, innerRadius: Float = 28
+        let innerAngles: [Float] = [60, 120, 176, 233, 296]
+        let glade = at(60, innerDistance)
+        let maze = at(120, innerDistance)
+        let barkfall = at(176, innerDistance)
+        let fen = at(233, innerDistance)
+        let bough = at(296, innerDistance)
         let boughSide = Vec2(bough.y, -bough.x).normalizedOrZero
 
-        // The outer ring: open, flat forest floor past the root tips, clockwise from beside the village.
-        let outerDistance: Float = 108
-        let meadow = areaCenter(degrees: 28, distance: outerDistance)
-        let creek = areaCenter(degrees: 82, distance: outerDistance)
-        let thicket = areaCenter(degrees: 136, distance: outerDistance)
-        let ridge = areaCenter(degrees: 190, distance: outerDistance)
-        let briars = areaCenter(degrees: 244, distance: outerDistance)
-        let grove = areaCenter(degrees: 312, distance: outerDistance)
+        // The outer ring: open forest floor past the root tips, clockwise from beside the village.
+        let outerDistance: Float = 190, outerRadius: Float = 44
+        let meadow = at(28, outerDistance)
+        let creek = at(82, outerDistance)
+        let thicket = at(136, outerDistance)
+        let ridge = at(190, outerDistance)
+        let briars = at(244, outerDistance)
+        let grove = at(312, outerDistance)
 
         /// Two species share each hunting ground, each in its own half so they only mingle in the middle.
-        func pair(_ first: MobKind, _ second: MobKind, at center: Vec2, counts: (Int, Int) = (6, 6),
-                  radius: Float = 12, spread: Float = 6) -> [MobSpawnArea] {
+        /// The grounds are wide and the mobs few, so you usually meet them one at a time.
+        func pair(_ first: MobKind, _ second: MobKind, at center: Vec2, counts: (Int, Int),
+                  radius: Float, spread: Float) -> [MobSpawnArea] {
             let side = Vec2(center.y, -center.x).normalizedOrZero * spread
             return [MobSpawnArea(kind: first, center: center - side, radius: radius, count: counts.0),
                     MobSpawnArea(kind: second, center: center + side, radius: radius, count: counts.1)]
         }
+        func inner(_ first: MobKind, _ second: MobKind, at center: Vec2, counts: (Int, Int) = (6, 6)) -> [MobSpawnArea] {
+            pair(first, second, at: center, counts: counts, radius: 17, spread: 10)
+        }
+        func outer(_ first: MobKind, _ second: MobKind, at center: Vec2, counts: (Int, Int) = (7, 7)) -> [MobSpawnArea] {
+            pair(first, second, at: center, counts: counts, radius: 24, spread: 17)
+        }
 
-        let mobSpawns: [[MobSpawnArea]] = [
-            pair(.snail, .ladybug, at: glade, counts: (8, 5), radius: 10, spread: 4),
-            pair(.slug, .pillBug, at: maze, counts: (6, 5), radius: 10, spread: 4),
-            pair(.beetle, .acornling, at: barkfall, counts: (6, 5), radius: 10, spread: 4),
-            pair(.sporeBeast, .bogFrog, at: fen, counts: (5, 5), radius: 10, spread: 4),
-            pair(.fuzzbee, .puffweed, at: meadow),
-            pair(.mossTurtle, .emberNewt, at: creek),
-            pair(.weaverSpider, .duskMoth, at: thicket),
-            pair(.hedgehog, .coneKnight, at: ridge),
-            pair(.mantis, .thornrose, at: briars),
-            pair(.grumblecap, .stagBeetle, at: grove, counts: (5, 5)),
-        ]
+        // Zones run clockwise around the trunk, getting tougher as you go.
+        let mobSpawns: [MobSpawnArea] = [
+            inner(.snail, .ladybug, at: glade, counts: (8, 6)),
+            inner(.slug, .pillBug, at: maze),
+            inner(.beetle, .acornling, at: barkfall),
+            inner(.sporeBeast, .bogFrog, at: fen),
+            outer(.fuzzbee, .puffweed, at: meadow),
+            outer(.mossTurtle, .emberNewt, at: creek),
+            outer(.weaverSpider, .duskMoth, at: thicket),
+            outer(.hedgehog, .coneKnight, at: ridge),
+            outer(.mantis, .thornrose, at: briars),
+            outer(.grumblecap, .stagBeetle, at: grove, counts: (6, 6)),
+        ].flatMap { $0 }
 
         // The fallen bough: a thick branch lying along the far edge of the owl's arena.
         let fallenBranch = TreeRoot(
             points: [0, 1, 2, 3].map { i in bough + bough.normalizedOrZero * 13 + boughSide * (Float(i) * 6 - 9) },
             radii: [1.8, 1.6, 1.4, 1.0])
+        let arena = BossArena(kind: .owl, center: bough, radius: 14, perch: bough + bough.normalizedOrZero * 4)
+
+        // Dewdrop Lake: a lobed pond southwest of the village, beside the road south.
+        let lake = Lake(name: "Dewdrop Lake", discs: [
+            Disc(center: Vec2(-44, 134), radius: 24),
+            Disc(center: Vec2(-63, 118), radius: 16),
+            Disc(center: Vec2(-27, 151), radius: 14),
+            Disc(center: Vec2(-57, 152), radius: 15),
+        ], waterLevel: -0.3, depth: 3)
+        let lakeBounds = lake.bounds
+
+        // Mossback Creek: a dry creek bed across the hunting ground.
+        let creekAlong = Vec2(creek.y, -creek.x).normalizedOrZero
+        let creekBed = (-6...6).map { i in
+            Hill(center: creek + creekAlong * Float(i) * 7 + Vec2(creekAlong.y, -creekAlong.x) * sin(Float(i) * 0.8) * 3,
+                 radius: 7, height: -1.1)
+        }
+        var hills: [Hill] = [
+            Hill(center: ridge, radius: 58, height: 9),                 // Pinecone Rise
+            Hill(center: at(176, 222), radius: 30, height: 5),
+            Hill(center: grove, radius: 42, height: 3.5),               // Stagshade Grove's mound
+            Hill(center: thicket, radius: 46, height: -2.4),            // Silkshade Thicket's hollow
+            Hill(center: fen, radius: 30, height: -1.4),                // Spore Fen's bog
+            Hill(center: meadow, radius: 46, height: 1.6),
+            Hill(center: at(244, 178), radius: 16, height: 3),          // Briar knolls
+            Hill(center: at(252, 206), radius: 14, height: 3.5),
+            Hill(center: at(236, 202), radius: 12, height: 2.5),
+            Hill(center: at(176, 118), radius: 20, height: 5),          // Barkfall bluff
+            Hill(center: at(92, 112), radius: 18, height: 4),
+            Hill(center: at(18, 150), radius: 20, height: 3.5),
+        ] + creekBed
+        // Wooded hills between the rings.
+        for (i, degrees) in [55, 109, 163, 217, 278].enumerated() {
+            hills.append(Hill(center: at(Float(degrees), 145), radius: 22 + Float(i % 3) * 4, height: 4 + Float(i % 2) * 2.5))
+        }
+        // Lumps along the rim, so the skyline isn't a perfect bowl.
+        for i in 0..<12 {
+            let degrees = Float(i) * 30 + 11
+            hills.append(Hill(center: at(degrees, 275 + Float(i % 3) * 12), radius: 28 + Float(i % 4) * 5, height: 7 + Float((i * 7) % 5) * 2))
+        }
+        let terrain = Terrain(
+            hills: hills,
+            flats: [
+                FlatArea(center: .zero, radius: 22, fade: 18, height: 0),
+                FlatArea(center: villageCenter, radius: villageRadius + 2, fade: 12, height: 0),
+                FlatArea(center: arena.center, radius: arena.radius + 1, fade: 10, height: 0.4),
+            ],
+            lakes: [lake],
+            rimStart: 238, rimEnd: 300, rimHeight: 20)
+
+        // Dirt roads: south from the village past the lake to the outer ring, a loop just past
+        // the root tips with a spur into each inner hunting ground, and the outer ring itself.
+        var trails = [
+            Trail(points: [Vec2(0, 50), Vec2(2, 80), Vec2(-1, 110), Vec2(3, 150), Vec2(0, outerDistance)], width: 3.2),
+            Trail(points: [Vec2(1, 128), Vec2(-8, 131), Vec2(-15, 134)], width: 2.2),
+            Trail.ring(radius: 100, width: 2.8),
+            Trail.ring(radius: outerDistance, segments: 128, width: 3.4),
+        ]
+        for degrees in innerAngles {
+            trails.append(Trail(points: [at(degrees, 100), at(degrees, 90), at(degrees + 2, innerDistance)], width: 2.4))
+        }
+
+        let zones = [
+            Zone(name: "Capstone Village", center: villageCenter, radius: villageRadius, levels: nil,
+                 blurb: "A safe place to rest"),
+            Zone(name: "Dewleaf Glade", center: glade, radius: innerRadius, levels: 1...4,
+                 blurb: "Daisies, clover, and sleepy snails"),
+            Zone(name: "Root Maze", center: maze, radius: innerRadius, levels: 3...7,
+                 blurb: "Ferns and bluebells between the roots"),
+            Zone(name: "Barkfall Hollow", center: barkfall, radius: innerRadius, levels: 7...11,
+                 blurb: "Bark litter and fallen twigs"),
+            Zone(name: "Spore Fen", center: fen, radius: innerRadius, levels: 10...15,
+                 blurb: "A glowing purple bog"),
+            Zone(name: "The Great Bough", center: bough, radius: innerRadius, levels: 15...20,
+                 blurb: "The Hollow Owl hunts here at night"),
+            Zone(name: "Dewdrop Lake", center: lakeBounds.center, radius: lakeBounds.radius + 6, levels: nil,
+                 blurb: "Lily pads and cattails. Glide across on a seed"),
+            Zone(name: "Buttercup Meadow", center: meadow, radius: outerRadius, levels: 14...18,
+                 blurb: "Sunny, buzzing, full of dandelions"),
+            Zone(name: "Mossback Creek", center: creek, radius: outerRadius, levels: 17...21,
+                 blurb: "A dry creek bed and smouldering stones"),
+            Zone(name: "Silkshade Thicket", center: thicket, radius: outerRadius, levels: 20...24,
+                 blurb: "A dim hollow strung with webs"),
+            Zone(name: "Pinecone Rise", center: ridge, radius: outerRadius, levels: 23...27,
+                 blurb: "A needle-strewn hill of pine saplings"),
+            Zone(name: "Briar Tangle", center: briars, radius: outerRadius, levels: 26...30,
+                 blurb: "Brambles, roses, and orchids with claws"),
+            Zone(name: "Stagshade Grove", center: grove, radius: outerRadius, levels: 28...30,
+                 blurb: "Glowcaps and rotting logs"),
+            Zone(name: "The Forest Floor", center: .zero, radius: 400, levels: nil,
+                 blurb: "Wild forest between the hunting grounds"),
+        ]
+
+        let layout = SceneryLayout(
+            boundaryRadius: 300,
+            blockers: structureColliders(trunkCollisionRadius: trunkRadius + 2, roots: roots + [fallenBranch],
+                                         houses: houses, npcs: npcs),
+            keepClear: [Disc(center: villageCenter, radius: villageRadius + 3), Disc(center: arena.center, radius: arena.radius + 2),
+                        Disc(center: Vec2(0, 50), radius: 6)],
+            trails: trails, terrain: terrain, spawns: mobSpawns,
+            biomes: [
+                (Disc(center: glade, radius: innerRadius), .glade), (Disc(center: maze, radius: innerRadius), .maze),
+                (Disc(center: barkfall, radius: innerRadius), .barkfall), (Disc(center: fen, radius: innerRadius), .fen),
+                (Disc(center: bough, radius: innerRadius), .bough),
+                (Disc(center: meadow, radius: outerRadius), .meadow), (Disc(center: creek, radius: outerRadius), .creek),
+                (Disc(center: thicket, radius: outerRadius), .thicket), (Disc(center: ridge, radius: outerRadius), .rise),
+                (Disc(center: briars, radius: outerRadius), .briars), (Disc(center: grove, radius: outerRadius), .grove),
+            ])
+        let scenery = layout.grow(seed: 0x5EED_F0E5)
 
         return WorldMap(
-            boundaryRadius: 140,
+            boundaryRadius: 300,
             trunkRadius: trunkRadius,
             trunkCollisionRadius: trunkRadius + 2,
             roots: roots + [fallenBranch],
             houses: houses,
             villageCenter: villageCenter,
-            villageRadius: 17,
+            villageRadius: villageRadius,
             playerSpawn: Vec2(0, 37),
-            // Zones run clockwise around the trunk, getting tougher as you go.
-            mobSpawns: mobSpawns.flatMap { $0 },
-            npcs: [
-                NPCPlacement(id: .elderMorel, position: villageCenter + Vec2(-3.2, -2.5), yaw: 0.6),
-                NPCPlacement(id: .chanterelle, position: villageCenter + Vec2(3.6, -1.5), yaw: -0.9),
-                NPCPlacement(id: .shiitake, position: villageCenter + Vec2(0.5, -6), yaw: 0.1),
-            ],
-            zones: [
-                Zone(name: "Capstone Village", center: villageCenter, radius: 17, levels: nil),
-                Zone(name: "Dewleaf Glade", center: glade, radius: 17, levels: 1...4),
-                Zone(name: "Root Maze", center: maze, radius: 17, levels: 3...7),
-                Zone(name: "Barkfall Hollow", center: barkfall, radius: 17, levels: 7...11),
-                Zone(name: "Spore Fen", center: fen, radius: 17, levels: 10...15),
-                Zone(name: "The Great Bough", center: bough, radius: 17, levels: 15...20),
-                Zone(name: "Buttercup Meadow", center: meadow, radius: 22, levels: 14...18),
-                Zone(name: "Mossback Creek", center: creek, radius: 22, levels: 17...21),
-                Zone(name: "Silkshade Thicket", center: thicket, radius: 22, levels: 20...24),
-                Zone(name: "Pinecone Rise", center: ridge, radius: 22, levels: 23...27),
-                Zone(name: "Briar Tangle", center: briars, radius: 22, levels: 26...30),
-                Zone(name: "Stagshade Grove", center: grove, radius: 22, levels: 28...30),
-                Zone(name: "The Forest Floor", center: .zero, radius: 200, levels: nil),
-            ],
-            bossArena: BossArena(kind: .owl, center: bough, radius: 14, perch: bough + bough.normalizedOrZero * 4)
+            mobSpawns: mobSpawns,
+            npcs: npcs,
+            zones: zones,
+            bossArena: arena,
+            terrain: terrain,
+            trails: trails,
+            plants: scenery.plants,
+            boulders: scenery.boulders,
+            twigs: scenery.twigs
         )
     }()
 }

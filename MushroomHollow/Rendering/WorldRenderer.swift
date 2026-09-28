@@ -7,6 +7,11 @@ struct SimEntityComponent: Component {
     let id: EntityID
 }
 
+/// Links a tappable world reward to its authoritative drop ID.
+struct GroundDropComponent: Component {
+    let id: UInt32
+}
+
 enum QuestMarker: Equatable {
     case available
     case turnIn
@@ -25,6 +30,7 @@ final class WorldRenderer {
     private let actorsRoot = Entity()
     private let hazardsRoot = Entity()
     private let telegraphsRoot = Entity()
+    private let dropsRoot = Entity()
     private var telegraphs: [String: (outline: ModelEntity, fill: ModelEntity)] = [:]
     private let sky: ModelEntity
     private let spores = Entity()
@@ -34,9 +40,16 @@ final class WorldRenderer {
     private var actors: [EntityID: ActorView] = [:]
     private var npcActors: [NPCID: ActorView] = [:]
     private var hazards: [UInt32: Entity] = [:]
+    private var drops: [UInt32: Entity] = [:]
     private var markers: [NPCID: (kind: QuestMarker?, entity: Entity)] = [:]
     private var time: Double = 0
     private var timeOfDay: Float = 0.4
+    private let map: WorldMap
+    private let culler: SceneryCuller
+    private var viewFrustum: CameraFrustum?
+    var viewportAspect: Float = 16 / 9
+    /// The painted forest floor, for the map screen.
+    let groundPainting: UIImage
 
     /// Per-entity presentation state. Animation timestamps are in renderer time.
     private final class ActorView {
@@ -60,16 +73,22 @@ final class WorldRenderer {
         }
     }
 
-    /// Beyond this, mobs aren't drawn (the world is 280 m across; a critter here is ~3 px tall).
+    /// Beyond this, mobs aren't drawn (the world is 600 m across; a critter here is ~3 px tall).
     private static let mobDrawDistance: Float = 120
 
     init(map: WorldMap) {
         SimEntityComponent.registerComponent()
+        GroundDropComponent.registerComponent()
 
-        root.addChild(WorldBuilder.build(map))
+        self.map = map
+        let world = WorldBuilder.build(map)
+        culler = world.culler
+        groundPainting = world.groundPainting
+        root.addChild(world.root)
         root.addChild(actorsRoot)
         root.addChild(hazardsRoot)
         root.addChild(telegraphsRoot)
+        root.addChild(dropsRoot)
         root.addChild(effects.root)
 
         sky = ModelEntity(mesh: Meshes.sphere, materials: [Materials.sky])
@@ -113,17 +132,30 @@ final class WorldRenderer {
             seen.insert(current.id)
             let from = previous[current.id] ?? current
             let position = simd_mix(from.position, current.position, SIMD3(repeating: alpha))
-            // Mobs across the world are a few pixels tall: don't build, draw, or animate them.
+            // Tiny mobs beyond the haze are cheaper to skip before any terrain or view work.
             let isDistant = current.kind.isMob && current.kind != .mob(.owl)
                 && simd_distance_squared(position, camera.position) > Self.mobDrawDistance * Self.mobDrawDistance
-            guard let view = actors[current.id] ?? (isDistant ? nil : makeActor(current)) else { continue }
-            if view.entity.isEnabled == isDistant { view.entity.isEnabled = !isDistant }
-            if isDistant { continue }
+            if isDistant {
+                actors[current.id]?.entity.isEnabled = false
+                continue
+            }
+            let ground = standingHeight(at: position.xz)
+            let worldPosition = position + SIMD3<Float>(0, ground, 0)
+            let visible = current.kind == .player || viewFrustum?.contains(
+                center: worldPosition + SIMD3<Float>(0, current.kind.headHeight * 0.5, 0),
+                radius: Self.actorRadius(current.kind)) != false
+            guard let view = actors[current.id] ?? (visible ? makeActor(current) : nil) else { continue }
+            let shouldDraw = visible
+            if view.entity.isEnabled != shouldDraw { view.entity.isEnabled = shouldDraw }
             let yaw = AngleMath.lerp(from.yaw, current.yaw, alpha)
-            view.entity.transform = Transform(
-                scale: .one,
-                rotation: simd_quatf(angle: yaw, axis: [0, 1, 0]),
-                translation: position)
+            // The simulation's y is height above the ground: stand on the terrain (or wade in the shallows).
+            var rotation = simd_quatf(angle: yaw, axis: [0, 1, 0])
+            if case let .mob(kind) = current.kind, !kind.hovers, kind != .owl, current.isAlive, position.y < 0.05 {
+                // Critters hug the slope they're walking on.
+                let normal = map.terrain.normal(at: position.xz, step: max(0.4, kind.radius))
+                rotation = simd_quatf(from: [0, 1, 0], to: normal) * rotation
+            }
+            view.entity.transform = Transform(scale: .one, rotation: rotation, translation: worldPosition)
 
             if !current.isAlive, view.deathStart == nil {
                 view.deathStart = time
@@ -136,7 +168,7 @@ final class WorldRenderer {
                 updateGear(view, current.gear, playerClass: current.playerClass)
             }
             if current.kind == .player { updateGlider(view, airborne: current.isFlying || current.position.y > 0.05) }
-            animate(view, snapshot: current, time: time)
+            if shouldDraw { animate(view, snapshot: current, time: time) }
         }
 
         for (id, view) in actors where !seen.contains(id) {
@@ -146,6 +178,7 @@ final class WorldRenderer {
 
         renderHazards(host.currentSnapshot.hazards)
         renderTelegraphs(host.currentSnapshot.telegraphs)
+        renderDrops(host.currentSnapshot.drops)
         animateMarkers(time: time)
         updateSelection(host.currentSnapshot.viewer, time: time)
         effects.update(time: time)
@@ -154,8 +187,39 @@ final class WorldRenderer {
     func placeCamera(at position: SIMD3<Float>, lookingAt target: SIMD3<Float>) {
         camera.look(at: target, from: position, relativeTo: nil)
         sky.position = position
-        spores.position = [target.x, 0, target.z]
+        spores.position = [target.x, target.y - 1.3, target.z]
         atmosphere.update(timeOfDay: timeOfDay, focus: target)
+        let frustum = CameraFrustum(position: position, target: target,
+                                    verticalFOV: Float(camera.camera.fieldOfViewInDegrees), aspect: viewportAspect,
+                                    near: Float(camera.camera.near), far: Float(camera.camera.far))
+        viewFrustum = frustum
+        culler.update(frustum: frustum)
+        for view in actors.values {
+            let center = view.entity.position + SIMD3<Float>(0, view.kind.headHeight * 0.5, 0)
+            let visible = view.kind == .player || frustum.contains(center: center, radius: Self.actorRadius(view.kind))
+            let distant = view.kind.isMob && view.kind != .mob(.owl)
+                && simd_distance_squared(view.entity.position, position) > Self.mobDrawDistance * Self.mobDrawDistance
+            let shouldDraw = visible && !distant
+            if view.entity.isEnabled != shouldDraw { view.entity.isEnabled = shouldDraw }
+        }
+        if selectionRing.isEnabled && !frustum.contains(center: selectionRing.position, radius: 1) {
+            selectionRing.isEnabled = false
+        }
+    }
+
+    private static func actorRadius(_ kind: EntityKind) -> Float {
+        switch kind {
+        case .player: 2.2
+        case let .mob(mob): max(mob.radius * 2, mob.headHeight)
+        case .npc: 2.5
+        }
+    }
+
+    /// What something standing at `point` stands on: the ground, or knee-deep in a lake's shallows.
+    func standingHeight(at point: SIMD2<Float>) -> Float {
+        let ground = map.groundHeight(at: point)
+        guard let lake = map.terrain.lake(at: point) else { return ground }
+        return max(ground, lake.waterLevel - 0.3)
     }
 
     /// The scene entity showing a simulation entity (for spatial sounds).
@@ -323,7 +387,8 @@ final class WorldRenderer {
     }
 
     private func updateSelection(_ viewer: PlayerStatus?, time: Double) {
-        guard let targetID = viewer?.target, let target = actors[targetID], target.deathStart == nil else {
+        guard let targetID = viewer?.target, let target = actors[targetID], target.deathStart == nil,
+              target.entity.isEnabled else {
             selectionRing.isEnabled = false
             return
         }
@@ -464,11 +529,22 @@ final class WorldRenderer {
             case .cone: key = "cone-\(telegraph.source.rawValue)"
             }
             seen.insert(key)
+            let radius: Float = switch telegraph.shape {
+            case let .circle(radius): radius
+            case let .cone(_, radius, _): radius
+            }
+            let ground = standingHeight(at: telegraph.position)
+            let center = SIMD3<Float>(telegraph.position.x, ground, telegraph.position.y)
+            let visible = viewFrustum?.contains(center: center, radius: radius * 1.5) != false
+            if !visible, telegraphs[key] == nil { continue }
             let parts = telegraphs[key] ?? makeTelegraph(key, shape: telegraph.shape)
+            parts.outline.isEnabled = visible
+            parts.fill.isEnabled = visible
+            if !visible { continue }
             let pulse = 0.55 + 0.25 * sin(Float(time) * 14)
             switch telegraph.shape {
             case let .circle(radius):
-                let position = SIMD3<Float>(telegraph.position.x, 0.05, telegraph.position.y)
+                let position = SIMD3<Float>(telegraph.position.x, standingHeight(at: telegraph.position) + 0.05, telegraph.position.y)
                 parts.outline.position = position
                 parts.outline.scale = SIMD3(repeating: radius)
                 parts.fill.position = position + [0, 0.01, 0]
@@ -476,7 +552,7 @@ final class WorldRenderer {
             case let .cone(direction, radius, _):
                 let transform = Transform(scale: SIMD3(repeating: radius),
                                           rotation: simd_quatf(angle: AngleMath.yaw(facing: direction), axis: [0, 1, 0]),
-                                          translation: [telegraph.position.x, 0.05, telegraph.position.y])
+                                          translation: [telegraph.position.x, standingHeight(at: telegraph.position) + 0.05, telegraph.position.y])
                 parts.outline.transform = transform
                 var fill = transform
                 fill.scale = SIMD3(repeating: max(0.05, radius * telegraph.progress))
@@ -514,7 +590,13 @@ final class WorldRenderer {
         var seen = Set<UInt32>()
         for hazard in snapshots {
             seen.insert(hazard.id)
+            let ground = standingHeight(at: hazard.position)
+            let center = SIMD3<Float>(hazard.position.x, ground + 0.4, hazard.position.y)
+            let visible = viewFrustum?.contains(center: center, radius: hazard.radius * 1.5) != false
+            if !visible, hazards[hazard.id] == nil { continue }
             let entity = hazards[hazard.id] ?? makeHazard(hazard)
+            entity.isEnabled = visible
+            if !visible { continue }
             // Fade in quickly, fade out over the last third of its life.
             let opacity = min(1, hazard.remaining * 3)
             entity.components.set(OpacityComponent(opacity: opacity))
@@ -530,7 +612,7 @@ final class WorldRenderer {
 
     private func makeHazard(_ hazard: HazardSnapshot) -> Entity {
         let entity = Entity()
-        entity.position = [hazard.position.x, 0, hazard.position.y]
+        entity.position = [hazard.position.x, standingHeight(at: hazard.position), hazard.position.y]
         let color = hazard.kind.color
         if hazard.kind.isCloud {
             let cloud = ModelEntity(mesh: Meshes.sphere, materials: [Self.translucent(color, opacity: 0.3)])
@@ -562,6 +644,40 @@ final class WorldRenderer {
         entity.components.set(DynamicLightShadowComponent(castsShadow: false))
         hazardsRoot.addChild(entity)
         hazards[hazard.id] = entity
+        return entity
+    }
+
+    // MARK: - Ground rewards
+
+    private func renderDrops(_ snapshots: [GroundDropSnapshot]) {
+        var seen = Set<UInt32>()
+        for drop in snapshots {
+            seen.insert(drop.id)
+            let position = SIMD3<Float>(drop.position.x, standingHeight(at: drop.position), drop.position.y)
+            let visible = simd_distance_squared(position, camera.position) < 120 * 120
+                && viewFrustum?.contains(center: position + [0, 0.25, 0], radius: 0.7) != false
+            if !visible, drops[drop.id] == nil { continue }
+            let entity = drops[drop.id] ?? makeDrop(drop, at: position)
+            entity.isEnabled = visible
+        }
+        for (id, entity) in drops where !seen.contains(id) {
+            entity.removeFromParent()
+            drops[id] = nil
+        }
+    }
+
+    private func makeDrop(_ drop: GroundDropSnapshot, at position: SIMD3<Float>) -> Entity {
+        let entity = Entity()
+        entity.name = "Ground drop \(drop.id)"
+        entity.position = position
+        entity.components.set(GroundDropComponent(id: drop.id))
+        entity.components.set(CollisionComponent(shapes: [
+            .generateSphere(radius: 0.42).offsetBy(translation: [0, 0.25, 0]),
+        ]))
+        entity.components.set(InputTargetComponent())
+        entity.addChild(DropModels.make(drop.kind))
+        dropsRoot.addChild(entity)
+        drops[drop.id] = entity
         return entity
     }
 

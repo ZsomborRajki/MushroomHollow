@@ -37,6 +37,11 @@ extension MobKind {
     /// Standard gear drops from mobs of its level (as in early Flyff). Set pieces are very rare:
     /// the Dewleaf set is spread over the zones from level 1 to 15, one piece per zone, and the
     /// Thistledown set over the first four zones of the outer ring.
+    /// Whether this mob can drop `item` (for pointing players at the right hunting ground).
+    public func canDrop(_ item: ItemID) -> Bool {
+        drops.contains { $0.item == item }
+    }
+
     var drops: [DropEntry] {
         switch self {
         case .snail:
@@ -230,33 +235,81 @@ extension MobKind {
     }
 }
 
-extension GameSimulation {
-    /// Rolls a mob's loot straight into the killer's bag (auto-loot: controller friendly).
-    mutating func rollLoot(for kind: MobKind, into player: inout WorldEntity) {
-        guard var data = player.player else { return }
-        let caps = random.int(in: kind.capsDrop)
-        data.caps += caps
-        events.append(.capsChanged(player: player.id, delta: caps))
+struct GroundDrop: Sendable {
+    let id: UInt32
+    let owner: EntityID
+    let position: Vec2
+    var kind: GroundDropKind
+    let availableAtTick: UInt64
+    let expiresAtTick: UInt64
+}
 
-        for drop in kind.drops where random.unit() < drop.chance {
-            give(drop.item, count: random.int(in: drop.count), to: player.id, &data)
+extension GameSimulation {
+    static let dropPickupRadius: Float = 1.5
+    static let dropPickupDelayTicks = ticks(0.75)
+    static let dropLifetimeTicks = ticks(180)
+
+    /// Rolls rewards at the defeated mob's position. Boss participants receive separate personal drops.
+    mutating func rollLoot(for kind: MobKind, ownedBy player: WorldEntity, at origin: Vec2) {
+        guard let data = player.player else { return }
+        spawnDrop(.caps(random.int(in: kind.capsDrop)), for: player.id, at: origin)
+        for entry in kind.drops where random.unit() < entry.chance {
+            spawnDrop(.item(entry.item, count: random.int(in: entry.count)), for: player.id, at: origin)
         }
         if let job = data.playerClass, let set = ItemSet.forClass(job), kind.classSetChance > 0,
            random.unit() < kind.classSetChance {
             let pieces = set.definition.pieces
-            give(pieces[random.int(in: 0...(pieces.count - 1))], count: 1, to: player.id, &data)
+            spawnDrop(.item(pieces[random.int(in: 0...(pieces.count - 1))], count: 1), for: player.id, at: origin)
+        }
+    }
+
+    private mutating func spawnDrop(_ kind: GroundDropKind, for owner: EntityID, at origin: Vec2) {
+        nextDropID += 1
+        let offset = random.point(inDiscAt: .zero, radius: 1.0)
+        let position = map.resolve(origin + offset, radius: 0.15)
+        drops.append(GroundDrop(id: nextDropID, owner: owner, position: position, kind: kind,
+                                availableAtTick: tick + UInt64(Self.dropPickupDelayTicks),
+                                expiresAtTick: tick + UInt64(Self.dropLifetimeTicks)))
+    }
+
+    /// Returns a failure only for explicit pickup attempts; automatic collection ignores full bags.
+    mutating func collectDrop(_ id: UInt32, for player: inout WorldEntity) -> ActionFailure? {
+        guard let index = drops.firstIndex(where: { $0.id == id }), drops[index].owner == player.id else { return .notAvailable }
+        guard player.stats.isAlive, player.position.y <= Self.reachableAltitude,
+              player.position.xz.distance(to: drops[index].position) <= Self.dropPickupRadius
+        else { return .tooFar }
+        guard var data = player.player else { return .notAvailable }
+        switch drops[index].kind {
+        case let .caps(amount):
+            data.caps += amount
+            events.append(.capsChanged(player: player.id, delta: amount))
+            drops.remove(at: index)
+        case let .item(item, count):
+            let leftover = data.inventory.add(item, count: count)
+            guard leftover < count else { return .inventoryFull }
+            events.append(.itemReceived(player: player.id, item: item, count: count - leftover))
+            if leftover == 0 {
+                drops.remove(at: index)
+            } else {
+                drops[index].kind = .item(item, count: leftover)
+            }
         }
         player.player = data
         reportCollectProgress(for: &player)
+        return nil
     }
 
-    private mutating func give(_ item: ItemID, count: Int, to player: EntityID, _ data: inout PlayerData) {
-        let leftover = data.inventory.add(item, count: count)
-        if leftover < count {
-            events.append(.itemReceived(player: player, item: item, count: count - leftover))
+    mutating func stepDrops() {
+        drops.removeAll { tick >= $0.expiresAtTick }
+        let nearby = drops.compactMap { drop -> UInt32? in
+            guard tick >= drop.availableAtTick, let owner = entities[drop.owner], owner.stats.isAlive,
+                  owner.position.y <= Self.reachableAltitude,
+                  owner.position.xz.distance(to: drop.position) <= Self.dropPickupRadius else { return nil }
+            return drop.id
         }
-        if leftover > 0 {
-            events.append(.actionFailed(player: player, reason: .inventoryFull))
+        for id in nearby {
+            guard let drop = drops.first(where: { $0.id == id }), var owner = entities[drop.owner] else { continue }
+            if collectDrop(id, for: &owner) == nil { entities[owner.id] = owner }
         }
     }
 }

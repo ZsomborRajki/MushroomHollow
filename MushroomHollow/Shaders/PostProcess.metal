@@ -30,6 +30,8 @@ kernel void colorGradeFog(texture2d<half, access::read> source [[texture(0)]],
 {
     uint2 size = uint2(target.get_width(), target.get_height());
     if (gid.x >= size.x || gid.y >= size.y) return;
+    uint2 srcSize = uint2(source.get_width(), source.get_height());
+    if (gid.x >= srcSize.x || gid.y >= srcSize.y) return;
     half4 color = source.read(gid);
 
     // Depth may be a different resolution than color.
@@ -53,6 +55,8 @@ kernel void colorGrade(texture2d<half, access::read> source [[texture(0)]],
 {
     uint2 size = uint2(target.get_width(), target.get_height());
     if (gid.x >= size.x || gid.y >= size.y) return;
+    uint2 srcSize = uint2(source.get_width(), source.get_height());
+    if (gid.x >= srcSize.x || gid.y >= srcSize.y) return;
     half4 color = source.read(gid);
     float2 uv = (float2(gid) + 0.5) / float2(size);
     target.write(half4(grade(color.rgb, uv, u), color.a), gid);
