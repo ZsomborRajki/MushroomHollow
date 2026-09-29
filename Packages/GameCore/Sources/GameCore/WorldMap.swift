@@ -124,6 +124,8 @@ public struct WorldMap: Codable, Sendable {
     /// The town's plaza fountain.
     public let fountain: Disc?
     public let signposts: [Signpost]
+    /// Named places exploration quests send you to.
+    public let landmarks: [Landmark]
     public let colliders: [Collider]
     /// Too deep to walk (flyers and gliders pass over).
     public let waterColliders: [Collider]
@@ -148,7 +150,8 @@ public struct WorldMap: Codable, Sendable {
         boulders: [Boulder] = [],
         twigs: [Twig] = [],
         fountain: Disc? = nil,
-        signposts: [Signpost] = []
+        signposts: [Signpost] = [],
+        landmarks: [Landmark] = []
     ) {
         self.boundaryRadius = boundaryRadius
         self.trunkRadius = trunkRadius
@@ -169,6 +172,7 @@ public struct WorldMap: Codable, Sendable {
         self.twigs = twigs
         self.fountain = fountain
         self.signposts = signposts
+        self.landmarks = landmarks
 
         var colliders = Self.structureColliders(trunkCollisionRadius: trunkCollisionRadius, roots: roots, houses: houses, npcs: npcs,
                                                 fountain: fountain, signposts: signposts)
@@ -278,9 +282,11 @@ extension WorldMap {
     /// The forest floor under the giant tree: a wide, shallow bowl. The trunk is at the origin;
     /// +Z is "south", where Capstone Town sits between two roots. An inner ring of hunting
     /// grounds lies between the roots, an outer ring on a trail at radius 190, and Dewdrop Lake
-    /// glitters between the two, southwest of the village.
+    /// glitters between the two, southwest of the village. Past the outer ring, before the rim
+    /// climbs away, lies the wild fringe: no hunting grounds, just places worth the walk.
     public static let mushroomHollow: WorldMap = {
         let trunkRadius: Float = 13
+        let boundary: Float = 340
 
         // Root angles in degrees (0 = +Z). The gap around 0° holds the village.
         let rootAngles: [Float] = [-30, 30, 92, 148, 205, 262]
@@ -401,6 +407,59 @@ extension WorldMap {
         ], waterLevel: -0.3, depth: 3)
         let lakeBounds = lake.bounds
 
+        // The wild fringe, between the outer ring and the rim: one place to find every 50-odd degrees.
+        let fringeDistance: Float = 250
+        let rimview = at(0, 262)
+        let dell = at(55, fringeDistance)
+        let peak = at(100, 252)
+        let tarnLake = Lake(name: "Moonwell Tarn", discs: [
+            Disc(center: at(163, fringeDistance), radius: 15),
+            Disc(center: at(157, 262), radius: 9),
+            Disc(center: at(170, 243), radius: 8),
+        ], waterLevel: 0.2, depth: 3.5)
+        let log = at(222, 254)
+        let stones = at(283, fringeDistance)
+
+        // Hollowlog Crossing: a fallen limb as long as a street, lying along the fringe.
+        let logAlong = Vec2(log.y, -log.x).normalizedOrZero
+        let logOutward = log.normalizedOrZero
+        let logSpots: [Float] = [-20, -7, 6, 19]
+        let hollowLog = TreeRoot(
+            points: logSpots.map { t -> Vec2 in
+                let bow: Float = sin(t * 0.09) * 2
+                return log + logAlong * t + logOutward * bow
+            },
+            radii: [2.5, 2.3, 2.0, 1.5])
+        // Mossring Stones: nine standing stones round a mossy clearing, a gap facing the path in
+        // and the ninth fallen over across the ring from it.
+        let towardTrunk = AngleMath.yaw(facing: -stones)
+        let standingStones = (0..<9).map { i -> Boulder in
+            let angle: Float = towardTrunk + (Float(i) + 0.5) / 9 * 2 * .pi
+            let spot = stones + AngleMath.direction(forYaw: angle) * 10.5
+            let fallen = i == 4
+            let height: Float = fallen ? 2.2 : 4.4 + Float(i % 3) * 0.5
+            return Boulder(position: spot, radius: fallen ? 1.2 : 1.55, height: height,
+                           yaw: angle, variant: UInt32(i) &* 2_654_435_761)
+        }
+
+        let landmarks = [
+            Landmark(id: .cattailShore, position: Vec2(-17, 132), radius: 7),
+            Landmark(id: .sunnyHillock, position: at(18, 150)),
+            Landmark(id: .cloverKnoll, position: at(92, 112)),
+            Landmark(id: .oldKnot, position: at(176, 23), radius: 7),
+            Landmark(id: .barkfallBluff, position: at(176, 118)),
+            Landmark(id: .foxgloveHill, position: at(217, 145)),
+            Landmark(id: .owlwatchHill, position: at(278, 145)),
+            Landmark(id: .fallenBough, position: at(296, 82), radius: 7),
+            Landmark(id: .rimviewBluff, position: at(0, 252)),
+            Landmark(id: .glimmerDell, position: dell, radius: 9),
+            Landmark(id: .windwhistlePeak, position: peak),
+            // On the tarn's inner shore, where the path comes down.
+            Landmark(id: .moonwellTarn, position: at(163, fringeDistance - 18), radius: 7),
+            Landmark(id: .hollowlogCrossing, position: log - log.normalizedOrZero * 6),
+            Landmark(id: .mossringStones, position: stones, radius: 9),
+        ]
+
         // Mossback Creek: a dry creek bed across the hunting ground.
         let creekAlong = Vec2(creek.y, -creek.x).normalizedOrZero
         let creekBed = (-6...6).map { i in
@@ -420,15 +479,23 @@ extension WorldMap {
             Hill(center: at(176, 118), radius: 20, height: 5),          // Barkfall bluff
             Hill(center: at(92, 112), radius: 18, height: 4),
             Hill(center: at(18, 150), radius: 20, height: 3.5),
+            // The wild fringe.
+            Hill(center: rimview, radius: 24, height: 7),               // Rimview Bluff
+            Hill(center: dell, radius: 22, height: -2.6),               // Glimmer Dell
+            Hill(center: peak, radius: 34, height: 15),                 // Windwhistle Peak
         ] + creekBed
         // Wooded hills between the rings.
         for (i, degrees) in [55, 109, 163, 217, 278].enumerated() {
             hills.append(Hill(center: at(Float(degrees), 145), radius: 22 + Float(i % 3) * 4, height: 4 + Float(i % 2) * 2.5))
         }
+        // Low rises between the fringe's places, so the walk out there isn't flat.
+        for (i, degrees) in [30, 130, 200, 250, 322].enumerated() {
+            hills.append(Hill(center: at(Float(degrees), 244), radius: 16 + Float(i % 2) * 5, height: 3 + Float(i % 3)))
+        }
         // Lumps along the rim, so the skyline isn't a perfect bowl.
         for i in 0..<12 {
             let degrees = Float(i) * 30 + 11
-            hills.append(Hill(center: at(degrees, 275 + Float(i % 3) * 12), radius: 28 + Float(i % 4) * 5, height: 7 + Float((i * 7) % 5) * 2))
+            hills.append(Hill(center: at(degrees, 312 + Float(i % 3) * 12), radius: 28 + Float(i % 4) * 5, height: 7 + Float((i * 7) % 5) * 2))
         }
         let terrain = Terrain(
             hills: hills,
@@ -436,9 +503,10 @@ extension WorldMap {
                 FlatArea(center: .zero, radius: 22, fade: 18, height: 0),
                 FlatArea(center: villageCenter, radius: villageRadius + 2, fade: 14, height: 0),
                 FlatArea(center: arena.center, radius: arena.radius + 1, fade: 10, height: 0.4),
+                FlatArea(center: stones, radius: 13, fade: 10, height: 0.5),
             ],
-            lakes: [lake],
-            rimStart: 238, rimEnd: 300, rimHeight: 20)
+            lakes: [lake, tarnLake],
+            rimStart: 272, rimEnd: boundary - 2, rimHeight: 20)
 
         // Dirt roads: south from the village past the lake to the outer ring, a loop just past
         // the root tips with a spur into each inner hunting ground, and the outer ring itself.
@@ -457,7 +525,23 @@ extension WorldMap {
         for degrees in innerAngles {
             trails.append(Trail(points: [at(degrees, 100), at(degrees, 90), at(degrees + 2, innerDistance)], width: 2.4))
         }
+        // Footpaths from the outer ring out to each place on the fringe (the south road carries on to Rimview Bluff).
+        trails.append(Trail(points: [Vec2(0, outerDistance), at(-1.5, 215), at(0.5, 234), at(0, 247)], width: 2.8))
+        // Each ends short of its place: below the peak, on the tarn's shore, before the log and the stone ring.
+        let spurs: [(place: Vec2, shortBy: Float)] = [(dell, 10), (peak, 10), (tarnLake.discs[0].center, 20), (log, 9), (stones, 12)]
+        for (place, shortBy) in spurs {
+            let degrees: Float = AngleMath.yaw(facing: place) * 180 / .pi
+            let end = place.length - shortBy
+            trails.append(Trail(points: [at(degrees, outerDistance), at(degrees + 1.5, (outerDistance + end) / 2), at(degrees, end)],
+                                width: 2))
+        }
 
+        // Each place on the fringe is its own little zone, so arriving gets a banner.
+        let fringeZones: [(LandmarkID, Vec2, Float)] = [
+            (.rimviewBluff, rimview, 22), (.glimmerDell, dell, 22), (.windwhistlePeak, peak, 28),
+            (.moonwellTarn, tarnLake.bounds.center, tarnLake.bounds.radius + 6), (.hollowlogCrossing, log, 24),
+            (.mossringStones, stones, 20),
+        ]
         let zones = [
             Zone(name: "Capstone Town", center: villageCenter, radius: villageRadius, levels: nil,
                  blurb: "Shops, the request board, and a fountain to rest by"),
@@ -487,7 +571,9 @@ extension WorldMap {
                  blurb: "Glowcaps and rotting logs"),
             Zone(name: "The Forest Floor", center: .zero, radius: 400, levels: nil,
                  blurb: "Wild forest between the hunting grounds"),
-        ]
+        ] + fringeZones.map { place, center, radius in
+            Zone(name: place.name, center: center, radius: radius, levels: nil, blurb: place.blurb)
+        }
 
         // A signpost at the edge of every field, on the side facing the trunk road, and one at the town gate.
         var signposts = mobSpawns.map { area in
@@ -498,13 +584,25 @@ extension WorldMap {
                             levels: level...(level + 1))
         }
         signposts.append(Signpost(position: Vec2(-3.2, 64), yaw: 0, title: "Capstone Town", levels: nil))
+        // Every landmark has a sign, so you know you've arrived (the Old Knot's faces away from the trunk).
+        // It stands beside the way in, not on the path.
+        for place in landmarks {
+            let facing = place.id == .oldKnot ? place.position : -place.position
+            let offset = place.id == .windwhistlePeak || place.id == .mossringStones || place.id == .glimmerDell
+                ? Vec2.zero : Vec2(facing.y, -facing.x).normalizedOrZero * 2.5
+            signposts.append(Signpost(position: place.position + offset, yaw: AngleMath.yaw(facing: facing),
+                                      title: place.id.name, levels: nil))
+        }
 
+        let fallenLimbs = [fallenBranch, hollowLog]
         let layout = SceneryLayout(
-            boundaryRadius: 300,
-            blockers: structureColliders(trunkCollisionRadius: trunkRadius + 2, roots: roots + [fallenBranch],
-                                         houses: houses, npcs: npcs, fountain: fountain, signposts: signposts),
+            boundaryRadius: boundary,
+            blockers: structureColliders(trunkCollisionRadius: trunkRadius + 2, roots: roots + fallenLimbs,
+                                         houses: houses, npcs: npcs, fountain: fountain, signposts: signposts)
+                + standingStones.map(\.collider),
             keepClear: [Disc(center: villageCenter, radius: villageRadius + 3), Disc(center: arena.center, radius: arena.radius + 2),
-                        Disc(center: Vec2(0, 64), radius: 6)],
+                        Disc(center: Vec2(0, 64), radius: 6), Disc(center: stones, radius: 13)]
+                + landmarks.map { Disc(center: $0.position, radius: 4) },
             trails: trails, terrain: terrain, spawns: mobSpawns,
             biomes: [
                 (Disc(center: glade, radius: innerRadius), .glade), (Disc(center: maze, radius: innerRadius), .maze),
@@ -513,14 +611,16 @@ extension WorldMap {
                 (Disc(center: meadow, radius: outerRadius), .meadow), (Disc(center: creek, radius: outerRadius), .creek),
                 (Disc(center: thicket, radius: outerRadius), .thicket), (Disc(center: ridge, radius: outerRadius), .rise),
                 (Disc(center: briars, radius: outerRadius), .briars), (Disc(center: grove, radius: outerRadius), .grove),
+                (Disc(center: dell, radius: 24), .dell), (Disc(center: peak, radius: 30), .peak),
+                (Disc(center: stones, radius: 26), .stones),
             ])
         let scenery = layout.grow(seed: 0x5EED_F0E5)
 
         return WorldMap(
-            boundaryRadius: 300,
+            boundaryRadius: boundary,
             trunkRadius: trunkRadius,
             trunkCollisionRadius: trunkRadius + 2,
-            roots: roots + [fallenBranch],
+            roots: roots + fallenLimbs,
             houses: houses,
             villageCenter: villageCenter,
             villageRadius: villageRadius,
@@ -532,10 +632,11 @@ extension WorldMap {
             terrain: terrain,
             trails: trails,
             plants: scenery.plants,
-            boulders: scenery.boulders,
+            boulders: scenery.boulders + standingStones,
             twigs: scenery.twigs,
             fountain: fountain,
-            signposts: signposts
+            signposts: signposts,
+            landmarks: landmarks
         )
     }()
 }

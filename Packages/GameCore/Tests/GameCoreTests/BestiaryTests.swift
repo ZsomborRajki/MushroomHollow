@@ -72,6 +72,8 @@ import Testing
             case let .collect(item, _):
                 let droppers = MobKind.allCases.filter { kind in kind.drops.contains { $0.item == item } }
                 #expect(droppers.contains { spawned.contains($0) }, "\(quest) collects something that drops")
+            case let .explore(places):
+                #expect(places.allSatisfy { WorldMap.mushroomHollow.landmark($0) != nil }, "\(quest) visits places on the map")
             }
         }
         #expect(QuestObjective.defeat(.mantis, count: 8).summary == "Defeat 8 Orchid Mantises")

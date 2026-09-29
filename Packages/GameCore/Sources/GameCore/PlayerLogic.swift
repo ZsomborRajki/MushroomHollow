@@ -117,6 +117,7 @@ extension GameSimulation {
         }
         tickTimers(&player)
         regenerate(&player)
+        recordVisits(&player)
 
         // Being shoved: no control until it wears off.
         if player.knockbackTicks > 0 {
@@ -410,6 +411,7 @@ extension GameSimulation {
             let progress: Int = switch definition.objective {
             case .defeat: kills
             case let .collect(item, _): data.inventory.count(of: item)
+            case .explore: kills.nonzeroBitCount // a bitmask of the places visited
             }
             let goal = definition.objective.goal
             return progress >= goal ? .readyToTurnIn : .active(progress: progress, goal: goal)

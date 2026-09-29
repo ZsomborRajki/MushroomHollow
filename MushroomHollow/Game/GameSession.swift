@@ -761,7 +761,7 @@ final class GameSession {
 
     // MARK: - Map
 
-    static let mapFullSpan: Float = 306
+    static let mapFullSpan: Float = 346
     static let mapSpanRange: ClosedRange<Float> = 30...mapFullSpan
     /// Zoom stops for buttons: the whole hollow, a region, the area around you.
     private static let mapZoomStops: [Float] = [mapFullSpan, 125, 55]
@@ -833,14 +833,21 @@ final class GameSession {
         return markers
     }
 
-    /// Hunting grounds your active quests send you to.
+    /// Hunting grounds (or places) your active quests send you to.
     var questTargets: [QuestTarget] {
         (hud.player?.quests ?? []).flatMap { status -> [QuestTarget] in
             guard case .active = status.state else { return [] }
             let quest = status.id.definition
+            if case .explore = quest.objective {
+                // Only the places still to visit.
+                return status.unvisited.compactMap { host.map.landmark($0) }.map { place in
+                    QuestTarget(id: "\(quest.id)-\(place.id)", title: quest.title, center: place.position, radius: place.radius)
+                }
+            }
             let kinds: [MobKind] = switch quest.objective {
             case let .defeat(kind, _): [kind]
             case let .collect(item, _): MobKind.allCases.filter { $0.canDrop(item) }
+            case .explore: []
             }
             if kinds.contains(.owl), let arena = host.map.bossArena {
                 return [QuestTarget(id: "\(quest.id)-owl", title: quest.title, center: arena.center, radius: arena.radius)]
@@ -869,10 +876,12 @@ final class GameSession {
 
     var npcRows: [PanelRow] {
         guard case let .npc(npc) = panel, let player = hud.player else { return [] }
+        // Shopkeepers and the smith list their open quests above their wares, as in Flyff's NPC windows.
+        let openQuests = questRows(npc, player, openOnly: true)
         if npc.definition.isShopkeeper {
             switch shopTab {
             case .buy:
-                return npc.definition.shopStock.map { item in
+                return openQuests + npc.definition.shopStock.map { item in
                     let definition = item.definition
                     let price = definition.buyPrice ?? 0
                     return PanelRow(
@@ -896,8 +905,16 @@ final class GameSession {
                 }
             }
         }
-        if npc.definition.upgradesGear { return upgradeRows(player) }
-        // Things to do first, finished business last.
+        if npc.definition.upgradesGear { return openQuests + upgradeRows(player) }
+        let rows = questRows(npc, player)
+        if npc.definition.makesPetFood { return rows + petFoodRows(player) }
+        if npc.definition.buysMaterials { return rows + materialRows(player) }
+        return rows
+    }
+
+    /// The class choice (at the elder) and every quest this NPC gives: things to do first, finished business last.
+    /// `openOnly`: just the ones to accept, work on, or hand in.
+    private func questRows(_ npc: NPCID, _ player: PlayerStatus, openOnly: Bool = false) -> [PanelRow] {
         func priority(_ state: QuestState) -> Int {
             switch state {
             case .readyToTurnIn: 0
@@ -929,10 +946,17 @@ final class GameSession {
                     isEnabled: false, action: .none)]
             }
         }
-        let rows: [PanelRow] = classRows + quests.compactMap { status -> PanelRow? in
+        return classRows + quests.compactMap { status -> PanelRow? in
             guard status.id.definition.giver == npc else { return nil }
+            if openOnly {
+                switch status.state {
+                case .available, .active, .readyToTurnIn: break
+                case .hidden, .tooLowLevel, .completed: return nil
+                }
+            }
             let quest = status.id.definition
-            let detail = "\(quest.story)\n\n\(quest.objective.summary)\nReward: \(quest.rewardLine)"
+            let left = status.unvisited.isEmpty ? "" : "\nStill to visit: \(status.unvisited.map(\.name).joined(separator: ", "))"
+            let detail = "\(quest.story)\n\n\(quest.objective.summary)\(left)\nReward: \(quest.rewardLine)"
             func row(_ symbol: String, _ tint: Color, _ trailing: String, _ enabled: Bool, _ action: PanelRow.Action) -> PanelRow {
                 PanelRow(id: quest.id.rawValue, symbol: symbol, tint: tint, title: quest.title,
                          subtitle: quest.isRepeatable ? "\(quest.objective.summary) · pays \(quest.rewardCaps) caps" : quest.objective.summary,
@@ -948,9 +972,6 @@ final class GameSession {
             case .completed: return row("checkmark.circle", .secondary, "Done", false, .none)
             }
         }
-        if npc.definition.makesPetFood { return rows + petFoodRows(player) }
-        if npc.definition.buysMaterials { return rows + materialRows(player) }
-        return rows
     }
 
     /// At the naturalist: every mob material in the bag, a whole pile at a time.
@@ -1277,6 +1298,15 @@ final class GameSession {
             guard player == me else { return }
             addFeed(symbol: progress >= goal ? "checkmark.seal.fill" : "scroll.fill",
                     text: "\(quest.definition.title) \(progress)/\(goal)", tint: progress >= goal ? .green : .orange)
+            // An exploration quest ticked off a place: name the one you're standing on.
+            if case let .explore(places) = quest.definition.objective,
+               let here = host.currentSnapshot.entity(me)?.position.xz,
+               let place = places.compactMap({ host.map.landmark($0) }).first(where: { $0.position.distance(to: here) <= $0.radius }) {
+                showBanner(Banner(title: place.id.name, subtitle: progress >= goal
+                                  ? "Every place found · return to \(quest.definition.giver.definition.name)" : place.id.blurb))
+                renderer.sounds.playInterface(.questDone, gain: -6)
+                requestSave()
+            }
 
         case let .questCompleted(player, quest):
             renderer.playCheer(player, time: elapsed)
@@ -1568,7 +1598,7 @@ final class GameSession {
             if zone?.name != self.zone?.name {
                 // Announce arrivals, MMO style (not on the first frame).
                 if self.zone != nil, let zone {
-                    let subtitle = zone.levels.map { "Level \($0.lowerBound)–\($0.upperBound)" } ?? "A safe place to rest"
+                    let subtitle = zone.levels.map { "Level \($0.lowerBound)–\($0.upperBound)" } ?? zone.blurb ?? "A safe place to rest"
                     showBanner(Banner(title: zone.name, subtitle: subtitle))
                 }
                 self.zone = zone
@@ -1716,6 +1746,10 @@ private struct DebugLaunch {
         default: nil
         }
         if value(after: "-spawn") == "village" { return map.playerSpawn }
+        // `-spawn cattailShore`, `-spawn windwhistlePeak`...: beside a landmark.
+        if let place = value(after: "-spawn").flatMap(LandmarkID.init(rawValue:)), let landmark = map.landmark(place) {
+            return landmark.position + (-landmark.position).normalizedOrZero * (landmark.radius + 3)
+        }
         if value(after: "-spawn") == "lake", let lake = map.terrain.lakes.first {
             return lake.discs[0].center + Vec2(lake.discs[0].radius + 4, 0)
         }

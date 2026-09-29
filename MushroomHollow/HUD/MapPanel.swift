@@ -68,6 +68,7 @@ private struct MapSidebar: View {
                 Text("Legend").font(.caption.weight(.bold)).foregroundStyle(.secondary)
                 Label("You", systemImage: "location.north.fill").foregroundStyle(.white)
                 Label("Quest area", systemImage: "circle.dashed").foregroundStyle(.yellow)
+                Label("Landmark", systemImage: "flag.fill").foregroundStyle(MapStyle.landmark)
                 if session.mapSpan < MapCanvas.labelAllSpan {
                     Label("Attacks on sight", systemImage: "circle.fill").foregroundStyle(.red)
                     Label("Only fights back", systemImage: "circle.fill").foregroundStyle(.orange)
@@ -96,6 +97,9 @@ private struct MapSidebar: View {
 }
 
 enum MapStyle {
+    /// Landmark flags and names.
+    static let landmark = Color(red: 1, green: 0.85, blue: 0.6)
+
     /// Red: too strong for you yet. Yellow: your level. Grey-green: you've outgrown it.
     static func levelColor(_ levels: ClosedRange<Int>, player: Int) -> Color {
         if player < levels.lowerBound - 2 { return Color(red: 1, green: 0.4, blue: 0.35) }
@@ -212,7 +216,7 @@ private struct MapCanvas: View {
                 let at = point(zone.center)
                 guard at.x > -60, at.x < size.width + 60, at.y > -30, at.y < size.height + 30 else { continue }
                 let isLake = map.terrain.lakes.contains { $0.name == zone.name }
-                let isVillage = zone.levels == nil && !isLake
+                let isVillage = zone.center == map.villageCenter
                 // The whole hollow is too small on a phone to name the inner ring: badges there.
                 if !zoomed, zone.center.length < 120 {
                     if let levels = zone.levels {
@@ -239,6 +243,18 @@ private struct MapCanvas: View {
                         .font(.system(size: titleSize - 1, weight: .semibold, design: .rounded))
                         .foregroundStyle(MapStyle.levelColor(levels, player: level)),
                                at: CGPoint(x: labelAt.x, y: labelAt.y + titleSize + 2))
+                }
+            }
+            // Landmarks: a little flag, and zoomed in, the name of any that isn't already a named place.
+            for place in map.landmarks {
+                let at = point(place.position)
+                guard at.x > -60, at.x < size.width + 60, at.y > -30, at.y < size.height + 30 else { continue }
+                let wanted = session.questTargets.contains { $0.center == place.position }
+                layer.draw(Text(Image(systemName: "flag.fill")).font(.system(size: wanted ? 13 : 10))
+                    .foregroundStyle(wanted ? Color.yellow : MapStyle.landmark), at: at)
+                if halfSpan < Self.fieldSpan, !map.zones.contains(where: { $0.name == place.id.name }) {
+                    layer.draw(Text(place.id.name).font(.system(size: 10, weight: .semibold, design: .serif)).italic()
+                        .foregroundStyle(MapStyle.landmark), at: CGPoint(x: at.x, y: at.y + 13))
                 }
             }
             if halfSpan < Self.fieldSpan {

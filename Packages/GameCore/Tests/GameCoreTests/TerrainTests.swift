@@ -21,7 +21,7 @@ import Testing
             stride(from: -200, through: 200, by: 10).map { z in map.groundHeight(at: Vec2(Float(x), Float(z))) }
         }
         #expect((heights.max() ?? 0) - (heights.min() ?? 0) > 8, "real hills and hollows")
-        #expect(map.groundHeight(at: Vec2(0, 299)) > 15, "the hollow's rim rises at the edge")
+        #expect(map.groundHeight(at: Vec2(0, map.boundaryRadius - 1)) > 15, "the hollow's rim rises at the edge")
     }
 
     @Test func pineconeRiseIsAHill() throws {

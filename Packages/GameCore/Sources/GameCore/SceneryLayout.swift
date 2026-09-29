@@ -7,6 +7,8 @@ struct SceneryLayout {
         case wild, rim, lakeshore
         case glade, maze, barkfall, fen, bough
         case meadow, creek, thicket, rise, briars, grove
+        // The wild fringe's places
+        case dell, peak, stones
     }
 
     let boundaryRadius: Float
@@ -37,9 +39,14 @@ struct SceneryLayout {
     // MARK: - Where things may go
 
     func biome(at p: Vec2) -> Biome {
-        if let lake = terrain.lakes.first, lake.signedDistance(to: p) < 12 { return .lakeshore }
-        if p.length > 236 { return .rim }
+        if lakeDistance(p) < 12 { return .lakeshore }
+        if p.length > terrain.rimStart - 2 { return .rim }
         return biomes.first { $0.0.center.distance(to: p) <= $0.0.radius }?.1 ?? .wild
+    }
+
+    /// Roughly meters to the nearest shoreline (negative in the water).
+    private func lakeDistance(_ p: Vec2) -> Float {
+        terrain.lakes.map { $0.signedDistance(to: p) }.min() ?? .greatestFiniteMagnitude
     }
 
     private func distanceToTrail(_ p: Vec2) -> Float {
@@ -52,7 +59,7 @@ struct SceneryLayout {
         guard r < boundaryRadius + 18, r > 17 + radius else { return false }
         if keepClear.contains(where: { $0.center.distance(to: p) < $0.radius + radius }) { return false }
         if distanceToTrail(p) < radius + trailMargin { return false }
-        if !allowWater, let lake = terrain.lakes.first, lake.signedDistance(to: p) < radius + 0.5 { return false }
+        if !allowWater, lakeDistance(p) < radius + 0.5 { return false }
         return !blockers.contains { $0.separation(for: p, radius: radius + 0.4) != nil }
     }
 
@@ -68,12 +75,13 @@ struct SceneryLayout {
         forEachCell(cell, &random) { p, random in
             let chance: Float = switch biome(at: p) {
             case .rim: 0.75
-            case .rise, .creek: 0.6
+            case .rise, .creek, .peak: 0.6
             case .briars, .bough: 0.45
             case .wild: 0.32
             case .lakeshore: 0.35
             case .maze, .barkfall, .grove, .thicket: 0.25
-            case .glade, .meadow, .fen: 0.12
+            case .glade, .meadow, .fen, .dell: 0.12
+            case .stones: 0.05
             }
             guard random.unit() < chance * (1 - spawnDepth(p) * 0.8) else { return }
             // A cluster: one big stone and a few smaller ones leaning on it.
@@ -98,9 +106,9 @@ struct SceneryLayout {
         forEachCell(20, &random) { p, random in
             let chance: Float = switch biome(at: p) {
             case .barkfall: 0.8
-            case .rise, .grove: 0.55
-            case .wild, .maze, .bough, .thicket: 0.32
-            case .rim, .lakeshore, .briars, .creek: 0.2
+            case .rise, .grove, .stones: 0.55
+            case .wild, .maze, .bough, .thicket, .dell: 0.32
+            case .rim, .lakeshore, .briars, .creek, .peak: 0.2
             case .glade, .meadow, .fen: 0.12
             }
             guard random.unit() < chance * (1 - spawnDepth(p) * 0.7) else { return }
@@ -135,14 +143,17 @@ struct SceneryLayout {
         case .rise: (0.17, [(.sapling, 5), (.fern, 1), (.bush, 1), (.foxglove, 1)])
         case .briars: (0.2, [(.bramble, 4), (.poppy, 2), (.foxglove, 1), (.tulip, 1)])
         case .grove: (0.2, [(.toadstool, 4), (.glowcap, 3), (.fern, 3)])
+        case .dell: (0.26, [(.glowcap, 7), (.toadstool, 2), (.fern, 2), (.bluebell, 1)])
+        case .peak: (0.1, [(.clover, 4), (.buttercup, 2), (.sapling, 1), (.dandelionClock, 1)])
+        case .stones: (0.14, [(.clover, 5), (.fern, 2), (.foxglove, 1), (.bluebell, 1)])
         }
     }
 
     private func placePlants(_ result: inout Result, _ placed: inout Footprints, _ random: inout SeededRandom) {
         forEachCell(7, &random) { p, random in
-            // Lily pads float on the lake, cattails stand in the shallows.
-            if let lake = terrain.lakes.first {
-                let d = lake.signedDistance(to: p)
+            // Lily pads float on the lakes, cattails stand in the shallows.
+            let d = lakeDistance(p)
+            if d < Lake.shoreWidth {
                 if d < -Lake.wadeDistance - 1 {
                     guard random.unit() < 0.3, placed.isFree(p, radius: 1.2, gap: 0.3) else { return }
                     add(.lilyPad, at: p, scale: random.float(in: 0.7...1.4), &result, &placed, &random)

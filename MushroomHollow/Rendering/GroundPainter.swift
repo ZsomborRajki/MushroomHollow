@@ -10,7 +10,8 @@ import UIKit
 /// Image space: x runs with world x, y with world z (north, -Z, at the top), covering ±`extent`.
 @MainActor
 enum GroundPainter {
-    static let extent: Float = 336
+    /// The world's edge (340) plus a margin of rim.
+    static let extent: Float = 376
 
     static func paint(_ map: WorldMap, size: Int) -> UIImage {
         let format = UIGraphicsImageRendererFormat()
@@ -98,6 +99,10 @@ enum GroundPainter {
             case "Pinecone Rise": tint = UIColor(red: 0.5, green: 0.33, blue: 0.18, alpha: 0.55)
             case "Briar Tangle": tint = UIColor(red: 0.42, green: 0.26, blue: 0.2, alpha: 0.55)
             case "Stagshade Grove": tint = UIColor(red: 0.14, green: 0.18, blue: 0.11, alpha: 0.6)
+            case "Glimmer Dell": tint = UIColor(red: 0.2, green: 0.2, blue: 0.26, alpha: 0.6)
+            case "Windwhistle Peak": tint = UIColor(red: 0.46, green: 0.46, blue: 0.3, alpha: 0.45)
+            case "Mossring Stones": tint = UIColor(red: 0.3, green: 0.4, blue: 0.24, alpha: 0.5)
+            case "Hollowlog Crossing": tint = UIColor(red: 0.36, green: 0.28, blue: 0.19, alpha: 0.45)
             default: tint = nil
             }
             guard let tint else { continue }

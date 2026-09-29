@@ -124,7 +124,11 @@ public struct GameSimulation: Sendable {
             xpToNextLevel: Progression.xpToNextLevel(e.stats.level),
             target: e.combat.target, isEngaged: e.combat.engaged, skills: skills,
             caps: data.caps, inventory: data.inventory, equipment: data.equipment,
-            quests: QuestID.allCases.map { QuestStatus(id: $0, state: questState($0, for: e)) },
+            quests: QuestID.allCases.map { quest in
+                let state = questState(quest, for: e)
+                guard case .active = state else { return QuestStatus(id: quest, state: state) }
+                return QuestStatus(id: quest, state: state, unvisited: unvisitedPlaces(quest, for: e))
+            },
             itemCooldown: Float(data.itemCooldown) * Self.tickDuration,
             isSlowed: isSlowed(e),
             playerClass: data.playerClass,

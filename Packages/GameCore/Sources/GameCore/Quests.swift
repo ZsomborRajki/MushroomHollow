@@ -35,9 +35,17 @@ public enum QuestID: String, Codable, Sendable, CaseIterable {
     case huntFuzzbee, huntPuffweed, huntMossTurtle, huntEmberNewt, huntWeaverSpider, huntDuskMoth
     case huntHedgehog, huntConeKnight, huntMantis, huntThornrose, huntGrumblecap, huntStagBeetle
 
+    // Exploration (Flyff's patrol quests): no story to follow, just places to go and see.
+    case layOfTheLand, puppyPatrol, highGround, owlsEyeView, beyondTheRing, windAndWater, stonesAndTimber, theGrandTour
+
+    /// Side quests that send you somewhere rather than after something.
+    public static let explorations: [QuestID] = [
+        .layOfTheLand, .puppyPatrol, .highGround, .owlsEyeView, .beyondTheRing, .windAndWater, .stonesAndTimber, .theGrandTour,
+    ]
+
     /// In order: each one opens once the one before it is done.
     public static let mainStory: [QuestID] = allCases.filter {
-        $0 != .hollowOwl && $0 != .aNoseForTrouble && $0.huntTarget == nil
+        $0 != .hollowOwl && $0 != .aNoseForTrouble && $0.huntTarget == nil && !explorations.contains($0)
     }
 
     /// The species a hunting request is after.
@@ -88,17 +96,25 @@ public enum QuestID: String, Codable, Sendable, CaseIterable {
 public enum QuestObjective: Sendable, Equatable {
     case defeat(MobKind, count: Int)
     case collect(ItemID, count: Int)
+    /// Set foot on each of these places, in any order.
+    case explore([LandmarkID])
 
     public var goal: Int {
         switch self {
         case let .defeat(_, count), let .collect(_, count): count
+        case let .explore(places): places.count
         }
     }
 
     public var summary: String {
         switch self {
-        case let .defeat(kind, count): "Defeat \(count) \(count == 1 ? kind.displayName : kind.pluralName)"
-        case let .collect(item, count): "Collect \(count) \(item.definition.name)"
+        case let .defeat(kind, count): return "Defeat \(count) \(count == 1 ? kind.displayName : kind.pluralName)"
+        case let .collect(item, count): return "Collect \(count) \(item.definition.name)"
+        case let .explore(places):
+            let names = places.map(\.name)
+            let list = names.count <= 2 ? names.joined(separator: " and ")
+                : names.dropLast().joined(separator: ", ") + ", and " + names.last!
+            return "Visit \(list)"
         }
     }
 }
@@ -136,6 +152,14 @@ public enum QuestState: Codable, Sendable, Equatable {
 public struct QuestStatus: Codable, Sendable, Equatable, Identifiable {
     public let id: QuestID
     public let state: QuestState
+    /// Exploration quests in progress: the places still to visit (for the map).
+    public var unvisited: [LandmarkID] = []
+
+    init(id: QuestID, state: QuestState, unvisited: [LandmarkID] = []) {
+        self.id = id
+        self.state = state
+        self.unvisited = unvisited
+    }
 }
 
 extension QuestID {
@@ -292,6 +316,50 @@ extension QuestID {
              .huntHedgehog, .huntConeKnight, .huntMantis, .huntThornrose, .huntGrumblecap, .huntStagBeetle:
             request(huntTarget!)
 
+        // MARK: Exploration
+        case .layOfTheLand:
+            explore("Lay of the Land", giver: .maitake, level: 2,
+                    "Posted on the board: new faces should know their way around. Walk down to Cattail Shore on Dewdrop Lake, then up Sunny Hillock east of the south road. Nothing to fight, just keep your eyes open.",
+                    [.cattailShore, .sunnyHillock], xp: 110, caps: 120,
+                    [ItemStack(item: .blinkwing, count: 2), ItemStack(item: .dewPotion, count: 3)])
+        case .puppyPatrol:
+            explore("Puppy Patrol", giver: .truffle, level: 4, after: .aNoseForTrouble,
+                    "Pip needs a proper walk, and she's picked the route herself: Clover Knoll, east past the glade, then round to the Old Knot on the far side of the trunk. She sniffs, you watch for slugs.",
+                    [.cloverKnoll, .oldKnot], xp: 320, caps: 200,
+                    [ItemStack(item: .kibble, count: 40), ItemStack(item: .dewPotion, count: 3)])
+        case .highGround:
+            explore("The High Ground", giver: .oyster, level: 8,
+                    "A good shot starts with a good view. Climb Barkfall Bluff, north of the trunk, then Foxglove Hill between the Hollow and the fen, and tell me what you can see from up there.",
+                    [.barkfallBluff, .foxgloveHill], xp: 900, caps: 520,
+                    [ItemStack(item: .amberShard, count: 3), ItemStack(item: .dewPotion, count: 5)])
+        case .owlsEyeView:
+            explore("An Owl's-Eye View", giver: .porcini, level: 14,
+                    "Chapter three of the field guide needs a map of the owl's country. Sketch the Great Bough from Owlwatch Hill, then stand by the fallen branch it perches on. Go by day, if you value your hat.",
+                    [.owlwatchHill, .fallenBough], xp: 2_000, caps: 1_000,
+                    [ItemStack(item: .nectarVial, count: 5), ItemStack(item: .amberShard, count: 4)])
+        case .beyondTheRing:
+            explore("Beyond the Ring", giver: .chanterelle, level: 16,
+                    "My traders say the south road keeps going past the outer ring. Follow it to Rimview Bluff, then cut east to Glimmer Dell. If there's a way through, there's a trade route!",
+                    [.rimviewBluff, .glimmerDell], xp: 3_000, caps: 1_500,
+                    [ItemStack(item: .sapTonic, count: 5), ItemStack(item: .blinkwing, count: 3)])
+        case .windAndWater:
+            explore("Wind and Water", giver: .enoki, level: 19,
+                    "They say the wind on Windwhistle Peak can dry a cloak in a minute, and that Moonwell Tarn is deep enough to drown the moon. Go and see both, past the creek and the thicket.",
+                    [.windwhistlePeak, .moonwellTarn], xp: 4_200, caps: 2_000,
+                    [ItemStack(item: .moonNectar, count: 5), ItemStack(item: .amberShard, count: 5)])
+        case .stonesAndTimber:
+            explore("Stones and Timber", giver: .shiitake, level: 24,
+                    "Old smiths swore by stone from the Mossring and timber from the Hollowlog, out past the briars and the grove. Find both and tell me if they're still standing.",
+                    [.hollowlogCrossing, .mossringStones], xp: 6_500, caps: 3_000,
+                    [ItemStack(item: .amberShard, count: 8), ItemStack(item: .wardCharm, count: 1)])
+        case .theGrandTour:
+            explore("The Grand Tour", giver: .elderMorel, level: 27, after: .stonesAndTimber,
+                    "Every sprout who's seen the whole Hollow has walked the wild fringe from end to end. Visit all six of its places, and the village will know you've truly been everywhere under the tree.",
+                    [.rimviewBluff, .glimmerDell, .windwhistlePeak, .moonwellTarn, .hollowlogCrossing, .mossringStones],
+                    xp: 9_000, caps: 5_000,
+                    [ItemStack(item: .wardCharm, count: 2), ItemStack(item: .amberShard, count: 10),
+                     ItemStack(item: .honeydewDraught, count: 5)])
+
         // MARK: Side quests
         case .hollowOwl:
             QuestDefinition(
@@ -326,6 +394,14 @@ extension QuestID {
             objective: .defeat(kind, count: Self.requestKills),
             rewardXP: kind.stats.xp * 2, rewardCaps: 30 + level * 15, rewardItems: [],
             isRepeatable: true, maxLevel: level + 7)
+    }
+
+    /// An exploration quest: a side quest with places to visit instead of critters to chase.
+    private func explore(_ title: String, giver: NPCID, level: Int, after prerequisite: QuestID? = nil, _ story: String,
+                         _ places: [LandmarkID], xp: Int, caps: Int, _ items: [ItemStack]) -> QuestDefinition {
+        QuestDefinition(id: self, title: title, story: story, giver: giver, requiredLevel: level,
+                        prerequisite: prerequisite, objective: .explore(places),
+                        rewardXP: xp, rewardCaps: caps, rewardItems: items)
     }
 
     /// A main-story quest: it follows the one before it in `mainStory`.

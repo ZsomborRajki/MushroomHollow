@@ -87,7 +87,7 @@ enum TerrainBuilder {
     /// The forest floor carrying on up into the haze past the rim, where no one can walk.
     private static func addSkirt(_ map: WorldMap, to world: Entity) {
         var mesh = MeshData()
-        let radii: [Float] = [GroundPainter.extent - 6, 345, 370, 400, 440, 500, 580, 700, 900]
+        let radii: [Float] = [GroundPainter.extent - 6, 385, 410, 440, 480, 540, 620, 740, 940]
         let segments = 128
         for r in radii {
             for j in 0...segments {
@@ -155,12 +155,13 @@ enum TerrainBuilder {
     static func addGrass(_ map: WorldMap, to world: Entity, random: inout SeededRandom) -> [SceneryChunk] {
         let chunkSize: Float = 32
         var chunks: [SIMD2<Int32>: MeshData] = [:]
-        let tuftCount = 30000
+        // 30,000 tufts for a world of radius 300; the same density however big it is.
+        let tuftCount = Int(30000 * pow((map.boundaryRadius + 12) / 312, 2))
         for _ in 0..<tuftCount {
             let center = random.point(inDiscAt: .zero, radius: map.boundaryRadius + 12)
             if center.length < map.trunkCollisionRadius + 0.5 { continue }
             if center.length < map.boundaryRadius, map.isBlocked(center, radius: 0.2) { continue }
-            if let lake = map.terrain.lakes.first, lake.signedDistance(to: center) < 1 { continue }
+            if map.terrain.lakes.contains(where: { $0.signedDistance(to: center) < 1 }) { continue }
             // Keep the village clearing and the roads mostly trimmed.
             if center.distance(to: map.villageCenter) < map.villageRadius * 0.75, random.unit() < 0.85 { continue }
             if map.trails.contains(where: { $0.distance(to: center) < $0.width * 0.45 }), random.unit() < 0.9 { continue }

@@ -169,6 +169,7 @@ import Testing
             switch quest.definition.objective {
             case let .defeat(kind, _): kind
             case let .collect(item, _): item.specimenOf
+            case .explore: nil
             }
         })
         for area in WorldMap.mushroomHollow.mobSpawns {
