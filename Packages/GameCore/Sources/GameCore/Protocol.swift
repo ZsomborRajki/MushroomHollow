@@ -21,6 +21,8 @@ public enum PlayerCommand: Codable, Sendable, Equatable {
     // NPCs (must be within `NPCID.interactionRange`)
     case buy(ItemID, from: NPCID)
     case sell(ItemID, count: Int, upgrade: Int = 0, to: NPCID)
+    /// Undo a sale: buys back the newest sale of this item (the whole pile) for what the shop paid.
+    case buyBack(ItemID, upgrade: Int = 0, from: NPCID)
     /// At a blacksmith: try to raise one piece of gear by +1. `protect` spends a Ward Charm
     /// on risky attempts so a failure can't cost a level or the item.
     case upgrade(GearLocation, protect: Bool)
@@ -236,6 +238,8 @@ public struct PlayerStatus: Codable, Sendable, Equatable {
     /// Stat points spent, and points waiting to be spent.
     public let attributes: Attributes
     public let unspentStatPoints: Int
+    /// Recent sales, newest first, that any shop will sell back (see `Buyback`).
+    public let buyback: [SoldStack]
 }
 
 /// The world as seen by one viewer at the end of one simulation tick.

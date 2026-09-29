@@ -141,7 +141,8 @@ public struct GameSimulation: Sendable {
             altitude: e.position.y,
             pet: petStatus(data.pet),
             attributes: data.attributes,
-            unspentStatPoints: data.attributes.unspent(atLevel: e.stats.level))
+            unspentStatPoints: data.attributes.unspent(atLevel: e.stats.level),
+            buyback: data.buyback)
     }
 
     /// The three base skills, plus the class's two once a class is chosen.

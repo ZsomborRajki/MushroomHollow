@@ -173,6 +173,61 @@ import Testing
         #expect(run(&sim, seconds: 0.1).contains(.actionFailed(player: player, reason: .notAvailable)))
     }
 
+    @Test func soldItemsCanBeBoughtBackForWhatTheyFetched() throws {
+        var bag = Inventory()
+        bag.add(.snailShell, count: 10)
+        bag.add(.twigSword, count: 1, upgrade: 3)
+        var sim = GameSimulation(seed: 1)
+        let player = sim.spawnPlayer(profile: PlayerProfile(inventory: bag))
+        try standNear(.chanterelle, player, in: &sim)
+
+        // A whole stack at once, one more of the same, then the sword.
+        sim.enqueue(.sell(.snailShell, count: 9, to: .chanterelle), from: player)
+        sim.enqueue(.sell(.snailShell, count: 1, to: .chanterelle), from: player)
+        sim.enqueue(.sell(.twigSword, count: 1, upgrade: 3, to: .chanterelle), from: player)
+        _ = run(&sim, seconds: 0.1)
+        var status = try #require(sim.playerStatus(player))
+        let shellPrice = ItemID.snailShell.definition.sellPrice
+        let swordPrice = Gear(.twigSword, upgrade: 3).sellPrice
+        #expect(status.inventory.stacks.isEmpty)
+        #expect(status.caps == shellPrice * 10 + swordPrice)
+        #expect(status.buyback == [SoldStack(gear: Gear(.twigSword, upgrade: 3), count: 1, price: swordPrice),
+                                   SoldStack(gear: Gear(.snailShell), count: 10, price: shellPrice)])
+
+        // Any shopkeeper sells it back, but not from across town.
+        sim.enqueue(.buyBack(.twigSword, upgrade: 3, from: .oyster), from: player)
+        #expect(run(&sim, seconds: 0.1).contains(.actionFailed(player: player, reason: .tooFar)))
+        try standNear(.oyster, player, in: &sim)
+        sim.enqueue(.buyBack(.twigSword, upgrade: 3, from: .oyster), from: player)
+        sim.enqueue(.buyBack(.twigSword, upgrade: 3, from: .oyster), from: player)
+        #expect(run(&sim, seconds: 0.1).contains(.actionFailed(player: player, reason: .missingItem)), "only once")
+        status = try #require(sim.playerStatus(player))
+        #expect(status.inventory.count(of: .twigSword, upgrade: 3) == 1)
+        #expect(status.caps == shellPrice * 10)
+        #expect(status.buyback.count == 1)
+
+        sim.entities[player]?.player?.caps = shellPrice * 10 - 1
+        sim.enqueue(.buyBack(.snailShell, from: .oyster), from: player)
+        #expect(run(&sim, seconds: 0.1).contains(.actionFailed(player: player, reason: .notEnoughCaps)))
+        sim.entities[player]?.player?.caps += 1
+        sim.enqueue(.buyBack(.snailShell, from: .oyster), from: player)
+        _ = run(&sim, seconds: 0.1)
+        status = try #require(sim.playerStatus(player))
+        #expect(status.inventory.count(of: .snailShell) == 10)
+        #expect(status.caps == 0)
+        #expect(status.buyback.isEmpty)
+    }
+
+    @Test func buybackForgetsTheOldestSales() throws {
+        var list: [SoldStack] = []
+        let materials: [ItemID] = [.snailShell, .slugSlime, .beetleHorn, .sporeSac, .honeydewDrop, .richLoam, .cricketLeg, .owlFeather, .spottedWingCase, .pillBugPlate, .bitterAcorn, .frogJelly, .honeycombChip, .pollenPuff]
+        for item in materials.prefix(Buyback.capacity + 2) {
+            Buyback.record(Gear(item), count: 1, price: 1, in: &list)
+        }
+        #expect(list.count == Buyback.capacity)
+        #expect(list.first?.gear.item == materials[Buyback.capacity + 1])
+    }
+
     // MARK: - Equipment and consumables
 
     @Test func equippingGearChangesStats() throws {

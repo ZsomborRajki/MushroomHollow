@@ -159,13 +159,17 @@ struct QuestTarget: Identifiable {
 
 enum ShopTab: Int, CaseIterable {
     case buy, sell
+    /// Recent sales, to undo a mistake.
+    case buyback
 }
 
 /// One row in an NPC panel.
 struct PanelRow: Identifiable, Equatable {
     enum Action: Equatable {
         case buy(ItemID)
-        case sell(Gear)
+        /// Sells one; the secondary button sells the whole `stack`.
+        case sell(Gear, stack: Int)
+        case buyBack(Gear)
         case upgrade(GearLocation)
         case accept(QuestID)
         case turnIn(QuestID)
@@ -314,6 +318,16 @@ final class GameSession {
         }
         panel = debug.panel
         if panel == .inventory { selection = Self.firstBagCell }
+        switch debug.value(after: "-panel") {
+        case "sell":
+            shopTab = .sell
+            selection = 1 // the Dew Potions, a stack
+        case "buyback":
+            // Something to buy back: the demo bag's snail shells.
+            shopTab = .buyback
+            host.send(.sell(.snailShell, count: 12, to: .chanterelle))
+        default: break
+        }
         if debug.arguments.contains("-portrait"), let player = host.currentSnapshot.entity(host.localPlayerID) {
             // Close-up from the front (or `-portrait <degrees>` around), for checking the character model.
             camera.yaw = player.yaw + (debug.value(after: "-portrait").flatMap(Float.init) ?? 0) * .pi / 180
@@ -635,13 +649,18 @@ final class GameSession {
             stepMapZoom(zoomIn: input == .nextTab)
         case .confirm:
             activateSelection()
+        case .secondary:
+            activateSecondary()
         case .previousTab where panel == .inventory, .nextTab where panel == .inventory:
             openPanel(.character) // the bag and the character sheet sit side by side, like tabs
         case .previousTab where panel == .character, .nextTab where panel == .character:
             openPanel(.inventory)
         case .previousTab, .nextTab:
             guard case let .npc(npc) = panel else { return }
-            if npc.definition.isShopkeeper { setShopTab(shopTab == .buy ? .sell : .buy) }
+            if npc.definition.isShopkeeper {
+                let tabs = ShopTab.allCases
+                setShopTab(tabs[(shopTab.rawValue + (input == .nextTab ? 1 : tabs.count - 1)) % tabs.count])
+            }
             if npc.definition.upgradesGear { setProtectUpgrades(!protectUpgrades) }
         case .up, .down, .left, .right:
             let before = selection
@@ -737,7 +756,8 @@ final class GameSession {
             guard row.isEnabled else { return }
             switch row.action {
             case let .buy(item): host.send(.buy(item, from: npc))
-            case let .sell(gear): host.send(.sell(gear.item, count: 1, upgrade: gear.upgrade, to: npc))
+            case let .sell(gear, _): host.send(.sell(gear.item, count: 1, upgrade: gear.upgrade, to: npc))
+            case let .buyBack(gear): host.send(.buyBack(gear.item, upgrade: gear.upgrade, from: npc))
             case let .upgrade(location): host.send(.upgrade(location, protect: protectUpgrades))
             case let .accept(quest): host.send(.acceptQuest(quest))
             case let .turnIn(quest): host.send(.completeQuest(quest))
@@ -757,6 +777,13 @@ final class GameSession {
         case nil:
             break
         }
+    }
+
+    /// The second button on a row: "Sell all" for a whole stack.
+    private func activateSecondary() {
+        guard case let .npc(npc) = panel, npcRows.indices.contains(selection) else { return }
+        guard case let .sell(gear, stack) = npcRows[selection].action, stack > 1 else { return }
+        host.send(.sell(gear.item, count: stack, upgrade: gear.upgrade, to: npc))
     }
 
     // MARK: - Map
@@ -901,7 +928,18 @@ final class GameSession {
                         title: stack.count > 1 ? "\(gear.displayName) ×\(stack.count)" : gear.displayName,
                         subtitle: gear.statLine ?? "Material",
                         trailing: "+\(gear.sellPrice)", detail: gear.definition.description,
-                        isEnabled: true, action: .sell(gear))
+                        isEnabled: true, action: .sell(gear, stack: stack.count))
+                }
+            case .buyback:
+                return player.buyback.enumerated().map { index, sold in
+                    let gear = sold.gear
+                    return PanelRow(
+                        id: "buyback-\(index)-\(gear.item.rawValue)", symbol: gear.item.symbol, tint: gear.item.tint,
+                        title: sold.count > 1 ? "\(gear.displayName) ×\(sold.count)" : gear.displayName,
+                        subtitle: gear.statLine ?? "Material",
+                        trailing: "\(sold.total) caps",
+                        detail: "\(gear.definition.description)\n\nSold for \(sold.total) caps. Buy it back for the same.",
+                        isEnabled: player.caps >= sold.total, action: .buyBack(gear))
                 }
             }
         }
@@ -1714,7 +1752,7 @@ private struct DebugLaunch {
         switch value(after: "-panel") {
         case "bag": .inventory
         case "morel": .npc(.elderMorel)
-        case "shop": .npc(.chanterelle)
+        case "shop", "sell", "buyback": .npc(.chanterelle)
         case "smith": .npc(.shiitake)
         case "truffle": .npc(.truffle)
         case "porcini": .npc(.porcini)

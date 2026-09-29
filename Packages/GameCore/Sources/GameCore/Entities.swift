@@ -189,6 +189,8 @@ struct PlayerData: Codable, Sendable {
     var pet = PetData()
     /// Stat points spent (see `Attributes.swift`).
     var attributes = Attributes()
+    /// Recent sales, newest first (not saved).
+    var buyback: [SoldStack] = []
 }
 
 struct ActiveBuff: Codable, Sendable {

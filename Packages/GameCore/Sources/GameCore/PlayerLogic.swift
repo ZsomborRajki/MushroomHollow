@@ -69,6 +69,9 @@ extension GameSimulation {
         case let .sell(item, count, upgrade, npc):
             if let failure = sell(Gear(item, upgrade: upgrade), count: count, to: npc, player: &player) { fail(failure, player) }
 
+        case let .buyBack(item, upgrade, npc):
+            if let failure = buyBack(Gear(item, upgrade: upgrade), from: npc, player: &player) { fail(failure, player) }
+
         case let .upgrade(location, protect):
             if let failure = upgrade(location, protect: protect, player: &player) { fail(failure, player) }
 
@@ -396,6 +399,7 @@ extension GameSimulation {
 
         let earned = gear.sellPrice * count
         data.caps += earned
+        Buyback.record(gear, count: count, price: gear.sellPrice, in: &data.buyback)
         player.player = data
         events.append(.capsChanged(player: player.id, delta: earned))
         return nil

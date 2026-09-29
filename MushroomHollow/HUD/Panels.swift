@@ -349,9 +349,10 @@ struct NPCPanel: View {
                         Picker("Mode", selection: Binding(get: { session.shopTab }, set: { session.setShopTab($0) })) {
                             Text("Buy").tag(ShopTab.buy)
                             Text("Sell").tag(ShopTab.sell)
+                            Text("Buyback").tag(ShopTab.buyback)
                         }
                         .pickerStyle(.segmented)
-                        .frame(width: 180)
+                        .frame(width: 270)
                         if let glyph = session.glyphs?.nextTarget { Image(systemName: glyph) }
                         Spacer()
                         if let caps = session.hud.player?.caps {
@@ -369,7 +370,9 @@ struct NPCPanel: View {
                         ScrollView {
                             VStack(spacing: 6) {
                                 if rows.isEmpty {
-                                    Text(definition.isShopkeeper ? "Nothing to sell."
+                                    Text(definition.isShopkeeper
+                                         ? session.shopTab == .buyback ? "Nothing to buy back. What you sell waits here for a while, in every shop."
+                                         : "Nothing to sell."
                                          : definition.upgradesGear ? "No gear to upgrade."
                                          : definition.makesPetFood ? "Bring me critter drops and I'll bake them into Kibble."
                                          : definition.buysMaterials ? "Bring me whatever the critters drop. Every species has something!"
@@ -407,6 +410,12 @@ struct NPCPanel: View {
                                     session.perform(.menu(.confirm))
                                 }
                             }
+                            if case let .sell(gear, stack) = selected.action, stack > 1 {
+                                ActionButton(title: "Sell all ×\(stack) (+\(gear.sellPrice * stack))",
+                                             glyph: session.glyphs?.secondary, isEnabled: selected.isEnabled) {
+                                    session.perform(.menu(.secondary))
+                                }
+                            }
                         }
                     }
                     .frame(width: 240, alignment: .leading)
@@ -420,6 +429,7 @@ struct NPCPanel: View {
         switch action {
         case .buy: "Buy"
         case .sell: "Sell 1"
+        case .buyBack: "Buy back"
         case .upgrade: "Upgrade"
         case .accept: "Accept"
         case .turnIn: "Turn in"

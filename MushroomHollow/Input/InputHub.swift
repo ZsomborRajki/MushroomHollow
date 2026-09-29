@@ -6,6 +6,8 @@ import GameCore
 enum MenuInput: Equatable {
     case up, down, left, right
     case confirm, back
+    /// A row's second button (X): "Sell all" in shops.
+    case secondary
     case previousTab, nextTab
 }
 
@@ -50,6 +52,8 @@ struct InputFrame {
 struct ControllerGlyphs: Equatable {
     var primary = "a.circle"
     var back = "b.circle"
+    /// X in menus.
+    var secondary = "x.circle"
     /// Base skills on X / Y / B, class skills on RT + X / RT + Y.
     var skills = ["x.circle", "y.circle", "b.circle", "x.circle", "y.circle"]
     var shift = "rt.rectangle.roundedtop"
@@ -92,6 +96,7 @@ final class InputHub {
         var glyphs = ControllerGlyphs()
         glyphs.primary = pad.buttonA.sfSymbolsName ?? glyphs.primary
         glyphs.back = pad.buttonB.sfSymbolsName ?? glyphs.back
+        glyphs.secondary = pad.buttonX.sfSymbolsName ?? glyphs.secondary
         glyphs.skills = [pad.buttonX, pad.buttonY, pad.buttonB, pad.buttonX, pad.buttonY].enumerated().map { index, button in
             button.sfSymbolsName ?? glyphs.skills[index]
         }
@@ -220,6 +225,7 @@ final class InputHub {
             button("menu.right", pad.dpad.right.isPressed || (horizontal && stick.x > 0.6), .menu(.right))
             button("pad.a", pad.buttonA.isPressed, .menu(.confirm))
             button("pad.b", pad.buttonB.isPressed, .menu(.back))
+            button("pad.x", pad.buttonX.isPressed, .menu(.secondary))
             button("pad.lb", pad.leftShoulder.isPressed, .menu(.previousTab))
             button("pad.rb", pad.rightShoulder.isPressed, .menu(.nextTab))
             button("pad.menu", pad.buttonMenu.isPressed, .toggleInventory)
@@ -234,6 +240,7 @@ final class InputHub {
             button("key.right", down(.rightArrow) || down(.keyD), .menu(.right))
             button("key.space", down(.spacebar) || down(.returnOrEnter) || down(.keyF), .menu(.confirm))
             button("key.esc", down(.escape) || down(.deleteOrBackspace), .menu(.back))
+            button("key.x", down(.keyX), .menu(.secondary))
             button("key.q", down(.keyQ), .menu(.previousTab))
             button("key.e", down(.keyE), .menu(.nextTab))
             button("key.i", down(.keyI), .toggleInventory)
