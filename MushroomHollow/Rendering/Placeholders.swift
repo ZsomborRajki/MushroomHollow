@@ -173,6 +173,117 @@ enum Meshes {
         return try! MeshResource.generate(from: [descriptor])
     }
 
+    /// One elliptical ring of a `loft`: half-width along X, half-depth along Z, and how far its
+    /// center sits forward (+Z).
+    struct Section {
+        var y: Float
+        var width: Float
+        var depth: Float
+        var forward: Float = 0
+
+        init(_ y: Float, _ width: Float, _ depth: Float, _ forward: Float = 0) {
+            self.y = y
+            self.width = width
+            self.depth = depth
+            self.forward = forward
+        }
+    }
+
+    /// Like `lathe`, but every ring is an ellipse that can shift forward, for shapes that aren't
+    /// round (a chest wider than it is deep, a calf, a boot's toe). Sections run top to bottom; a
+    /// zero-size section closes the end.
+    static func loft(_ sections: [Section], segments: Int = 24, name: String = "loft") -> MeshResource {
+        let rows = sections.map { s in
+            (0...segments).map { j -> SIMD3<Float> in
+                let a = Float(j) / Float(segments) * 2 * .pi
+                return [s.width * sin(a), s.y, s.depth * cos(a) + s.forward]
+            }
+        }
+        return grid(rows, name: name)
+    }
+
+    /// Sprout's head: a skull with an anime jaw that narrows to a small pointed chin, laid out like
+    /// `uvSphere` (same texture coordinates) so `FacePainter`'s face lands in the same place.
+    static let animeHead: MeshResource = {
+        let rings = 32, segments = 48
+        let rows = (0...rings).map { i in
+            let latitude = Float.pi / 2 - Float(i) / Float(rings) * .pi
+            return (0...segments).map { j -> SIMD3<Float> in
+                let longitude = -Float.pi + Float(j) / Float(segments) * 2 * .pi
+                return headShape([cos(latitude) * sin(longitude), sin(latitude), cos(latitude) * cos(longitude)])
+            }
+        }
+        return grid(rows, name: "animeHead")
+    }()
+
+    /// Bends a point of the unit sphere into the head's shape.
+    private static func headShape(_ d: SIMD3<Float>) -> SIMD3<Float> {
+        func smoothstep(_ a: Float, _ b: Float, _ x: Float) -> Float {
+            let t = min(max((x - a) / (b - a), 0), 1)
+            return t * t * (3 - 2 * t)
+        }
+        var p = d
+        let down = max(0, -d.y)
+        let front = smoothstep(-0.3, 0.7, d.z)
+        p.x *= 1 - 0.4 * pow(down, 1.4) // cheeks narrow into the jaw
+        p.y -= 0.24 * pow(down, 1.6) * front // down to a pointed chin
+        p.z += 0.05 * pow(down, 1.2) * front
+        if d.z < 0 {
+            // A fuller back of the skull, and the jaw tucked in toward the neck.
+            p.z *= 1 + 0.08 * max(0, d.y + 0.4) - 0.2 * down
+        }
+        p.x *= 1 + 0.04 * max(0, d.y) // a wide crown
+        p.z -= 0.05 * pow(max(0, d.z), 4) * (1 - down) // a flatter face
+        return p
+    }
+
+    /// A lock of anime hair: rounded where it grows (y = 1), swelling outward (+Z) and curling
+    /// back in to a sharp point (y = -1). Unit width; scale Z for its thickness.
+    static let hairLock = loft([
+        Section(1, 0, 0), Section(0.94, 0.6, 0.6), Section(0.78, 0.9, 0.9, 0.08), Section(0.5, 1, 0.95, 0.22),
+        Section(0.15, 0.9, 0.82, 0.3), Section(-0.2, 0.7, 0.62, 0.24), Section(-0.5, 0.46, 0.42, 0.08),
+        Section(-0.76, 0.22, 0.22, -0.18), Section(-1, 0, 0, -0.45),
+    ], segments: 12, name: "hairLock")
+
+    /// Builds a mesh from rows of points (top to bottom, each running once around and repeating
+    /// its first point last) with smooth normals, welded across seams and poles.
+    static func grid(_ rows: [[SIMD3<Float>]], name: String) -> MeshResource {
+        let columns = rows[0].count
+        let positions = rows.flatMap(\.self)
+        var uvs: [SIMD2<Float>] = []
+        for i in rows.indices {
+            for j in 0..<columns {
+                uvs.append([Float(j) / Float(columns - 1), 1 - Float(i) / Float(rows.count - 1)])
+            }
+        }
+        var indices: [UInt32] = []
+        let row = UInt32(columns)
+        for i in 0..<UInt32(rows.count - 1) {
+            for j in 0..<UInt32(columns - 1) {
+                let a = i * row + j, b = a + 1, c = a + row, d = c + 1
+                indices += [a, c, d, a, d, b]
+            }
+        }
+        // Area-weighted face normals, summed over every vertex at the same spot.
+        func key(_ p: SIMD3<Float>) -> SIMD3<Int32> { SIMD3<Int32>((p * 10000).rounded(.toNearestOrEven)) }
+        var sums: [SIMD3<Int32>: SIMD3<Float>] = [:]
+        for t in stride(from: 0, to: indices.count, by: 3) {
+            let a = positions[Int(indices[t])], b = positions[Int(indices[t + 1])], c = positions[Int(indices[t + 2])]
+            let normal = simd_cross(b - a, c - a)
+            for p in [a, b, c] { sums[key(p), default: .zero] += normal }
+        }
+        let normals = positions.map { p -> SIMD3<Float> in
+            let n = sums[key(p)] ?? .zero
+            return simd_length(n) > 0 ? simd_normalize(n) : [0, 1, 0]
+        }
+        var descriptor = MeshDescriptor(name: name)
+        descriptor.positions = MeshBuffers.Positions(positions)
+        descriptor.normals = MeshBuffers.Normals(normals)
+        descriptor.textureCoordinates = MeshBuffers.TextureCoordinates(uvs)
+        descriptor.primitives = .triangles(indices)
+        return try! MeshResource.generate(from: [descriptor])
+    }
+
     /// A flat wedge in the XZ plane pointing along +Z, radius 1, ±`halfAngle`.
     static func fan(halfAngle: Float, segments: Int = 24) -> MeshResource {
         var positions: [SIMD3<Float>] = [.zero]

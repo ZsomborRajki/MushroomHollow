@@ -25,26 +25,66 @@ enum SproutLook {
     static let sproutLeaf = UIColor(red: 0.5, green: 0.82, blue: 0.3, alpha: 1)
 }
 
-/// Paints Sprout's anime face into an equirectangular texture for `Meshes.uvSphere`:
-/// longitude 0 (the middle of the image) faces +Z, the top row is the crown.
+/// Paints an anime face into an equirectangular texture for `Meshes.animeHead` (laid out like
+/// `Meshes.uvSphere`): longitude 0 (the middle of the image) faces +Z, the top row is the crown.
 @MainActor
 enum FacePainter {
     enum Expression: CaseIterable {
         case open, blink, happy, hurt, fainted
     }
 
-    static let materials: [Expression: any RealityKit.Material] =
-        Dictionary(uniqueKeysWithValues: Expression.allCases.map { ($0, makeMaterial($0)) })
+    /// Eye colors: dark at the top of the iris, light at the bottom, and the glow below the pupil.
+    enum Iris {
+        case leaf, sky, hazel, violet, amber, slate
+
+        var colors: (dark: UIColor, light: UIColor, glow: UIColor) {
+            switch self {
+            case .leaf: (SproutLook.irisDark, SproutLook.irisLight, SproutLook.irisGlow)
+            case .sky: (UIColor(red: 0.05, green: 0.16, blue: 0.4, alpha: 1), UIColor(red: 0.35, green: 0.66, blue: 1, alpha: 1),
+                        UIColor(red: 0.75, green: 0.9, blue: 1, alpha: 1))
+            case .hazel: (UIColor(red: 0.22, green: 0.1, blue: 0.04, alpha: 1), UIColor(red: 0.78, green: 0.5, blue: 0.22, alpha: 1),
+                          UIColor(red: 1, green: 0.85, blue: 0.55, alpha: 1))
+            case .violet: (UIColor(red: 0.2, green: 0.06, blue: 0.3, alpha: 1), UIColor(red: 0.68, green: 0.45, blue: 0.95, alpha: 1),
+                           UIColor(red: 0.9, green: 0.8, blue: 1, alpha: 1))
+            case .amber: (UIColor(red: 0.35, green: 0.14, blue: 0.02, alpha: 1), UIColor(red: 1, green: 0.66, blue: 0.15, alpha: 1),
+                          UIColor(red: 1, green: 0.92, blue: 0.6, alpha: 1))
+            case .slate: (UIColor(red: 0.1, green: 0.12, blue: 0.16, alpha: 1), UIColor(red: 0.5, green: 0.58, blue: 0.66, alpha: 1),
+                          UIColor(red: 0.85, green: 0.9, blue: 0.95, alpha: 1))
+            }
+        }
+    }
+
+    /// One character's face: eye color, how heavy the upper lids hang, and long lashes.
+    struct Face: Hashable {
+        var iris = Iris.leaf
+        var hair = SproutLook.hair
+        /// 0 wide open ... 1 half-lidded (sleepy or stern).
+        var lids: CGFloat = 0
+        var lashes = false
+
+        static let sprout = Face()
+    }
+
+    private static var cache: [Face: [Expression: any RealityKit.Material]] = [:]
+
+    /// The face's material for an expression, painted the first time it's asked for.
+    static func material(_ expression: Expression, _ face: Face = .sprout) -> any RealityKit.Material {
+        if let material = cache[face]?[expression] { return material }
+        let material = makeMaterial(expression, face)
+        cache[face, default: [:]][expression] = material
+        return material
+    }
 
     private static let size = CGSize(width: 1024, height: 512)
     /// Texture pixels per radian of longitude or latitude.
     private static let k = size.width / (2 * .pi)
 
-    private static func makeMaterial(_ expression: Expression) -> any RealityKit.Material {
+    private static func makeMaterial(_ expression: Expression, _ face: Face) -> any RealityKit.Material {
         var material = PhysicallyBasedMaterial()
         material.roughness = 0.7
         material.metallic = .init(floatLiteral: 0)
-        guard let painted = texture({ paint(expression, in: $0) }) else {
+        // The player's face is seen up close; the townsfolk's at a distance (and there are more of them).
+        guard let painted = texture(scale: face == .sprout ? 2 : 1, { paint(expression, face, in: $0) }) else {
             material.baseColor = .init(tint: SproutLook.skin)
             return material
         }
@@ -53,9 +93,9 @@ enum FacePainter {
         return material
     }
 
-    private static func texture(_ draw: (CGContext) -> Void) -> TextureResource? {
+    private static func texture(scale: CGFloat, _ draw: (CGContext) -> Void) -> TextureResource? {
         let format = UIGraphicsImageRendererFormat()
-        format.scale = 2
+        format.scale = scale
         format.opaque = true
         format.preferredRange = .standard // plain 8-bit sRGB
         let image = UIGraphicsImageRenderer(size: size, format: format).image { draw($0.cgContext) }
@@ -75,14 +115,14 @@ enum FacePainter {
         (point(0.31, -0.1), 1), (point(-0.31, -0.1), -1),
     ]
 
-    private static func paint(_ expression: Expression, in cg: CGContext) {
+    private static func paint(_ expression: Expression, _ face: Face, in cg: CGContext) {
         // Hair everywhere except the face and neck; the hair meshes add the volume.
-        SproutLook.hair.setFill()
+        face.hair.setFill()
         cg.fill(CGRect(origin: .zero, size: size))
         SproutLook.skin.setFill()
         let hairline = point(0, 0.45).y
-        let face = CGRect(x: point(-1.25, 0).x, y: hairline, width: 2.5 * k, height: size.height - hairline)
-        UIBezierPath(roundedRect: face, cornerRadius: 0.4 * k).fill()
+        let skin = CGRect(x: point(-1.25, 0).x, y: hairline, width: 2.5 * k, height: size.height - hairline)
+        UIBezierPath(roundedRect: skin, cornerRadius: 0.4 * k).fill()
         cg.fill(CGRect(x: 0, y: point(0, -0.85).y, width: size.width, height: size.height))
 
         for eye in eyes {
@@ -109,18 +149,31 @@ enum FacePainter {
             cg.strokePath()
 
             switch expression {
-            case .open: drawOpenEye(cg, center: c, outward: eye.outward)
+            case .open: drawOpenEye(cg, center: c, outward: eye.outward, face: face)
             case .blink: drawArcEye(cg, center: c, outward: eye.outward, bulge: 0.2)
             case .happy: drawArcEye(cg, center: c, outward: eye.outward, bulge: -0.3)
             case .hurt: drawSquint(cg, center: c, outward: eye.outward)
             case .fainted: drawSwirl(cg, center: c)
             }
         }
+        drawNose(in: cg)
         drawMouth(expression, in: cg)
     }
 
-    private static func drawOpenEye(_ cg: CGContext, center c: CGPoint, outward: CGFloat) {
+    /// Just a hint of a nose: a short shaded tick off to one side, as anime faces draw it.
+    private static func drawNose(in cg: CGContext) {
+        let n = point(0.025, -0.3)
+        cg.setLineCap(.round)
+        cg.setStrokeColor(SproutLook.skin.darker(0.72).cgColor)
+        cg.setLineWidth(2.2)
+        cg.move(to: CGPoint(x: n.x - 0.012 * k, y: n.y - 0.035 * k))
+        cg.addQuadCurve(to: CGPoint(x: n.x - 0.02 * k, y: n.y + 0.02 * k), control: CGPoint(x: n.x + 0.012 * k, y: n.y))
+        cg.strokePath()
+    }
+
+    private static func drawOpenEye(_ cg: CGContext, center c: CGPoint, outward: CGFloat, face: Face) {
         let w = eyeWidth, h = eyeHeight
+        let colors = face.iris.colors
         let eye = CGRect(x: c.x - w / 2, y: c.y - h / 2, width: w, height: h)
         cg.saveGState()
         cg.addEllipse(in: eye)
@@ -132,15 +185,15 @@ enum FacePainter {
         cg.saveGState()
         cg.addEllipse(in: iris)
         cg.clip()
-        let gradient = CGGradient(colorsSpace: nil, colors: [SproutLook.irisDark.cgColor, SproutLook.irisLight.cgColor] as CFArray,
+        let gradient = CGGradient(colorsSpace: nil, colors: [colors.dark.cgColor, colors.light.cgColor] as CFArray,
                                   locations: [0.2, 1])!
         cg.drawLinearGradient(gradient, start: CGPoint(x: c.x, y: iris.minY), end: CGPoint(x: c.x, y: iris.maxY), options: [])
         SproutLook.pupil.setFill()
         cg.fillEllipse(in: CGRect(x: c.x - w * 0.17, y: c.y - h * 0.22, width: w * 0.34, height: h * 0.46))
-        SproutLook.irisGlow.withAlphaComponent(0.75).setFill()
+        colors.glow.withAlphaComponent(0.75).setFill()
         cg.fillEllipse(in: CGRect(x: c.x - w * 0.24, y: c.y + h * 0.26, width: w * 0.48, height: h * 0.2))
         cg.restoreGState()
-        SproutLook.irisDark.setStroke()
+        colors.dark.setStroke()
         cg.setLineWidth(w * 0.035)
         cg.strokeEllipse(in: iris)
         cg.restoreGState()
@@ -150,18 +203,40 @@ enum FacePainter {
         cg.fillEllipse(in: CGRect(x: c.x - w * 0.3, y: c.y - h * 0.3, width: w * 0.3, height: h * 0.27))
         cg.fillEllipse(in: CGRect(x: c.x + w * 0.1, y: c.y + h * 0.12, width: w * 0.13, height: w * 0.13))
 
-        // Upper lash line, heavier toward the outer corner, with a little flick.
         cg.setLineCap(.round)
         cg.setLineJoin(.round)
         cg.setStrokeColor(SproutLook.lash.cgColor)
-        strokeEllipseArc(cg, center: c, from: 1.04 * .pi, to: 1.96 * .pi, width: h * 0.08)
-        let outer: (CGFloat, CGFloat) = outward > 0 ? (1.5 * .pi, 1.98 * .pi) : (1.02 * .pi, 1.5 * .pi)
-        strokeEllipseArc(cg, center: c, from: outer.0, to: outer.1, width: h * 0.14)
-        let corner = CGPoint(x: c.x + outward * w * 0.49, y: c.y - h * 0.06)
-        cg.move(to: corner)
-        cg.addLine(to: CGPoint(x: corner.x + outward * w * 0.14, y: corner.y - h * 0.1))
-        cg.setLineWidth(h * 0.07)
-        cg.strokePath()
+        let corner: CGPoint
+        if face.lids > 0 {
+            // A heavy upper lid: skin over the top of the eye, the lash line drawn straight across it.
+            let lid = c.y - h / 2 + face.lids * h * 0.45
+            cg.saveGState()
+            cg.addEllipse(in: eye.insetBy(dx: -2, dy: -2))
+            cg.clip()
+            SproutLook.skin.setFill()
+            cg.fill(CGRect(x: eye.minX - 2, y: eye.minY - 2, width: w + 4, height: lid - eye.minY + 2))
+            cg.restoreGState()
+            let inner = CGPoint(x: c.x - outward * w * 0.49, y: c.y - h * 0.02)
+            corner = CGPoint(x: c.x + outward * w * 0.49, y: c.y - h * 0.08)
+            cg.move(to: inner)
+            cg.addQuadCurve(to: corner, control: CGPoint(x: c.x, y: 2 * lid - (inner.y + corner.y) / 2))
+            cg.setLineWidth(h * 0.1)
+            cg.strokePath()
+        } else {
+            // Upper lash line, heavier toward the outer corner.
+            strokeEllipseArc(cg, center: c, from: 1.04 * .pi, to: 1.96 * .pi, width: h * 0.08)
+            let outer: (CGFloat, CGFloat) = outward > 0 ? (1.5 * .pi, 1.98 * .pi) : (1.02 * .pi, 1.5 * .pi)
+            strokeEllipseArc(cg, center: c, from: outer.0, to: outer.1, width: h * 0.14)
+            corner = CGPoint(x: c.x + outward * w * 0.49, y: c.y - h * 0.06)
+        }
+        // A little flick at the outer corner (a fan of them for long lashes).
+        let flicks: [(dx: CGFloat, dy: CGFloat)] = face.lashes ? [(0.16, -0.1), (0.13, -0.2), (0.06, -0.24)] : [(0.14, -0.1)]
+        for flick in flicks {
+            cg.move(to: corner)
+            cg.addLine(to: CGPoint(x: corner.x + outward * w * flick.dx, y: corner.y + h * flick.dy))
+            cg.setLineWidth(h * 0.07)
+            cg.strokePath()
+        }
         // A hint of lower lash at the outer corner.
         let lower: (CGFloat, CGFloat) = outward > 0 ? (0.12 * .pi, 0.32 * .pi) : (0.68 * .pi, 0.88 * .pi)
         strokeEllipseArc(cg, center: c, from: lower.0, to: lower.1, width: h * 0.035)
@@ -213,7 +288,7 @@ enum FacePainter {
     }
 
     private static func drawMouth(_ expression: Expression, in cg: CGContext) {
-        let m = point(0, -0.38)
+        let m = point(0, -0.44)
         let w = 0.13 * k
         cg.setLineCap(.round)
         cg.setStrokeColor(SproutLook.mouth.cgColor)

@@ -17,12 +17,18 @@ extension NPCID {
             look.trim = UIColor(red: 0.85, green: 0.75, blue: 0.45, alpha: 1)
             look.legs = UIColor(red: 0.3, green: 0.28, blue: 0.36, alpha: 1)
             look.cap = .morel(Palette.capBrown)
+            look.iris = .slate
+            look.lids = 0.55
+            look.hairStyle = .long
         case .chanterelle:
             look.hair = UIColor(red: 0.85, green: 0.42, blue: 0.18, alpha: 1)
             look.tunic = UIColor(red: 0.98, green: 0.9, blue: 0.75, alpha: 1)
             look.trim = UIColor(red: 0.98, green: 0.62, blue: 0.15, alpha: 1)
             look.legs = UIColor(red: 0.55, green: 0.35, blue: 0.2, alpha: 1)
             look.cap = .funnel(UIColor(red: 0.98, green: 0.62, blue: 0.15, alpha: 1))
+            look.iris = .amber
+            look.lashes = true
+            look.hairStyle = .ponytail
         case .shiitake:
             look.hair = UIColor(red: 0.25, green: 0.16, blue: 0.1, alpha: 1)
             look.beard = UIColor(red: 0.25, green: 0.16, blue: 0.1, alpha: 1)
@@ -30,29 +36,42 @@ extension NPCID {
             look.trim = Palette.darkBark
             look.legs = UIColor(red: 0.25, green: 0.2, blue: 0.18, alpha: 1)
             look.cap = .wide(UIColor(red: 0.42, green: 0.26, blue: 0.16, alpha: 1))
+            look.iris = .hazel
+            look.lids = 0.45
         case .truffle:
             look.hair = UIColor(red: 0.2, green: 0.14, blue: 0.12, alpha: 1)
             look.tunic = UIColor(red: 0.35, green: 0.6, blue: 0.35, alpha: 1)
             look.trim = UIColor(red: 0.95, green: 0.92, blue: 0.82, alpha: 1)
             look.cap = .beret(UIColor(red: 0.28, green: 0.2, blue: 0.16, alpha: 1), spots: false)
+            look.iris = .violet
+            look.lashes = true
         case .porcini:
             look.hair = UIColor(red: 0.5, green: 0.33, blue: 0.2, alpha: 1)
             look.tunic = UIColor(red: 0.36, green: 0.46, blue: 0.3, alpha: 1)
             look.trim = UIColor(red: 0.78, green: 0.6, blue: 0.4, alpha: 1)
             look.cap = .beret(UIColor(red: 0.55, green: 0.33, blue: 0.17, alpha: 1), spots: false)
+            look.iris = .leaf
+            look.lids = 0.2
         case .oyster:
             look.hair = UIColor(red: 0.3, green: 0.35, blue: 0.5, alpha: 1)
             look.tunic = UIColor(red: 0.3, green: 0.4, blue: 0.62, alpha: 1)
             look.trim = UIColor(red: 0.85, green: 0.85, blue: 0.9, alpha: 1)
             look.cap = .fan(UIColor(red: 0.78, green: 0.8, blue: 0.86, alpha: 1))
+            look.iris = .sky
+            look.lids = 0.3
         case .enoki:
             look.hair = UIColor(red: 0.95, green: 0.92, blue: 0.82, alpha: 1)
             look.cap = .cluster(UIColor(red: 0.98, green: 0.96, blue: 0.88, alpha: 1))
+            look.iris = .violet
+            look.lashes = true
+            look.hairStyle = .long
         case .maitake:
             look.hair = UIColor(red: 0.35, green: 0.25, blue: 0.18, alpha: 1)
             look.tunic = UIColor(red: 0.62, green: 0.52, blue: 0.4, alpha: 1)
             look.trim = UIColor(red: 0.9, green: 0.85, blue: 0.7, alpha: 1)
             look.cap = .frills(UIColor(red: 0.5, green: 0.38, blue: 0.26, alpha: 1))
+            look.iris = .amber
+            look.lids = 0.25
         }
         return look
     }

@@ -69,11 +69,47 @@ final class PlayerRig {
     private static let headCenter: SIMD3<Float> = [0, 0.33, 0]
     private static let headRadius: Float = 0.31
 
-    /// A slim tunic, flaring a little at the hem (Flyff's travelling clothes).
-    private static let tunicMesh = Meshes.lathe([
-        [0, 0.38], [0.08, 0.375], [0.13, 0.345], [0.15, 0.29], [0.145, 0.21], [0.15, 0.14],
-        [0.175, 0.07], [0.205, 0], [0.222, -0.05], [0.222, -0.05], [0.2, -0.065], [0, -0.06],
-    ].map { SIMD2<Float>($0[0] * 0.82, $0[1] * 1.18) })
+    /// A slim tunic over square shoulders, a chest, and a narrow waist, flaring at the hem
+    /// (Flyff's travelling clothes). Wider than it is deep, like a body.
+    private static let tunicMesh = Meshes.loft([
+        .init(0.455, 0, 0), .init(0.452, 0.045, 0.04), .init(0.44, 0.095, 0.066), .init(0.42, 0.132, 0.08),
+        .init(0.385, 0.146, 0.088), .init(0.34, 0.138, 0.094, 0.008), .init(0.27, 0.124, 0.09, 0.006),
+        .init(0.2, 0.108, 0.078), .init(0.15, 0.104, 0.077), .init(0.09, 0.122, 0.089), .init(0.02, 0.152, 0.108),
+        .init(-0.045, 0.176, 0.128), .init(-0.062, 0.179, 0.131), .init(-0.07, 0.15, 0.11), .init(-0.07, 0, 0),
+    ], segments: 28, name: "tunic")
+    /// A sleeve from the shoulder to the elbow's cuff.
+    private static let sleeveMesh = Meshes.loft([
+        .init(0.035, 0, 0), .init(0.025, 0.042, 0.046), .init(0, 0.058, 0.06), .init(-0.06, 0.052, 0.053),
+        .init(-0.14, 0.044, 0.045), .init(-0.2, 0.04, 0.041), .init(-0.25, 0.045, 0.044), .init(-0.262, 0.03, 0.03), .init(-0.262, 0, 0),
+    ], segments: 16, name: "sleeve")
+    /// A forearm swelling below the elbow and slimming to the wrist.
+    private static let forearmMesh = Meshes.loft([
+        .init(-0.23, 0, 0), .init(-0.24, 0.031, 0.031), .init(-0.29, 0.034, 0.031, 0.002), .init(-0.35, 0.028, 0.025),
+        .init(-0.4, 0.023, 0.021), .init(-0.41, 0, 0),
+    ], segments: 14, name: "forearm")
+    /// A closed fist: knuckles run front to back while the arm hangs, the palm against the thigh.
+    private static let fistMesh = Meshes.loft([
+        .init(0.035, 0, 0), .init(0.03, 0.022, 0.026), .init(0.012, 0.033, 0.042), .init(-0.015, 0.037, 0.046, 0.003),
+        .init(-0.038, 0.033, 0.042, 0.002), .init(-0.052, 0.022, 0.03), .init(-0.057, 0, 0),
+    ], segments: 14, name: "fist")
+    /// Hip to ankle: a thigh tapering to the knee, then a calf.
+    private static let legMesh = Meshes.loft([
+        .init(0.02, 0, 0), .init(0.01, 0.05, 0.052), .init(-0.03, 0.068, 0.07), .init(-0.1, 0.064, 0.067, 0.002),
+        .init(-0.2, 0.052, 0.054, 0.004), .init(-0.26, 0.045, 0.047, 0.006), .init(-0.31, 0.048, 0.05, -0.004),
+        .init(-0.37, 0.049, 0.051, -0.006), .init(-0.44, 0.039, 0.041), .init(-0.48, 0.036, 0.038), .init(-0.49, 0, 0),
+    ], segments: 18, name: "leg")
+    /// A boot's shaft, from below the knee to the ankle.
+    private static let bootShaftMesh = Meshes.loft([
+        .init(-0.435, 0, 0), .init(-0.44, 0.056, 0.058), .init(-0.5, 0.053, 0.056), .init(-0.58, 0.046, 0.05),
+        .init(-0.63, 0.049, 0.056, -0.004), .init(-0.665, 0.05, 0.058, -0.004), .init(-0.672, 0, 0),
+    ], segments: 18, name: "bootShaft")
+    /// The foot of a boot, lofted heel to toe along its Y and laid flat (so the sole stays level
+    /// while the top slopes down to a rounded toe).
+    private static let bootFootMesh = Meshes.loft([
+        (-0.06, 0.0, 0.0), (-0.055, 0.04, 0.026), (-0.02, 0.05, 0.034), (0.03, 0.053, 0.033), (0.08, 0.05, 0.027),
+        (0.115, 0.038, 0.02), (0.13, 0.0, 0.0),
+    ].map { Meshes.Section($0.0, $0.1, $0.2, PlayerRig.soleLevel - $0.2) }, segments: 16, name: "bootFoot")
+    private static let soleLevel: Float = 0.03
     /// A robe's long skirt, from the hips to below the knee.
     private static let robeMesh = Meshes.lathe([
         [0.17, 0.02], [0.19, -0.1], [0.22, -0.25], [0.25, -0.4], [0.26, -0.44], [0.2, -0.45], [0.15, -0.3], [0.13, 0.02],
@@ -86,7 +122,10 @@ final class PlayerRig {
 
     init(look: Look = .sprout) {
         self.look = look
-        face = ModelEntity(mesh: Meshes.uvSphere, materials: [FacePainter.materials[.open]!])
+        // Paint the faces it will show up front, so the first blink doesn't hitch (townsfolk only blink).
+        let expressions: [FacePainter.Expression] = look.face == .sprout ? FacePainter.Expression.allCases : [.open, .blink]
+        for expression in expressions { _ = FacePainter.material(expression, look.face) }
+        face = ModelEntity(mesh: Meshes.animeHead, materials: [FacePainter.material(.open, look.face)])
         hatCap = ModelEntity(mesh: Self.capMesh, materials: [Materials.matte(Palette.capRed, roughness: 0.5)])
 
         root.addChild(body)
@@ -108,13 +147,16 @@ final class PlayerRig {
         torso.addChild(tunic)
         outfitParts.append(tunic)
         let trim = Materials.matte(look.trim)
-        torso.addPart(Meshes.torus(radius: 0.175, tube: 0.018), trim, at: [0, -0.06, 0], scale: .one)
-        torso.addPart(Meshes.torus(radius: 0.124, tube: 0.02), Materials.matte(SproutLook.belt), at: [0, 0.155, 0], scale: .one)
-        torso.addPart(Meshes.roundedBox, Materials.glossy(SproutLook.gold), at: [0, 0.155, 0.14], scale: [0.055, 0.045, 0.02])
+        torso.addPart(Meshes.torus(radius: 0.176, tube: 0.016), trim, at: [0, -0.058, 0], scale: [1.02, 1, 0.74])
+        torso.addPart(Meshes.torus(radius: 0.106, tube: 0.018), Materials.matte(SproutLook.belt), at: [0, 0.15, 0], scale: [1, 1, 0.75])
+        torso.addPart(Meshes.roundedBox, Materials.glossy(SproutLook.gold), at: [0, 0.15, 0.092], scale: [0.05, 0.042, 0.02])
         for y: Float in [0.26, 0.34] {
-            torso.addSphere(trim, at: [0, y, 0.126], radius: 0.013)
+            torso.addSphere(trim, at: [0, y, 0.098 + (y - 0.25) * 0.05], radius: 0.012)
         }
-        torso.addCylinder(Materials.matte(look.skin, roughness: 0.7), at: [0, 0.47, 0], radius: 0.042, height: 0.1) // neck
+        // A slim neck, a little forward of the shoulders.
+        torso.addPart(Meshes.loft([.init(0.54, 0.034, 0.036, 0.01), .init(0.47, 0.036, 0.038, 0.004), .init(0.42, 0.045, 0.042)],
+                                  segments: 14, name: "neck"),
+                      Materials.matte(look.skin, roughness: 0.7), at: .zero, scale: .one)
 
         // A knitted scarf with two tails that flutter behind (it takes the class color).
         guard look.scarf else { return }
@@ -137,13 +179,13 @@ final class PlayerRig {
         for side in Self.sides {
             let leg = Entity()
             leg.position = [side * 0.075, 0, 0]
-            legParts.append(leg.addPart(Meshes.sphere, leggings, at: [0, -0.04, 0], scale: .init(repeating: 0.068)))
-            legParts.append(leg.addPart(Meshes.cylinder, leggings, at: [0, -0.15, 0], scale: [0.058, 0.24, 0.058]))
-            legParts.append(leg.addPart(Meshes.cylinder, leggings, at: [0, -0.36, 0], scale: [0.048, 0.22, 0.048]))
-            bootParts.append(leg.addPart(Meshes.cylinder, Materials.matte(look.boots), at: [0, -0.55, 0], scale: [0.058, 0.2, 0.058]))
-            bootParts.append(leg.addPart(Meshes.sphere, Materials.matte(look.boots), at: [0, -0.635, 0.035], scale: [0.064, 0.05, 0.1]))
-            cuffParts.append(leg.addPart(Meshes.torus(radius: 0.06, tube: 0.018), Materials.matte(look.bootCuff),
-                                         at: [0, -0.45, 0], scale: .one))
+            legParts.append(leg.addPart(Self.legMesh, leggings, at: .zero, scale: .one))
+            bootParts.append(leg.addPart(Self.bootShaftMesh, Materials.matte(look.boots), at: .zero, scale: .one))
+            // Laid flat so the sole sits on the ground (hip height below the hips).
+            bootParts.append(leg.addPart(Self.bootFootMesh, Materials.matte(look.boots), at: [0, Self.soleLevel - Self.hipHeight, 0.012],
+                                         scale: .one, rotation: simd_quatf(angle: .pi / 2, axis: [1, 0, 0])))
+            cuffParts.append(leg.addPart(Meshes.torus(radius: 0.058, tube: 0.017), Materials.matte(look.bootCuff),
+                                         at: [0, -0.445, 0], scale: [1, 1, 1.03]))
             hips.addChild(leg)
             legs.append(leg)
         }
@@ -154,13 +196,12 @@ final class PlayerRig {
         for side in Self.sides {
             let arm = Entity()
             arm.position = Self.shoulder * [side, 1, 1]
-            outfitParts.append(arm.addPart(Meshes.sphere, Materials.matte(look.tunic), at: [0, -0.02, 0], scale: .init(repeating: 0.062)))
-            outfitParts.append(arm.addPart(Meshes.cylinder, Materials.matte(look.tunic), at: [0, -0.13, 0], scale: [0.043, 0.24, 0.043]))
-            arm.addPart(Meshes.torus(radius: 0.043, tube: 0.013), Materials.matte(look.trim), at: [0, -0.25, 0], scale: .one)
-            arm.addCylinder(skin, at: [0, -0.33, 0], radius: 0.033, height: 0.16)
+            outfitParts.append(arm.addPart(Self.sleeveMesh, Materials.matte(look.tunic), at: .zero, scale: .one))
+            arm.addPart(Meshes.torus(radius: 0.042, tube: 0.012), Materials.matte(look.trim), at: [0, -0.252, 0], scale: .one)
+            arm.addPart(Self.forearmMesh, skin, at: .zero, scale: .one)
             let hand = Entity()
             hand.position = Self.hand
-            hand.addSphere(skin, at: .zero, radius: 0.045)
+            addFist(to: hand, skin)
             arm.addChild(hand)
             torso.addChild(arm)
             arms.append(arm)
@@ -168,37 +209,73 @@ final class PlayerRig {
         }
     }
 
+    /// A fist with its thumb folded over the front, `grow` times the bare hand's size (gloves).
+    private func addFist(to hand: Entity, _ material: any RealityKit.Material, grow: Float = 1) {
+        hand.addPart(Self.fistMesh, material, at: [0, 0.01, 0] * grow, scale: .init(repeating: grow))
+        hand.addPart(Meshes.sphere, material, at: [0, 0.006, 0.036] * grow, scale: [0.017, 0.028, 0.016] * grow,
+                     rotation: simd_quatf(angle: -0.5, axis: [1, 0, 0]))
+    }
+
     private func buildHead() {
         head.position = [0, 0.5, 0]
         head.scale = SIMD3(repeating: Self.headScale)
         torso.addChild(head)
-        head.addCylinder(Materials.matte(look.skin, roughness: 0.7), at: [0, 0.03, 0], radius: 0.05, height: 0.08)
-        face.transform = Transform(scale: [0.325, Self.headRadius, Self.headRadius], rotation: simd_quatf(angle: 0, axis: [0, 1, 0]),
+        let skin = Materials.matte(look.skin, roughness: 0.7)
+        face.transform = Transform(scale: [0.32, Self.headRadius, Self.headRadius], rotation: simd_quatf(angle: 0, axis: [0, 1, 0]),
                                    translation: Self.headCenter)
         head.addChild(face)
+        // Small ears, pointed a little up and back, peeking out between the side locks.
+        for side in Self.sides {
+            addLock(skin, lon: side * 1.5, lat: -0.12, size: [0.04, 0.07, 0.02], roll: side * 0.55 + .pi, lift: -0.02)
+        }
 
-        // Hair: a big soft cap, a nape, then locks laid onto the skull.
+        // Hair: a soft cap hugging the skull, then pointed locks laid onto it, so the outline is
+        // all spikes (Flyff's hair) rather than one round ball.
         let hair = Materials.matte(look.hair, roughness: 0.55)
-        head.addSphere(hair, at: Self.headCenter + [0, 0.045, -0.06], radius: 0.345, squash: [1.02, 0.95, 1])
-        head.addSphere(hair, at: Self.headCenter + [0, -0.06, -0.11], radius: 0.27, squash: [1.1, 1, 0.95])
-        let bangs: [(lon: Float, lat: Float, size: SIMD3<Float>)] = [
-            (-0.8, 0.44, [0.075, 0.1, 0.05]), (-0.47, 0.47, [0.085, 0.115, 0.05]), (-0.16, 0.48, [0.08, 0.12, 0.05]),
-            (0.15, 0.49, [0.085, 0.11, 0.05]), (0.46, 0.47, [0.085, 0.115, 0.05]), (0.8, 0.44, [0.075, 0.1, 0.05]),
+        head.addPart(Meshes.animeHead, hair, at: Self.headCenter + [0, 0.035, -0.045], scale: [0.335, 0.31, 0.32])
+        head.addSphere(hair, at: Self.headCenter + [0, -0.07, -0.1], radius: 0.24, squash: [1.12, 1, 0.95])
+        // Bangs parted off center, their points reaching the brows.
+        let bangs: [(lon: Float, lat: Float, size: SIMD3<Float>, roll: Float)] = [
+            (-0.86, 0.36, [0.075, 0.14, 0.05], -0.25), (-0.56, 0.47, [0.085, 0.15, 0.05], -0.32),
+            (-0.24, 0.52, [0.08, 0.15, 0.05], -0.22), (0.02, 0.54, [0.07, 0.13, 0.05], 0.12),
+            (0.3, 0.51, [0.085, 0.15, 0.05], 0.3), (0.6, 0.46, [0.085, 0.14, 0.05], 0.36),
+            (0.9, 0.36, [0.075, 0.13, 0.05], 0.3),
         ]
         for bang in bangs {
-            addLock(hair, lon: bang.lon, lat: bang.lat, size: bang.size, roll: bang.lon * 0.45)
+            addLock(hair, lon: bang.lon, lat: bang.lat, size: bang.size, roll: bang.roll)
         }
         for side in Self.sides {
-            // Side locks framing the cheeks, and spiky tufts around the crown.
-            addLock(hair, lon: side * 1.15, lat: -0.05, size: [0.07, 0.19, 0.055], roll: side * 0.1, lift: 0.02)
-            addLock(hair, lon: side * 1.6, lat: 0.2, size: [0.09, 0.15, 0.06], roll: side * 0.5)
-            addLock(hair, lon: side * 2.25, lat: 0.15, size: [0.1, 0.15, 0.06], roll: side * 0.4)
+            // Long locks framing the cheeks down to the jaw, then spiky tufts flaring out around the head.
+            addLock(hair, lon: side * 1.12, lat: -0.02, size: [0.07, 0.22, 0.055], roll: side * 0.08, lift: 0.015)
+            addLock(hair, lon: side * 1.3, lat: 0.3, size: [0.08, 0.16, 0.06], roll: side * 0.35)
+            addLock(hair, lon: side * 1.75, lat: 0.12, size: [0.09, 0.17, 0.06], roll: side * 0.6)
+            addLock(hair, lon: side * 2.3, lat: 0.05, size: [0.1, 0.17, 0.06], roll: side * 0.55)
+            addLock(hair, lon: side * 2.0, lat: 0.62, size: [0.1, 0.14, 0.06], roll: side * 0.9)
         }
         for offset: Float in [-1, -0.5, 0, 0.5, 1] {
-            addLock(hair, lon: .pi + offset, lat: -0.32, size: [0.1, 0.16, 0.06], roll: -offset * 0.4)
+            addLock(hair, lon: .pi + offset, lat: -0.36, size: [0.1, 0.18, 0.06], roll: -offset * 0.5)
         }
-        for offset: Float in [-0.35, 0.35] {
-            addLock(hair, lon: .pi + offset, lat: 0.2, size: [0.12, 0.15, 0.06], roll: -offset * 0.4)
+        for offset: Float in [-0.6, 0, 0.6] {
+            addLock(hair, lon: .pi + offset, lat: 0.25, size: [0.12, 0.16, 0.06], roll: -offset * 0.5)
+        }
+        // A cowlick on the crown, sweeping up and back.
+        addLock(hair, lon: .pi - 0.2, lat: 1.05, size: [0.07, 0.13, 0.05], roll: .pi + 0.35, lift: 0.01)
+        switch look.hairStyle {
+        case .short:
+            break
+        case .long:
+            // Down past the shoulders, behind and beside the face.
+            for offset: Float in [-1.1, -0.55, 0, 0.55, 1.1] {
+                addLock(hair, lon: .pi + offset, lat: -0.5, size: [0.12, 0.3, 0.06], roll: -offset * 0.25, lift: 0.02, flare: 0.25)
+            }
+            for side in Self.sides {
+                addLock(hair, lon: side * 1.45, lat: -0.4, size: [0.08, 0.28, 0.055], roll: side * 0.1, lift: 0.03, flare: 0.15)
+            }
+        case .ponytail:
+            // Tied high at the back, swinging out behind.
+            head.addSphere(Materials.matte(look.trim), at: Self.headCenter + [0, 0.1, -0.35], radius: 0.05)
+            addLock(hair, lon: .pi, lat: 0.05, size: [0.12, 0.3, 0.07], roll: 0, lift: 0.12, flare: 0.5)
+            addLock(hair, lon: .pi + 0.15, lat: 0.1, size: [0.09, 0.24, 0.06], roll: -0.3, lift: 0.1, flare: 0.4)
         }
 
         if let beard = look.beard {
@@ -248,12 +325,14 @@ final class PlayerRig {
         if look.sprout { head.addChild(sprout) }
     }
 
-    /// Lays a teardrop lock on the skull at a longitude/latitude, hanging downward.
-    private func addLock(_ material: any RealityKit.Material, lon: Float, lat: Float, size: SIMD3<Float>, roll: Float, lift: Float = 0) {
+    /// Lays a pointed lock (or an ear) on the skull at a longitude/latitude, hanging downward.
+    /// `flare` swings the point out away from the head.
+    private func addLock(_ material: any RealityKit.Material, lon: Float, lat: Float, size: SIMD3<Float>, roll: Float, lift: Float = 0,
+                         flare: Float = 0) {
         let direction = SIMD3(cos(lat) * sin(lon), sin(lat), cos(lat) * cos(lon))
-        let rotation = simd_quatf(angle: lon, axis: [0, 1, 0]) * simd_quatf(angle: -lat, axis: [1, 0, 0])
+        let rotation = simd_quatf(angle: lon, axis: [0, 1, 0]) * simd_quatf(angle: -lat - flare, axis: [1, 0, 0])
             * simd_quatf(angle: roll, axis: [0, 0, 1])
-        head.addPart(Meshes.teardrop, material, at: Self.headCenter + direction * (Self.headRadius + size.z * 0.4 + lift),
+        head.addPart(Meshes.hairLock, material, at: Self.headCenter + direction * (Self.headRadius + size.z * 0.4 + lift),
                      scale: size, rotation: rotation)
     }
 
@@ -327,7 +406,7 @@ final class PlayerRig {
                 let leaf = Materials.matte(Palette.leaf, roughness: 0.7)
                 for i in 0..<7 {
                     let a = Float(i) / 7 * 2 * .pi
-                    collar.addPart(Meshes.teardrop, leaf, at: [sin(a) * 0.13, 0.32, cos(a) * 0.13], scale: [0.055, 0.085, 0.014],
+                    collar.addPart(Meshes.teardrop, leaf, at: [sin(a) * 0.13, 0.32, cos(a) * 0.1 + 0.008], scale: [0.055, 0.085, 0.014],
                                    rotation: simd_quatf(angle: a, axis: [0, 1, 0]) * simd_quatf(angle: -0.6, axis: [1, 0, 0]))
                 }
                 attach(collar, to: torso)
@@ -335,8 +414,8 @@ final class PlayerRig {
                 outfit = Materials.matte(Palette.bark, roughness: 1)
                 let dark = Materials.matte(Palette.darkBark, roughness: 1)
                 let bands = Entity()
-                bands.addPart(Meshes.torus(radius: 0.15, tube: 0.016), dark, at: [0, 0.23, 0], scale: .one)
-                bands.addPart(Meshes.torus(radius: 0.19, tube: 0.016), dark, at: [0, 0.03, 0], scale: .one)
+                bands.addPart(Meshes.torus(radius: 0.126, tube: 0.016), dark, at: [0, 0.23, 0], scale: [1, 1, 0.74])
+                bands.addPart(Meshes.torus(radius: 0.158, tube: 0.016), dark, at: [0, 0.03, 0], scale: [1, 1, 0.72])
                 attach(bands, to: torso)
                 for arm in arms {
                     let pad = Entity()
@@ -421,8 +500,8 @@ final class PlayerRig {
                 case .body:
                     outfit = main
                     let sash = Entity()
-                    sash.addPart(Meshes.torus(radius: 0.19, tube: 0.02), trim, at: [0, 0.03, 0], scale: .one)
-                    sash.addSphere(trim, at: [0, 0.03, 0.19], radius: 0.035)
+                    sash.addPart(Meshes.torus(radius: 0.162, tube: 0.02), trim, at: [0, 0.03, 0], scale: [1, 1, 0.72])
+                    sash.addSphere(trim, at: [0, 0.03, 0.128], radius: 0.035)
                     attach(sash, to: torso)
                 case .gloves:
                     addGloves(main, cuff: trim)
@@ -538,8 +617,8 @@ final class PlayerRig {
         case .tunic:
             // A short tabard over the belt.
             let tabard = Entity()
-            tabard.addPart(Meshes.roundedBox, main, at: [0, 0.02, 0.14], scale: [0.16, 0.2, 0.03])
-            tabard.addPart(Meshes.roundedBox, edge, at: [0, -0.08, 0.15], scale: [0.17, 0.025, 0.035])
+            tabard.addPart(Meshes.roundedBox, main, at: [0, 0.02, 0.112], scale: [0.16, 0.2, 0.03])
+            tabard.addPart(Meshes.roundedBox, edge, at: [0, -0.08, 0.122], scale: [0.17, 0.025, 0.035])
             attach(tabard, to: torso)
         case .mail:
             for arm in arms {
@@ -578,8 +657,8 @@ final class PlayerRig {
     private func addGloves(_ material: any RealityKit.Material, cuff: any RealityKit.Material) {
         for hand in hands {
             let glove = Entity()
-            glove.addSphere(material, at: .zero, radius: 0.057)
-            glove.addPart(Meshes.torus(radius: 0.045, tube: 0.016), cuff, at: [0, 0.045, 0], scale: .one)
+            addFist(to: glove, material, grow: 1.18)
+            glove.addPart(Meshes.torus(radius: 0.034, tube: 0.014), cuff, at: [0, 0.05, 0], scale: [1, 1, 1.1])
             attach(glove, to: hand)
         }
     }
@@ -1101,9 +1180,9 @@ final class PlayerRig {
         } else {
             blinking ? .blink : .open
         }
-        if wanted != expression, let material = FacePainter.materials[wanted] {
+        if wanted != expression {
             expression = wanted
-            face.model?.materials = [material]
+            face.model?.materials = [FacePainter.material(wanted, self.look.face)]
         }
     }
 
@@ -1267,10 +1346,28 @@ extension PlayerRig {
         var sprout = true
         var beard: UIColor?
         var longBeard = false
+        var iris = FacePainter.Iris.leaf
+        /// 0 wide-eyed ... 1 half-lidded.
+        var lids: CGFloat = 0
+        var lashes = false
+        var hairStyle = HairStyle.short
         /// A mushroom cap worn as a hat (the townsfolk are mushroom people at heart).
         var cap: MushroomCap?
 
         static let sprout = Look()
+
+        var face: FacePainter.Face {
+            FacePainter.Face(iris: iris, hair: hair, lids: lids, lashes: lashes)
+        }
+    }
+
+    enum HairStyle {
+        /// Sprout's spiky crop.
+        case short
+        /// Long locks down the back and beside the face.
+        case long
+        /// Tied up high at the back.
+        case ponytail
     }
 
     /// The Hollow's mushroom hats, in head space (sitting on the hair).
