@@ -89,12 +89,13 @@ import Testing
         let player = sim.spawnPlayer(profile: PlayerProfile(level: 15, playerClass: .thornshot))
         let snail = try #require(sim.snapshot().entities.first { $0.kind == .mob(.snail) })
         sim.teleport(player, to: snail.position.xz + Vec2(6, 0))
+        let start = try #require(sim.entity(player)).position.xz
         sim.enqueue(.target(snail.id, engage: true), from: player)
         let events = run(&sim, seconds: 1.5)
 
         #expect(events.contains { if case .damage(player, snail.id, _, _, _) = $0 { true } else { false } })
-        let distance = try #require(sim.entity(player)).position.xz.distance(to: try #require(sim.entity(snail.id)).position.xz)
-        #expect(distance > 4, "shoots without walking up")
+        let moved = try #require(sim.entity(player)).position.xz.distance(to: start)
+        #expect(moved < 0.5, "shoots without walking up")
     }
 
     @Test func volleyHitsSeveralMobs() throws {

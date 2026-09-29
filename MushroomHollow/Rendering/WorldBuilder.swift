@@ -51,8 +51,8 @@ enum WorldBuilder {
         culler.add(details.build(into: world, name: "Details", castsShadow: false), drawDistance: detailDrawDistance)
         culler.add(TerrainBuilder.addGrass(map, to: world, random: &random), drawDistance: grassDrawDistance)
 
-        addMarketStall(map, to: world)
         addForge(map, to: world)
+        TownBuilder.build(map, into: world)
         return BuiltWorld(root: world, culler: culler, groundPainting: painting)
     }
 
@@ -494,23 +494,5 @@ enum WorldBuilder {
         light.position = [-1, 0.6, -0.2]
         forge.addChild(light)
         world.addChild(forge)
-    }
-
-    /// Crates and a little sign next to the trader.
-    private static func addMarketStall(_ map: WorldMap, to world: Entity) {
-        guard let trader = map.npcs.first(where: { $0.id.definition.isShopkeeper }) else { return }
-        let stall = Entity()
-        stall.position = onGround(map, trader.position)
-        stall.orientation = simd_quatf(angle: trader.yaw, axis: [0, 1, 0])
-        let wood = Materials.matte(Palette.bark, roughness: 0.9)
-        stall.addPart(Meshes.roundedBox, wood, at: [0.95, 0.25, -0.3], scale: [0.5, 0.5, 0.5])
-        stall.addPart(Meshes.roundedBox, wood, at: [1.05, 0.7, -0.3], scale: [0.4, 0.4, 0.4])
-        stall.addPart(Meshes.roundedBox, wood, at: [-0.9, 0.22, -0.4], scale: [0.45, 0.45, 0.45])
-        for (index, color) in [UIColor.systemRed, .systemBlue, .systemRed].enumerated() {
-            stall.addCylinder(Materials.glossy(color), at: [0.85 + Float(index) * 0.12, 0.6, -0.2], radius: 0.05, height: 0.16)
-        }
-        stall.addCylinder(wood, at: [-1.2, 0.6, 0.2], radius: 0.04, height: 1.2)
-        stall.addPart(Meshes.roundedBox, Materials.matte(Palette.capSpot), at: [-1.2, 1.15, 0.24], scale: [0.6, 0.35, 0.05])
-        world.addChild(stall)
     }
 }

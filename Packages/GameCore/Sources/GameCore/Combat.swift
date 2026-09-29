@@ -36,9 +36,10 @@ extension GameSimulation {
             kill(&target, killer: attacker.id)
             if case let .mob(kind) = target.kind {
                 if attacker.kind == .player {
-                    awardXP(to: &attacker, for: kind)
+                    let giant = target.brain?.isGiant == true
+                    awardXP(to: &attacker, for: kind, giant: giant)
                     recordKill(of: kind, by: &attacker)
-                    rollLoot(for: kind, ownedBy: attacker, at: target.position.xz)
+                    rollLoot(for: kind, giant: giant, ownedBy: attacker, at: target.position.xz)
                     if target.brain?.boss != nil { rewardBossParticipants(target, killer: &attacker) }
                 }
                 if let offspring = kind.splitsInto {
@@ -78,10 +79,21 @@ extension GameSimulation {
         entity.combat = CombatState()
         entity.deathTicks = 0
         events.append(.died(entity: entity.id, killer: killer))
+        if var data = entity.player {
+            let lost = Progression.deathPenalty(level: entity.stats.level, xp: data.xp)
+            if lost > 0 {
+                data.xp -= lost
+                entity.player = data
+                events.append(.xpLost(player: entity.id, amount: lost))
+            }
+        }
     }
 
-    mutating func awardXP(to player: inout WorldEntity, for kind: MobKind) {
-        let amount = Progression.xpReward(baseXP: kind.stats.xp, mobLevel: kind.stats.level, playerLevel: player.stats.level)
+    mutating func awardXP(to player: inout WorldEntity, for kind: MobKind, giant: Bool = false) {
+        let stats = kind.stats
+        let amount = Progression.xpReward(baseXP: giant ? stats.xp * Giant.xpMultiplier : stats.xp,
+                                          mobLevel: stats.level + (giant ? Giant.levelBonus : 0),
+                                          playerLevel: player.stats.level)
         awardXP(to: &player, amount: amount)
     }
 

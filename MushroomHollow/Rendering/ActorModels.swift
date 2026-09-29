@@ -2,7 +2,7 @@ import GameCore
 import RealityKit
 import UIKit
 
-/// Placeholder models for mobs and NPCs, built from primitives (the player is `PlayerRig`).
+/// Placeholder models for mobs, built from primitives (the player and townsfolk are `PlayerRig`s).
 /// The newer critters live in `CritterModels`.
 /// Every model faces +Z (yaw 0) and stands on y = 0.
 @MainActor
@@ -21,6 +21,9 @@ enum ActorModels {
         case .mob(.pillBug): buildPillBug(into: model)
         case .mob(.acornling): buildAcornling(into: model)
         case .mob(.bogFrog): buildBogFrog(into: model)
+        case .mob(.aphid): buildAphid(into: model)
+        case .mob(.earthworm): buildEarthworm(into: model)
+        case .mob(.cricket): buildCricket(into: model)
         case .mob(.fuzzbee): buildFuzzbee(into: model)
         case .mob(.puffweed): buildPuffweed(into: model)
         case .mob(.puffling): buildPuffling(into: model)
@@ -35,11 +38,7 @@ enum ActorModels {
         case .mob(.grumblecap): buildGrumblecap(into: model)
         case .mob(.stagBeetle): buildStagBeetle(into: model)
         case .mob(.owl): buildOwl(into: model)
-        case .npc(.elderMorel): buildElderMorel(into: model)
-        case .npc(.chanterelle): buildChanterelle(into: model)
-        case .npc(.shiitake): buildShiitake(into: model)
-        case .npc(.truffle): buildTruffle(into: model)
-        case .npc(.porcini): buildPorcini(into: model)
+        case let .npc(npc): return npc.makeRig().root
         }
         return model
     }
@@ -105,104 +104,6 @@ enum ActorModels {
         let glow = Materials.glow(Palette.sporeGlow)
         e.addSphere(glow, at: [-0.1, 0.42, 0.3], radius: 0.05)
         e.addSphere(glow, at: [0.1, 0.42, 0.3], radius: 0.05)
-    }
-
-    private static func buildElderMorel(into e: Entity) {
-        let robe = Materials.matte(UIColor(red: 0.45, green: 0.42, blue: 0.5, alpha: 1))
-        e.addCylinder(robe, at: [0, 0.55, 0], radius: 0.32, height: 1.1)
-        e.addSphere(robe, at: [0, 0.08, 0], radius: 0.34, squash: [1, 0.3, 1])
-        e.addSphere(Materials.matte(Palette.skin), at: [0, 1.28, 0], radius: 0.25)
-        e.addSphere(Materials.matte(Palette.capSpot), at: [0, 1.12, 0.17], radius: 0.2, squash: [1, 1.3, 0.6]) // beard
-        let eye = Materials.glossy(Palette.eye)
-        e.addSphere(eye, at: [-0.08, 1.32, 0.22], radius: 0.03)
-        e.addSphere(eye, at: [0.08, 1.32, 0.22], radius: 0.03)
-        // A tall, wrinkled morel cap.
-        let morel = Materials.matte(Palette.capBrown, roughness: 1)
-        e.addPart(Meshes.cone, morel, at: [0, 1.85, 0], scale: [0.36, 0.9, 0.36])
-        let pit = Materials.matte(Palette.darkBark, roughness: 1)
-        for i in 0..<10 {
-            let a = Float(i) * 2.4
-            let y: Float = 1.55 + Float(i % 5) * 0.12
-            let r: Float = 0.3 - (y - 1.45) * 0.3
-            e.addSphere(pit, at: [sin(a) * r, y, cos(a) * r], radius: 0.06)
-        }
-        // Walking staff.
-        e.addCylinder(Materials.matte(Palette.bark), at: [0.42, 0.8, 0.1], radius: 0.035, height: 1.6)
-        e.addSphere(Materials.glow(Palette.glowCap), at: [0.42, 1.64, 0.1], radius: 0.08)
-    }
-
-    private static func buildChanterelle(into e: Entity) {
-        e.addCylinder(Materials.matte(Palette.stem), at: [0, 0.6, 0], radius: 0.28, height: 1.0)
-        e.addCylinder(Materials.matte(UIColor(red: 0.95, green: 0.9, blue: 0.8, alpha: 1)), at: [0, 0.55, 0.05], radius: 0.29, height: 0.6) // apron
-        e.addSphere(Materials.matte(Palette.skin), at: [0, 1.28, 0], radius: 0.25)
-        let eye = Materials.glossy(Palette.eye)
-        e.addSphere(eye, at: [-0.08, 1.3, 0.22], radius: 0.035)
-        e.addSphere(eye, at: [0.08, 1.3, 0.22], radius: 0.035)
-        // Chanterelles have funnel-shaped, wavy orange caps.
-        let orange = Materials.matte(UIColor(red: 0.98, green: 0.62, blue: 0.15, alpha: 1), roughness: 0.6)
-        e.addPart(Meshes.cone, orange, at: [0, 1.62, 0], scale: [0.5, 0.35, 0.5], rotation: simd_quatf(angle: .pi, axis: [1, 0, 0]))
-        e.addCylinder(orange, at: [0, 1.79, 0], radius: 0.5, height: 0.05)
-        // A satchel of wares.
-        e.addPart(Meshes.roundedBox, Materials.matte(Palette.door), at: [-0.33, 0.7, 0], scale: [0.14, 0.32, 0.3])
-    }
-
-    /// The blacksmith: stout, with a broad cracked shiitake cap, a leather apron, and a hammer.
-    private static func buildShiitake(into e: Entity) {
-        e.addCylinder(Materials.matte(Palette.stem), at: [0, 0.55, 0], radius: 0.36, height: 0.95)
-        let leather = Materials.matte(UIColor(red: 0.36, green: 0.22, blue: 0.14, alpha: 1), roughness: 0.9)
-        e.addCylinder(leather, at: [0, 0.5, 0.04], radius: 0.37, height: 0.7) // apron
-        e.addPart(Meshes.torus(radius: 0.37, tube: 0.025), Materials.matte(Palette.darkBark), at: [0, 0.82, 0], scale: .one)
-        e.addSphere(Materials.matte(Palette.skin), at: [0, 1.22, 0], radius: 0.26)
-        let eye = Materials.glossy(Palette.eye)
-        e.addSphere(eye, at: [-0.09, 1.25, 0.23], radius: 0.035)
-        e.addSphere(eye, at: [0.09, 1.25, 0.23], radius: 0.035)
-        e.addSphere(Materials.matte(Palette.darkBark), at: [0, 1.1, 0.2], radius: 0.13, squash: [1.4, 0.45, 0.6]) // moustache
-        // A wide, dark brown cap with pale cracks.
-        let cap = Materials.matte(UIColor(red: 0.42, green: 0.26, blue: 0.16, alpha: 1), roughness: 0.8)
-        e.addSphere(cap, at: [0, 1.5, 0], radius: 0.56, squash: [1, 0.42, 1])
-        let crack = Materials.matte(UIColor(red: 0.9, green: 0.82, blue: 0.68, alpha: 1))
-        for i in 0..<7 {
-            let a = Float(i) * 0.9
-            let r: Float = 0.2 + Float(i % 3) * 0.1
-            e.addSphere(crack, at: [sin(a) * r, 1.72 - r * 0.35, cos(a) * r], radius: 0.035, squash: [1.8, 0.4, 0.7])
-        }
-        // A smith's hammer, resting in the right hand.
-        let handle = Materials.matte(Palette.bark)
-        e.addCylinder(handle, at: [-0.45, 0.62, 0.12], radius: 0.03, height: 0.6)
-        e.addPart(Meshes.roundedBox, Materials.glossy(UIColor(white: 0.45, alpha: 1)), at: [-0.45, 0.95, 0.12], scale: [0.26, 0.13, 0.13])
-        e.addSphere(Materials.matte(Palette.skin), at: [-0.45, 0.7, 0.12], radius: 0.07)
-    }
-
-    /// The naturalist: a fat porcini with a bulbous stem, round spectacles, and a field notebook.
-    private static func buildPorcini(into e: Entity) {
-        let stem = Materials.matte(UIColor(red: 0.93, green: 0.88, blue: 0.76, alpha: 1))
-        e.addSphere(stem, at: [0, 0.42, 0], radius: 0.4, squash: [1, 1.05, 1]) // a porcini's belly of a stem
-        e.addCylinder(stem, at: [0, 0.85, 0], radius: 0.27, height: 0.45)
-        let vest = Materials.matte(UIColor(red: 0.36, green: 0.46, blue: 0.3, alpha: 1), roughness: 0.9)
-        e.addCylinder(vest, at: [0, 0.62, 0.03], radius: 0.36, height: 0.4)
-        e.addSphere(Materials.matte(Palette.skin), at: [0, 1.2, 0], radius: 0.25)
-        let eye = Materials.glossy(Palette.eye)
-        e.addSphere(eye, at: [-0.08, 1.23, 0.22], radius: 0.03)
-        e.addSphere(eye, at: [0.08, 1.23, 0.22], radius: 0.03)
-        // Round spectacles.
-        let wire = Materials.glossy(UIColor(red: 0.75, green: 0.6, blue: 0.3, alpha: 1))
-        for side: Float in [-1, 1] {
-            e.addPart(Meshes.torus(radius: 0.065, tube: 0.01), wire, at: [side * 0.08, 1.23, 0.235], scale: .one,
-                      rotation: simd_quatf(angle: .pi / 2, axis: [1, 0, 0]))
-        }
-        // A plump, glossy chestnut cap, paler at the rim.
-        let cap = Materials.glossy(UIColor(red: 0.55, green: 0.33, blue: 0.17, alpha: 1))
-        e.addSphere(cap, at: [0, 1.52, 0], radius: 0.5, squash: [1, 0.55, 1])
-        e.addPart(Meshes.torus(radius: 0.45, tube: 0.06), Materials.matte(UIColor(red: 0.78, green: 0.6, blue: 0.4, alpha: 1)),
-                  at: [0, 1.4, 0], scale: .one)
-        // A field notebook in one hand, a pencil in the other.
-        let hand = Materials.matte(Palette.skin)
-        e.addPart(Meshes.roundedBox, Materials.matte(UIColor(red: 0.62, green: 0.25, blue: 0.2, alpha: 1)),
-                  at: [0.3, 0.78, 0.3], scale: [0.2, 0.26, 0.05], rotation: simd_quatf(angle: -0.5, axis: [0, 1, 0]))
-        e.addSphere(hand, at: [0.36, 0.72, 0.26], radius: 0.07)
-        e.addCylinder(Materials.matte(UIColor(red: 0.95, green: 0.8, blue: 0.3, alpha: 1)), at: [-0.34, 0.8, 0.28],
-                      radius: 0.018, height: 0.22)
-        e.addSphere(hand, at: [-0.34, 0.74, 0.28], radius: 0.07)
     }
 
     /// Named wing pivots, so the renderer can flap and spread them (the owl, bees, moths).

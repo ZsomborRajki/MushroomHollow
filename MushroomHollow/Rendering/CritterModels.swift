@@ -75,6 +75,66 @@ extension ActorModels {
         e.addSphere(Materials.matte(Palette.rosePink), at: [0, 0.71, -0.2], radius: 0.06, squash: [1, 1.3, 1])
     }
 
+    /// A plump, pear-shaped green aphid with a glistening drop of honeydew on its back.
+    static func buildAphid(into e: Entity) {
+        let green = Materials.matte(UIColor(red: 0.55, green: 0.85, blue: 0.35, alpha: 1), roughness: 0.4)
+        let pale = Materials.matte(UIColor(red: 0.78, green: 0.95, blue: 0.55, alpha: 1), roughness: 0.5)
+        let dark = Materials.matte(UIColor(red: 0.25, green: 0.45, blue: 0.15, alpha: 1))
+        e.addSphere(green, at: [0, 0.32, -0.08], radius: 1, squash: [0.34, 0.3, 0.42])
+        e.addSphere(pale, at: [0, 0.24, 0.02], radius: 1, squash: [0.28, 0.2, 0.34])
+        e.addSphere(green, at: [0, 0.34, 0.32], radius: 0.2)
+        for side: Float in [-1, 1] {
+            // The two little "tailpipes" aphids have on their backs.
+            e.addRod(dark, from: [side * 0.12, 0.45, -0.3], to: [side * 0.16, 0.56, -0.42], radius: 0.025)
+        }
+        e.addSphere(Materials.translucent(UIColor(red: 1, green: 0.85, blue: 0.4, alpha: 1), opacity: 0.8), at: [0, 0.64, -0.12],
+                    radius: 0.09, squash: [1, 1.2, 1])
+        addCuteEyes(to: e, at: [0, 0.38, 0.49], spacing: 0.15, size: 0.07)
+        addAntennae(to: e, from: [0, 0.48, 0.4], spread: 0.12, length: 0.34, material: dark)
+        addLegs(to: e, material: dark, zs: [-0.22, 0, 0.2], hipX: 0.22, hipY: 0.2, reach: 0.16)
+    }
+
+    /// A pink earthworm in a lazy S, with a pale saddle band. It dives underground when hurt.
+    static func buildEarthworm(into e: Entity) {
+        let pink = Materials.matte(UIColor(red: 0.93, green: 0.58, blue: 0.6, alpha: 1), roughness: 0.35)
+        let band = Materials.matte(UIColor(red: 0.98, green: 0.78, blue: 0.72, alpha: 1), roughness: 0.4)
+        let segments = 9
+        for i in 0..<segments {
+            let t = Float(i) / Float(segments - 1)
+            let z = 0.55 - t * 1.25
+            let x = sin(t * 5) * 0.14
+            // The head end rears up a little.
+            let y = 0.17 + max(0, 0.35 - t) * 0.6
+            let r: Float = 0.17 - abs(t - 0.35) * 0.08
+            e.addSphere(i == 3 ? band : pink, at: [x, y, z], radius: r)
+        }
+        addCuteEyes(to: e, at: [sin(0) * 0.14, 0.4, 0.68], spacing: 0.12, size: 0.055)
+        e.addSphere(Materials.matte(UIColor(red: 0.55, green: 0.25, blue: 0.3, alpha: 1)), at: [0, 0.32, 0.7], radius: 1,
+                    squash: [0.05, 0.015, 0.02]) // mouth
+    }
+
+    /// A glossy brown cricket with long, folded hind legs and whip antennae.
+    static func buildCricket(into e: Entity) {
+        let shell = Materials.glossy(UIColor(red: 0.42, green: 0.28, blue: 0.16, alpha: 1))
+        let dark = Materials.glossy(UIColor(red: 0.2, green: 0.13, blue: 0.08, alpha: 1))
+        let belly = Materials.matte(UIColor(red: 0.72, green: 0.55, blue: 0.32, alpha: 1))
+        e.addSphere(shell, at: [0, 0.42, -0.12], radius: 1, squash: [0.28, 0.24, 0.52])
+        e.addSphere(belly, at: [0, 0.34, -0.1], radius: 1, squash: [0.22, 0.18, 0.44])
+        e.addSphere(dark, at: [0, 0.5, -0.2], radius: 1, squash: [0.3, 0.14, 0.46]) // folded wings
+        e.addSphere(shell, at: [0, 0.48, 0.38], radius: 0.22)
+        addCuteEyes(to: e, at: [0, 0.52, 0.56], spacing: 0.18, size: 0.075)
+        for side: Float in [-1, 1] {
+            e.addRod(dark, from: [side * 0.06, 0.64, 0.5], to: [side * 0.32, 1.05, 0.2], radius: 0.012)
+            e.addRod(dark, from: [side * 0.32, 1.05, 0.2], to: [side * 0.5, 1.1, -0.35], radius: 0.01)
+            // Big jumping legs: thigh up and back, shin down to the ground.
+            e.addRod(shell, from: [side * 0.2, 0.4, -0.05], to: [side * 0.34, 0.78, -0.45], radius: 0.05)
+            e.addRod(dark, from: [side * 0.34, 0.78, -0.45], to: [side * 0.3, 0.02, -0.6], radius: 0.025)
+            for z: Float in [0.1, 0.3] {
+                e.addRod(dark, from: [side * 0.16, 0.32, z], to: [side * 0.3, 0.01, z + 0.08], radius: 0.02)
+            }
+        }
+    }
+
     // MARK: - Buttercup Meadow
 
     static func buildFuzzbee(into e: Entity) {

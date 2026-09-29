@@ -294,6 +294,11 @@ extension GameSimulation {
 
     // MARK: - Items
 
+    /// Hit or hitting something in the last few seconds.
+    func isInCombat(_ player: WorldEntity) -> Bool {
+        player.combat.engaged || (player.combat.lastCombatTick > 0 && tick - player.combat.lastCombatTick < UInt64(Self.ticks(4)))
+    }
+
     mutating func fail(_ reason: ActionFailure, _ player: WorldEntity) {
         events.append(.actionFailed(player: player.id, reason: reason))
     }
@@ -304,6 +309,7 @@ extension GameSimulation {
         guard case let .consumable(effect) = item.definition.kind else { return .notUsable }
         guard data.inventory.count(of: item) > 0 else { return .missingItem }
         guard data.itemCooldown <= 0 else { return .itemCooldown }
+        if case .returnToTown = effect, isInCombat(player) { return .inCombat }
 
         data.inventory.remove(item, count: 1)
         data.itemCooldown = Self.ticks(Self.itemCooldownSeconds)
@@ -317,6 +323,15 @@ extension GameSimulation {
             let restored = min(amount, player.stats.maxMP - player.stats.mp)
             player.stats.mp += restored
             events.append(.manaRestored(target: player.id, amount: restored))
+        case .returnToTown:
+            let home = map.resolve(map.playerSpawn, radius: player.radius)
+            player.position = Vec3(home.x, 0, home.y)
+            player.isFlying = false
+            player.climbIntent = 0
+            player.combat = CombatState()
+            player.moveIntent = .zero
+            player.velocity = .zero
+            events.append(.blinked(player: player.id))
         }
         events.append(.itemUsed(player: player.id, item: item))
         reportCollectProgress(for: &player)
@@ -400,6 +415,7 @@ extension GameSimulation {
             return progress >= goal ? .readyToTurnIn : .active(progress: progress, goal: goal)
         }
         if let prerequisite = definition.prerequisite, !data.completedQuests.contains(prerequisite) { return .hidden }
+        if let maxLevel = definition.maxLevel, player.stats.level > maxLevel { return .hidden }
         if player.stats.level < definition.requiredLevel { return .tooLowLevel(required: definition.requiredLevel) }
         return .available
     }
@@ -433,7 +449,8 @@ extension GameSimulation {
         data.inventory = bag
         data.caps += definition.rewardCaps
         data.activeQuests[quest] = nil
-        data.completedQuests.insert(quest)
+        // Hunting requests go straight back on the board.
+        if !definition.isRepeatable { data.completedQuests.insert(quest) }
         player.player = data
 
         events.append(.questCompleted(player: player.id, quest: quest))

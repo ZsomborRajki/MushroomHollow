@@ -3,13 +3,17 @@ import RealityKit
 import SwiftUI
 import UIKit
 
-/// Sprout, the player character: a chibi forest kid with big anime eyes, a mushroom beret,
-/// and a sprout growing out of it. A joint hierarchy (hips, torso, head, shoulders, legs)
-/// animated procedurally; gear attaches to the joints. Faces +Z and stands on y = 0.
+/// Sprout, the player character, in Flyff proportions: about four heads tall, long-legged and
+/// slim, with big anime eyes and spiky hair (and a sprout leaf growing out of it). A joint
+/// hierarchy (hips, torso, head, shoulders, legs) animated procedurally; gear attaches to the
+/// joints and every armor piece changes the outfit's shape and colors. Townsfolk use the same
+/// body with their own `Look`. Faces +Z and stands on y = 0.
 @MainActor
 final class PlayerRig {
     /// Where the right hand grips the dandelion stalk while flying (model space).
-    static let gliderGrip: SIMD3<Float> = [-0.36, 0.89, 0.04]
+    static let gliderGrip: SIMD3<Float> = [-0.42, 1.45, 0.04]
+
+    let look: Look
 
     let root = Entity()
     private(set) var playerClass: PlayerClass?
@@ -29,6 +33,7 @@ final class PlayerRig {
     private var scarfTails: [Entity] = []
     private var scarfParts: [ModelEntity] = []
     private var outfitParts: [ModelEntity] = []
+    private var legParts: [ModelEntity] = []
     private var bootParts: [ModelEntity] = []
     private var cuffParts: [ModelEntity] = []
     private var gear: [Entity] = []
@@ -57,14 +62,21 @@ final class PlayerRig {
 
     /// +1 is the character's left (+X), -1 their right (-X). Index 1 holds the weapon.
     private static let sides: [Float] = [1, -1]
-    private static let hipHeight: Float = 0.42
-    private static let shoulder: SIMD3<Float> = [0.165, 0.3, 0]
+    private static let hipHeight: Float = 0.68
+    private static let shoulder: SIMD3<Float> = [0.15, 0.4, 0]
+    /// The head keeps its anime detail but is drawn smaller than Sprout's old chibi one.
+    private static let headScale: Float = 0.66
     private static let headCenter: SIMD3<Float> = [0, 0.33, 0]
     private static let headRadius: Float = 0.31
 
+    /// A slim tunic, flaring a little at the hem (Flyff's travelling clothes).
     private static let tunicMesh = Meshes.lathe([
         [0, 0.38], [0.08, 0.375], [0.13, 0.345], [0.15, 0.29], [0.145, 0.21], [0.15, 0.14],
         [0.175, 0.07], [0.205, 0], [0.222, -0.05], [0.222, -0.05], [0.2, -0.065], [0, -0.06],
+    ].map { SIMD2<Float>($0[0] * 0.82, $0[1] * 1.18) })
+    /// A robe's long skirt, from the hips to below the knee.
+    private static let robeMesh = Meshes.lathe([
+        [0.17, 0.02], [0.19, -0.1], [0.22, -0.25], [0.25, -0.4], [0.26, -0.44], [0.2, -0.45], [0.15, -0.3], [0.13, 0.02],
     ])
     private static let capMesh = Meshes.lathe([
         [0, 0.17], [0.08, 0.163], [0.15, 0.14], [0.21, 0.105], [0.26, 0.06], [0.293, 0.015],
@@ -72,7 +84,8 @@ final class PlayerRig {
     ])
     private static let capUndersideMesh = Meshes.lathe([[0.298, -0.04], [0.25, -0.045], [0.15, -0.03], [0, -0.02]])
 
-    init() {
+    init(look: Look = .sprout) {
+        self.look = look
         face = ModelEntity(mesh: Meshes.uvSphere, materials: [FacePainter.materials[.open]!])
         hatCap = ModelEntity(mesh: Self.capMesh, materials: [Materials.matte(Palette.capRed, roughness: 0.5)])
 
@@ -94,23 +107,25 @@ final class PlayerRig {
         let tunic = ModelEntity(mesh: Self.tunicMesh, materials: [])
         torso.addChild(tunic)
         outfitParts.append(tunic)
-        let trim = Materials.matte(SproutLook.trim)
-        torso.addPart(Meshes.torus(radius: 0.214, tube: 0.02), trim, at: [0, -0.05, 0], scale: .one)
-        torso.addPart(Meshes.torus(radius: 0.148, tube: 0.022), Materials.matte(SproutLook.belt), at: [0, 0.13, 0], scale: .one)
-        torso.addPart(Meshes.roundedBox, Materials.glossy(SproutLook.gold), at: [0, 0.13, 0.168], scale: [0.06, 0.05, 0.02])
-        for y: Float in [0.22, 0.29] {
-            torso.addSphere(trim, at: [0, y, 0.152], radius: 0.014)
+        let trim = Materials.matte(look.trim)
+        torso.addPart(Meshes.torus(radius: 0.175, tube: 0.018), trim, at: [0, -0.06, 0], scale: .one)
+        torso.addPart(Meshes.torus(radius: 0.124, tube: 0.02), Materials.matte(SproutLook.belt), at: [0, 0.155, 0], scale: .one)
+        torso.addPart(Meshes.roundedBox, Materials.glossy(SproutLook.gold), at: [0, 0.155, 0.14], scale: [0.055, 0.045, 0.02])
+        for y: Float in [0.26, 0.34] {
+            torso.addSphere(trim, at: [0, y, 0.126], radius: 0.013)
         }
+        torso.addCylinder(Materials.matte(look.skin, roughness: 0.7), at: [0, 0.47, 0], radius: 0.042, height: 0.1) // neck
 
-        // A chunky knitted scarf with two tails that flutter behind.
-        let scarf = torso.addPart(Meshes.torus(radius: 0.1, tube: 0.046), Materials.matte(SproutLook.scarf), at: [0, 0.375, 0],
+        // A knitted scarf with two tails that flutter behind (it takes the class color).
+        guard look.scarf else { return }
+        let scarf = torso.addPart(Meshes.torus(radius: 0.085, tube: 0.04), Materials.matte(SproutLook.scarf), at: [0, 0.44, 0],
                                   scale: [1, 0.8, 1])
         scarfParts.append(scarf)
         for side in Self.sides {
             let tail = Entity()
-            tail.position = [side * 0.035, 0.36, -0.12]
-            let piece = tail.addPart(Meshes.roundedBox, Materials.matte(SproutLook.scarf), at: [0, -0.1, -0.01],
-                                     scale: [0.07, 0.2, 0.025])
+            tail.position = [side * 0.03, 0.42, -0.1]
+            let piece = tail.addPart(Meshes.roundedBox, Materials.matte(SproutLook.scarf), at: [0, -0.12, -0.01],
+                                     scale: [0.065, 0.24, 0.022])
             scarfParts.append(piece)
             torso.addChild(tail)
             scarfTails.append(tail)
@@ -118,32 +133,34 @@ final class PlayerRig {
     }
 
     private func buildLegs() {
-        let leggings = Materials.matte(SproutLook.trim)
+        let leggings = Materials.matte(look.legs)
         for side in Self.sides {
             let leg = Entity()
-            leg.position = [side * 0.08, 0, 0]
-            leg.addCylinder(leggings, at: [0, -0.13, 0], radius: 0.05, height: 0.26)
-            bootParts.append(leg.addPart(Meshes.cylinder, Materials.matte(SproutLook.boots), at: [0, -0.3, 0], scale: [0.062, 0.11, 0.062]))
-            bootParts.append(leg.addPart(Meshes.sphere, Materials.matte(SproutLook.boots), at: [0, -0.37, 0.03], scale: [0.07, 0.05, 0.098]))
-            cuffParts.append(leg.addPart(Meshes.torus(radius: 0.063, tube: 0.02), Materials.matte(SproutLook.bootCuff),
-                                         at: [0, -0.245, 0], scale: .one))
+            leg.position = [side * 0.075, 0, 0]
+            legParts.append(leg.addPart(Meshes.sphere, leggings, at: [0, -0.04, 0], scale: .init(repeating: 0.068)))
+            legParts.append(leg.addPart(Meshes.cylinder, leggings, at: [0, -0.15, 0], scale: [0.058, 0.24, 0.058]))
+            legParts.append(leg.addPart(Meshes.cylinder, leggings, at: [0, -0.36, 0], scale: [0.048, 0.22, 0.048]))
+            bootParts.append(leg.addPart(Meshes.cylinder, Materials.matte(look.boots), at: [0, -0.55, 0], scale: [0.058, 0.2, 0.058]))
+            bootParts.append(leg.addPart(Meshes.sphere, Materials.matte(look.boots), at: [0, -0.635, 0.035], scale: [0.064, 0.05, 0.1]))
+            cuffParts.append(leg.addPart(Meshes.torus(radius: 0.06, tube: 0.018), Materials.matte(look.bootCuff),
+                                         at: [0, -0.45, 0], scale: .one))
             hips.addChild(leg)
             legs.append(leg)
         }
     }
 
     private func buildArms() {
-        let skin = Materials.matte(SproutLook.skin, roughness: 0.7)
+        let skin = Materials.matte(look.skin, roughness: 0.7)
         for side in Self.sides {
             let arm = Entity()
             arm.position = Self.shoulder * [side, 1, 1]
-            outfitParts.append(arm.addPart(Meshes.sphere, Materials.matte(SproutLook.tunic), at: [0, -0.02, 0], scale: .init(repeating: 0.068)))
-            outfitParts.append(arm.addPart(Meshes.cylinder, Materials.matte(SproutLook.tunic), at: [0, -0.08, 0], scale: [0.044, 0.14, 0.044]))
-            arm.addPart(Meshes.torus(radius: 0.044, tube: 0.014), Materials.matte(SproutLook.trim), at: [0, -0.15, 0], scale: .one)
-            arm.addCylinder(skin, at: [0, -0.19, 0], radius: 0.036, height: 0.08)
+            outfitParts.append(arm.addPart(Meshes.sphere, Materials.matte(look.tunic), at: [0, -0.02, 0], scale: .init(repeating: 0.062)))
+            outfitParts.append(arm.addPart(Meshes.cylinder, Materials.matte(look.tunic), at: [0, -0.13, 0], scale: [0.043, 0.24, 0.043]))
+            arm.addPart(Meshes.torus(radius: 0.043, tube: 0.013), Materials.matte(look.trim), at: [0, -0.25, 0], scale: .one)
+            arm.addCylinder(skin, at: [0, -0.33, 0], radius: 0.033, height: 0.16)
             let hand = Entity()
             hand.position = Self.hand
-            hand.addSphere(skin, at: .zero, radius: 0.048)
+            hand.addSphere(skin, at: .zero, radius: 0.045)
             arm.addChild(hand)
             torso.addChild(arm)
             arms.append(arm)
@@ -152,15 +169,16 @@ final class PlayerRig {
     }
 
     private func buildHead() {
-        head.position = [0, 0.38, 0]
+        head.position = [0, 0.5, 0]
+        head.scale = SIMD3(repeating: Self.headScale)
         torso.addChild(head)
-        head.addCylinder(Materials.matte(SproutLook.skin, roughness: 0.7), at: [0, 0.03, 0], radius: 0.05, height: 0.08)
+        head.addCylinder(Materials.matte(look.skin, roughness: 0.7), at: [0, 0.03, 0], radius: 0.05, height: 0.08)
         face.transform = Transform(scale: [0.325, Self.headRadius, Self.headRadius], rotation: simd_quatf(angle: 0, axis: [0, 1, 0]),
                                    translation: Self.headCenter)
         head.addChild(face)
 
         // Hair: a big soft cap, a nape, then locks laid onto the skull.
-        let hair = Materials.matte(SproutLook.hair, roughness: 0.55)
+        let hair = Materials.matte(look.hair, roughness: 0.55)
         head.addSphere(hair, at: Self.headCenter + [0, 0.045, -0.06], radius: 0.345, squash: [1.02, 0.95, 1])
         head.addSphere(hair, at: Self.headCenter + [0, -0.06, -0.11], radius: 0.27, squash: [1.1, 1, 0.95])
         let bangs: [(lon: Float, lat: Float, size: SIMD3<Float>)] = [
@@ -183,7 +201,22 @@ final class PlayerRig {
             addLock(hair, lon: .pi + offset, lat: 0.2, size: [0.12, 0.15, 0.06], roll: -offset * 0.4)
         }
 
-        // The Hollow's red mushroom beret, worn at a jaunty angle.
+        if let beard = look.beard {
+            // A long beard or a bushy moustache under the nose.
+            let material = Materials.matte(beard, roughness: 0.9)
+            if look.longBeard {
+                head.addSphere(material, at: Self.headCenter + [0, -0.3, 0.2], radius: 0.2, squash: [1, 1.4, 0.7])
+                head.addPart(Meshes.cone, material, at: Self.headCenter + [0, -0.55, 0.22], scale: [0.13, 0.3, 0.1],
+                             rotation: simd_quatf(angle: .pi, axis: [1, 0, 0]))
+            } else {
+                for side in Self.sides {
+                    head.addSphere(material, at: Self.headCenter + [side * 0.08, -0.1, 0.29], radius: 0.07, squash: [1.3, 0.6, 0.6])
+                }
+            }
+        }
+        if let cap = look.cap { head.addChild(cap.build()) }
+
+        // Equipped hats sit on this (hidden while none is worn, so the hair shows, as in Flyff).
         hat.transform = Transform(scale: .one,
                                   rotation: simd_quatf(angle: 0.2, axis: [0, 0, 1]) * simd_quatf(angle: -0.15, axis: [1, 0, 0]),
                                   translation: [0.02, 0.61, -0.03])
@@ -204,15 +237,15 @@ final class PlayerRig {
         }
         hat.addChild(hatSpots)
 
-        // Sprout's namesake, growing out of the top of the cap.
-        sprout.position = [0, 0.155, 0]
+        // Sprout's namesake: a little leaf growing out of the crown.
+        sprout.position = [0, 0.69, -0.02]
         let leaf = Materials.matte(SproutLook.sproutLeaf, roughness: 0.6)
         sprout.addCylinder(leaf, at: [0, 0.04, 0], radius: 0.012, height: 0.08)
         for side in Self.sides {
             sprout.addPart(Meshes.teardrop, leaf, at: [side * 0.045, 0.085, 0], scale: [0.038, 0.065, 0.014],
                            rotation: simd_quatf(angle: side * (.pi / 2 + 0.35), axis: [0, 0, 1]))
         }
-        hat.addChild(sprout)
+        if look.sprout { head.addChild(sprout) }
     }
 
     /// Lays a teardrop lock on the skull at a longitude/latitude, hanging downward.
@@ -239,11 +272,13 @@ final class PlayerRig {
         bladeReach = nil
         hands[0].orientation = Self.identity
 
-        var outfit = Materials.matte(SproutLook.tunic)
-        var boots = Materials.matte(SproutLook.boots)
-        var cuffs = Materials.matte(SproutLook.bootCuff)
+        var outfit = Materials.matte(look.tunic)
+        var leggings = Materials.matte(look.legs)
+        var boots = Materials.matte(look.boots)
+        var cuffs = Materials.matte(look.bootCuff)
         var cap = Materials.matte(Palette.capRed, roughness: 0.5)
         var showSpots = true
+        var wearsHat = false
         // A complete set makes its trim glow.
         let fullSet = ItemSet.allCases.first { $0.definition.pieces.allSatisfy(items.contains) }
 
@@ -265,6 +300,12 @@ final class PlayerRig {
                 attach(model, to: hands[0])
                 shield = model
                 continue
+            }
+            if item.definition.equipSlot == .hat { wearsHat = true }
+            if item.definition.equipSlot == .body, let style = Self.bodyStyle(item) {
+                // Legs match the armor, a shade darker (Flyff sets come with trousers).
+                leggings = Materials.matte(Self.bodyColor(item).darker(0.72))
+                addBodyStyle(style, color: Self.bodyColor(item), trim: Self.bodyTrim(item))
             }
             switch item {
             case .acornCap:
@@ -395,22 +436,24 @@ final class PlayerRig {
         }
 
         for part in outfitParts { part.model?.materials = [outfit] }
+        for part in legParts { part.model?.materials = [leggings] }
         for part in bootParts { part.model?.materials = [boots] }
         for part in cuffParts { part.model?.materials = [cuffs] }
         hatCap.model?.materials = [cap]
         hatSpots.isEnabled = showSpots
-        let scarf = Materials.matte(playerClass.map { UIColor($0.tint) } ?? SproutLook.scarf)
+        hat.isEnabled = wearsHat
+        let scarf = Materials.matte(playerClass.map { UIColor($0.tint) } ?? look.scarfColor)
         for part in scarfParts { part.model?.materials = [scarf] }
 
         switch playerClass {
         case .guardian where shield == nil:
             // A spare shield on the back, until a real one is in hand.
             let shield = Entity()
-            shield.addCylinder(Materials.glossy(Palette.bark), at: [0, 0.18, -0.2], radius: 0.19, height: 0.04,
+            shield.addCylinder(Materials.glossy(Palette.bark), at: [0, 0.24, -0.17], radius: 0.19, height: 0.04,
                                rotation: simd_quatf(angle: .pi / 2, axis: [1, 0, 0]))
-            shield.addPart(Meshes.torus(radius: 0.19, tube: 0.02), Materials.glossy(SproutLook.gold), at: [0, 0.18, -0.2], scale: .one,
+            shield.addPart(Meshes.torus(radius: 0.19, tube: 0.02), Materials.glossy(SproutLook.gold), at: [0, 0.24, -0.17], scale: .one,
                            rotation: simd_quatf(angle: .pi / 2, axis: [1, 0, 0]))
-            shield.addSphere(Materials.glossy(Palette.shelfFungus), at: [0, 0.18, -0.225], radius: 0.055)
+            shield.addSphere(Materials.glossy(Palette.shelfFungus), at: [0, 0.24, -0.195], radius: 0.055)
             attach(shield, to: torso)
         case .thornshot:
             let quiver = Entity()
@@ -429,7 +472,7 @@ final class PlayerRig {
             self.orb = orb
         case .dewkeeper:
             let halo = Entity()
-            halo.position = [0, 0.93, 0]
+            halo.position = [0, 0.98, 0]
             let dew = Materials.glow(UIColor(red: 0.55, green: 0.9, blue: 1, alpha: 1))
             for i in 0..<8 {
                 let a = Float(i) / 8 * 2 * .pi
@@ -439,6 +482,95 @@ final class PlayerRig {
             self.halo = halo
         case .guardian, nil:
             break
+        }
+    }
+
+    // MARK: - Armor silhouettes
+
+    /// How a body armor reshapes the outfit, so tiers and sets read at a glance (as in Flyff).
+    enum BodyStyle {
+        /// Plain travelling clothes.
+        case tunic
+        /// Shoulder pads, a chest plate, and plates over the hips.
+        case mail
+        /// A long skirt to below the knee.
+        case robe
+        /// A high collar and long tails behind.
+        case coat
+    }
+
+    static func bodyStyle(_ item: ItemID) -> BodyStyle? {
+        switch item {
+        case .leafTunic, .dewleafVest: .tunic
+        case .barkMail, .turtleshellMail, .mantisCarapace, .heartwoodPlate: .mail
+        case .myceliumRobe, .rainpetalGown: .robe
+        case .featherCloak, .thistledownCoat, .briarJerkin: .coat
+        default: nil
+        }
+    }
+
+    static func bodyColor(_ item: ItemID) -> UIColor {
+        switch item {
+        case .leafTunic: UIColor(red: 0.38, green: 0.62, blue: 0.24, alpha: 1)
+        case .barkMail: Palette.bark
+        case .featherCloak: UIColor(red: 0.78, green: 0.68, blue: 0.52, alpha: 1)
+        case .turtleshellMail: Palette.turtleSkin
+        case .mantisCarapace: Palette.mantisWhite
+        default: item.definition.set.map { look(of: $0).main } ?? SproutLook.tunic
+        }
+    }
+
+    static func bodyTrim(_ item: ItemID) -> UIColor {
+        switch item {
+        case .leafTunic: Palette.leaf
+        case .barkMail: Palette.darkBark
+        case .featherCloak: Palette.owlFeather
+        case .turtleshellMail: Palette.turtleShell
+        case .mantisCarapace: Palette.mantisPink
+        default: item.definition.set.map { look(of: $0).trim } ?? SproutLook.trim
+        }
+    }
+
+    private func addBodyStyle(_ style: BodyStyle, color: UIColor, trim: UIColor) {
+        let main = Materials.matte(color, roughness: 0.7)
+        let edge = Materials.matte(trim, roughness: 0.6)
+        switch style {
+        case .tunic:
+            // A short tabard over the belt.
+            let tabard = Entity()
+            tabard.addPart(Meshes.roundedBox, main, at: [0, 0.02, 0.14], scale: [0.16, 0.2, 0.03])
+            tabard.addPart(Meshes.roundedBox, edge, at: [0, -0.08, 0.15], scale: [0.17, 0.025, 0.035])
+            attach(tabard, to: torso)
+        case .mail:
+            for arm in arms {
+                let pad = Entity()
+                pad.addSphere(main, at: [0, 0.02, 0], radius: 0.095, squash: [1.15, 0.75, 1.1])
+                pad.addPart(Meshes.torus(radius: 0.085, tube: 0.014), edge, at: [0, -0.01, 0], scale: .one)
+                attach(pad, to: arm)
+            }
+            let plate = Entity()
+            plate.addPart(Meshes.roundedBox, main, at: [0, 0.3, 0.1], scale: [0.24, 0.2, 0.06])
+            plate.addPart(Meshes.roundedBox, edge, at: [0, 0.3, 0.13], scale: [0.04, 0.16, 0.02])
+            attach(plate, to: torso)
+            let tassets = Entity()
+            for side in Self.sides {
+                tassets.addPart(Meshes.roundedBox, main, at: [side * 0.1, -0.1, 0.08], scale: [0.11, 0.14, 0.03],
+                                rotation: simd_quatf(angle: side * 0.25, axis: [0, 1, 0]) * simd_quatf(angle: -0.15, axis: [1, 0, 0]))
+            }
+            attach(tassets, to: hips)
+        case .robe:
+            let skirt = Entity()
+            skirt.addPart(Self.robeMesh, main, at: [0, -0.02, 0], scale: .one)
+            skirt.addPart(Meshes.torus(radius: 0.255, tube: 0.018), edge, at: [0, -0.46, 0], scale: .one)
+            attach(skirt, to: hips)
+        case .coat:
+            let coat = Entity()
+            coat.addPart(Meshes.torus(radius: 0.1, tube: 0.035), edge, at: [0, 0.46, -0.01], scale: [1, 1.4, 1])
+            for side in Self.sides {
+                coat.addPart(Meshes.roundedBox, main, at: [side * 0.07, -0.18, -0.12], scale: [0.12, 0.42, 0.03],
+                             rotation: simd_quatf(angle: 0.18, axis: [1, 0, 0]) * simd_quatf(angle: side * 0.12, axis: [0, 0, 1]))
+            }
+            attach(coat, to: torso)
         }
     }
 
@@ -453,7 +585,7 @@ final class PlayerRig {
     }
 
     /// Each set's cloth color and its trim.
-    private static func look(of set: ItemSet) -> (main: UIColor, trim: UIColor) {
+    static func look(of set: ItemSet) -> (main: UIColor, trim: UIColor) {
         switch set {
         case .dewleaf: (UIColor(red: 0.42, green: 0.76, blue: 0.48, alpha: 1), UIColor(red: 0.72, green: 0.94, blue: 1, alpha: 1))
         case .heartwood: (UIColor(red: 0.5, green: 0.32, blue: 0.18, alpha: 1), SproutLook.gold)
@@ -586,7 +718,7 @@ final class PlayerRig {
     private static let trailSpan: Float = 0.2
     /// The wrist cocks the blade out along the arm while swinging.
     private static let wristBend = simd_quatf(angle: 1.35, axis: [1, 0, 0])
-    private static let hand: SIMD3<Float> = [0, -0.25, 0]
+    private static let hand: SIMD3<Float> = [0, -0.42, 0]
     private static let identity = simd_quatf(angle: 0, axis: [1, 0, 0])
     private static let rightShoulder = shoulder * [-1, 1, 1]
     private static let leftShoulder = shoulder
@@ -724,9 +856,9 @@ final class PlayerRig {
             sproutSway = sin(t * 5) * 0.25
         } else if motion.moving {
             // A bouncy, skipping run (the renderer bobs the whole body in step).
-            let stride = sin(t * 11)
-            legSwing = [stride * 0.75, -stride * 0.75]
-            armSwing = [-stride * 0.65, stride * 0.65]
+            let stride = sin(t * 12)
+            legSwing = [stride * 0.7, -stride * 0.7]
+            armSwing = [-stride * 0.6, stride * 0.6]
             twist = stride * 0.1
             nod = 0.06
             scarfLift = 0.75 + sin(t * 16) * 0.12
@@ -935,7 +1067,9 @@ final class PlayerRig {
             arms[i].orientation = armPose[i]
             legs[i].orientation = simd_quatf(angle: Self.sides[i] * legSpread[i], axis: [0, 0, 1])
                 * simd_quatf(angle: legSwing[i], axis: [1, 0, 0])
-            scarfTails[i].orientation = simd_quatf(angle: Self.sides[i] * 0.18, axis: [0, 0, 1])
+        }
+        for (i, tail) in scarfTails.enumerated() {
+            tail.orientation = simd_quatf(angle: Self.sides[i] * 0.18, axis: [0, 0, 1])
                 * simd_quatf(angle: scarfLift + Float(i) * 0.08 + sin(t * 9 + Float(i)) * 0.04, axis: [1, 0, 0])
         }
         // Bows, staves, and shields keep their own facing whatever the arm does.
@@ -953,7 +1087,7 @@ final class PlayerRig {
             trail.hide()
         }
         sprout.orientation = simd_quatf(angle: sproutSway, axis: [0, 0, 1])
-        orb?.position = [0.42 + cos(t * 0.9) * 0.05, 1.2 + sin(t * 2) * 0.06, -0.05 + sin(t * 0.9) * 0.05]
+        orb?.position = [0.45 + cos(t * 0.9) * 0.05, 1.55 + sin(t * 2) * 0.06, -0.05 + sin(t * 0.9) * 0.05]
         halo?.orientation = simd_quatf(angle: t * 0.8, axis: [0, 1, 0])
 
         // Blink every few seconds, at a different moment for each player.
@@ -1113,5 +1247,113 @@ final class PlayerRig {
     private static func ease(_ x: Float) -> Float {
         let c = min(max(x, 0), 1)
         return c * c * (3 - 2 * c)
+    }
+}
+
+// MARK: - Looks
+
+extension PlayerRig {
+    /// Colors and headgear for one character: Sprout by default, or a townsperson.
+    struct Look {
+        var skin = SproutLook.skin
+        var hair = SproutLook.hair
+        var tunic = SproutLook.tunic
+        var trim = SproutLook.trim
+        var legs = UIColor(red: 0.36, green: 0.27, blue: 0.2, alpha: 1)
+        var boots = SproutLook.boots
+        var bootCuff = SproutLook.bootCuff
+        var scarf = true
+        var scarfColor = SproutLook.scarf
+        var sprout = true
+        var beard: UIColor?
+        var longBeard = false
+        /// A mushroom cap worn as a hat (the townsfolk are mushroom people at heart).
+        var cap: MushroomCap?
+
+        static let sprout = Look()
+    }
+
+    /// The Hollow's mushroom hats, in head space (sitting on the hair).
+    enum MushroomCap {
+        /// A tall, pitted cone (Elder Morel).
+        case morel(UIColor)
+        /// A wavy funnel (Chanterelle).
+        case funnel(UIColor)
+        /// A broad, flat cap with pale cracks (Shiitake).
+        case wide(UIColor)
+        /// A round cap with spots.
+        case beret(UIColor, spots: Bool)
+        /// A cluster of tiny white caps on long stalks (Enoki).
+        case cluster(UIColor)
+        /// Layered frills (Maitake).
+        case frills(UIColor)
+        /// A pale fan shape (Oyster).
+        case fan(UIColor)
+
+        @MainActor
+        func build() -> Entity {
+            let e = Entity()
+            let top: SIMD3<Float> = [0, 0.66, -0.02]
+            switch self {
+            case let .morel(color):
+                let cap = Materials.matte(color, roughness: 1)
+                e.addPart(Meshes.cone, cap, at: top + [0, 0.3, 0], scale: [0.36, 0.75, 0.36])
+                let pit = Materials.matte(Palette.darkBark, roughness: 1)
+                for i in 0..<12 {
+                    let a = Float(i) * 2.4
+                    let y = 0.08 + Float(i % 6) * 0.08
+                    let r = 0.3 - y * 0.42
+                    e.addSphere(pit, at: top + [sin(a) * r, y, cos(a) * r], radius: 0.05)
+                }
+            case let .funnel(color):
+                let cap = Materials.matte(color, roughness: 0.6)
+                e.addPart(Meshes.cone, cap, at: top + [0, 0.1, 0], scale: [0.48, 0.3, 0.48], rotation: simd_quatf(angle: .pi, axis: [1, 0, 0]))
+                e.addCylinder(cap, at: top + [0, 0.25, 0], radius: 0.48, height: 0.05)
+            case let .wide(color):
+                e.addSphere(Materials.matte(color, roughness: 0.8), at: top + [0, 0.05, 0], radius: 0.56, squash: [1, 0.36, 1])
+                let crack = Materials.matte(UIColor(red: 0.9, green: 0.82, blue: 0.68, alpha: 1))
+                for i in 0..<7 {
+                    let a = Float(i) * 0.9
+                    let r: Float = 0.2 + Float(i % 3) * 0.1
+                    e.addSphere(crack, at: top + [sin(a) * r, 0.24 - r * 0.3, cos(a) * r], radius: 0.035, squash: [1.8, 0.4, 0.7])
+                }
+            case let .beret(color, spots):
+                e.addSphere(Materials.glossy(color), at: top + [0, 0.06, 0], radius: 0.44, squash: [1, 0.55, 1])
+                if spots {
+                    for (a, r) in [(Float(0.3), Float(0.15)), (1.8, 0.28), (3.4, 0.25), (4.9, 0.3)] {
+                        e.addSphere(Materials.matte(Palette.capSpot), at: top + [sin(a) * r, 0.28 - r * 0.25, cos(a) * r],
+                                    radius: 0.06, squash: [1, 0.4, 1])
+                    }
+                }
+            case let .cluster(color):
+                let stalk = Materials.matte(UIColor(red: 0.96, green: 0.94, blue: 0.86, alpha: 1))
+                let cap = Materials.matte(color)
+                for i in 0..<7 {
+                    let a = Float(i) / 7 * 2 * .pi
+                    let lean = SIMD3<Float>(sin(a) * 0.14, 0.4 + Float(i % 3) * 0.06, cos(a) * 0.14)
+                    e.addRod(stalk, from: top, to: top + lean, radius: 0.025)
+                    e.addSphere(cap, at: top + lean, radius: 0.06, squash: [1, 0.7, 1])
+                }
+            case let .frills(color):
+                let cap = Materials.matte(color, roughness: 0.9)
+                for (i, (y, r)) in [(Float(0.02), Float(0.42)), (0.12, 0.34), (0.22, 0.25), (0.3, 0.15)].enumerated() {
+                    e.addSphere(cap, at: top + [Float(i % 2) * 0.03, y, 0], radius: r, squash: [1, 0.22, 1])
+                }
+            case let .fan(color):
+                let cap = Materials.matte(color, roughness: 0.6)
+                e.addSphere(cap, at: top + [0.08, 0.06, 0], radius: 0.46, squash: [1.1, 0.3, 0.9])
+                e.addSphere(cap, at: top + [-0.18, 0.12, -0.05], radius: 0.3, squash: [1, 0.3, 0.9])
+            }
+            return e
+        }
+    }
+}
+
+extension UIColor {
+    /// The same hue, `factor` as bright.
+    func darker(_ factor: CGFloat) -> UIColor {
+        var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+        getRed(&r, green: &g, blue: &b, alpha: &a)
+        return UIColor(red: r * factor, green: g * factor, blue: b * factor, alpha: a)
     }
 }

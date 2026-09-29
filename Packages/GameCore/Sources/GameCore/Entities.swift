@@ -13,6 +13,7 @@ public enum MobKind: String, Codable, Sendable, CaseIterable {
     // The inner ring, levels 1–15
     case snail, slug, beetle, sporeBeast, sporeling
     case ladybug, pillBug, acornling, bogFrog
+    case aphid, earthworm, cricket
     // The outer ring, levels 14–30
     case fuzzbee, puffweed, puffling
     case mossTurtle, emberNewt
@@ -34,6 +35,9 @@ public enum MobKind: String, Codable, Sendable, CaseIterable {
         case .pillBug: "Pill Bug"
         case .acornling: "Acornling"
         case .bogFrog: "Bog Frog"
+        case .aphid: "Aphid"
+        case .earthworm: "Earthworm"
+        case .cricket: "Cricket"
         case .fuzzbee: "Fuzzbee"
         case .puffweed: "Puffweed"
         case .puffling: "Puffling"
@@ -74,6 +78,9 @@ public enum MobKind: String, Codable, Sendable, CaseIterable {
         case .pillBug: 0.55
         case .acornling: 0.5
         case .bogFrog: 0.65
+        case .aphid: 0.45
+        case .earthworm: 0.5
+        case .cricket: 0.6
         case .fuzzbee: 0.55
         case .puffweed: 0.8
         case .puffling: 0.4
@@ -104,6 +111,9 @@ public enum MobKind: String, Codable, Sendable, CaseIterable {
         case .pillBug: 0.9
         case .acornling: 1.2
         case .bogFrog: 1.4
+        case .aphid: 1
+        case .earthworm: 0.7
+        case .cricket: 1.6
         case .fuzzbee: 2
         case .puffweed: 0.8
         case .puffling: 1.6
@@ -216,6 +226,8 @@ struct MobBrain: Codable, Sendable {
     var hasHidden = false
     /// World bosses only.
     var boss: BossBrain?
+    /// A Giant: the rare, huge one of its kind (see `Giants.swift`).
+    var isGiant = false
 }
 
 /// Extra state for the world boss's scripted fight.

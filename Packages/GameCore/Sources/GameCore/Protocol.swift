@@ -74,6 +74,8 @@ public enum ActionFailure: String, Codable, Sendable {
     case petFull
     /// Not enough unspent stat points.
     case noStatPoints
+    /// Can't do that mid-fight (e.g. a Blinkwing).
+    case inCombat
 }
 
 public enum MobAbility: String, Codable, Sendable {
@@ -95,6 +97,10 @@ public enum WorldEvent: Codable, Sendable, Equatable {
     case mobAbility(entity: EntityID, ability: MobAbility)
     case died(entity: EntityID, killer: EntityID?)
     case xpGained(player: EntityID, amount: Int)
+    /// Fainting cost some XP (from `Progression.deathPenaltyLevel`).
+    case xpLost(player: EntityID, amount: Int)
+    /// A Blinkwing whisked the player back to town.
+    case blinked(player: EntityID)
     case levelUp(player: EntityID, level: Int)
     case respawned(entity: EntityID)
 
@@ -173,6 +179,8 @@ public struct EntitySnapshot: Codable, Sendable, Equatable, Identifiable {
     public let isFlying: Bool
     /// Mobs: attacks players who come close (about one in five); the rest only fight back.
     public let isAggressive: Bool
+    /// Mobs: the rare, huge one of its kind (see `Giant`).
+    public var isGiant = false
 
     public var isAlive: Bool { hp > 0 }
 

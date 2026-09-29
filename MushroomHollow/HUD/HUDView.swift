@@ -11,13 +11,14 @@ struct HUDView: View {
                 if let player = session.hud.player {
                     VStack(alignment: .leading, spacing: 6) {
                         PlayerFrame(status: player, zone: session.zone, timeOfDay: session.timeOfDay)
+                        // Under your own frame, clear of the buttons along the top.
+                        // The boss bar already shows the boss; don't repeat it in the target frame.
+                        if let target = session.hud.target, target.id != session.hud.boss?.id {
+                            TargetFrame(target: target)
+                                .transition(.move(edge: .leading).combined(with: .opacity))
+                        }
                         BuffRow(session: session, buffs: player.buffs)
                     }
-                }
-                // The boss bar already shows the boss; don't repeat it in the target frame.
-                if let target = session.hud.target, target.id != session.hud.boss?.id {
-                    TargetFrame(target: target)
-                        .transition(.move(edge: .top).combined(with: .opacity))
                 }
                 Spacer()
                 QuestTracker(quests: session.trackedQuests)
@@ -253,14 +254,9 @@ private struct BuffRing: View {
 private struct TargetFrame: View {
     let target: TargetInfo
 
-    /// Classic MMO con colors: grey is trivial, red is dangerous.
+    /// Classic MMO con colors, the same as the nameplates: grey is trivial, red is dangerous.
     private var levelColor: Color {
-        switch target.levelDelta {
-        case ...(-3): .gray
-        case -2...1: .white
-        case 2...3: .yellow
-        default: .red
-        }
+        Color(uiColor: Nameplate.Tier(mobLevel: target.levelDelta, viewerLevel: 0).color)
     }
 
     var body: some View {

@@ -91,7 +91,8 @@ import Testing
         let startingCaps = try #require(sim.playerStatus(owner)).caps
         let mob = try #require(sim.snapshot().entities.first { $0.kind == .mob(.snail) })
         let ownerEntity = try #require(sim.entity(owner))
-        sim.rollLoot(for: .snail, ownedBy: ownerEntity, at: mob.position.xz)
+        // A Giant always drops caps (a regular mob only sometimes).
+        sim.rollLoot(for: .snail, giant: true, ownedBy: ownerEntity, at: mob.position.xz)
         let drop = try #require(sim.snapshot(for: owner).drops.first)
         #expect(sim.snapshot(for: other).drops.isEmpty)
         #expect(sim.playerStatus(owner)?.caps == startingCaps)
@@ -150,25 +151,25 @@ import Testing
         var sim = GameSimulation(seed: 1)
         let player = sim.spawnPlayer(profile: PlayerProfile(caps: 50))
 
-        sim.enqueue(.buy(.twigSword, from: .chanterelle), from: player)
+        sim.enqueue(.buy(.twigSword, from: .oyster), from: player)
         #expect(run(&sim, seconds: 0.1).contains(.actionFailed(player: player, reason: .tooFar)))
 
-        try standNear(.chanterelle, player, in: &sim)
-        sim.enqueue(.buy(.twigSword, from: .chanterelle), from: player)
-        sim.enqueue(.buy(.twigSword, from: .chanterelle), from: player)
+        try standNear(.oyster, player, in: &sim)
+        sim.enqueue(.buy(.twigSword, from: .oyster), from: player)
+        sim.enqueue(.buy(.twigSword, from: .oyster), from: player)
         let events = run(&sim, seconds: 0.1)
         #expect(events.contains(.actionFailed(player: player, reason: .notEnoughCaps)))
         var status = try #require(sim.playerStatus(player))
         #expect(status.caps == 10)
         #expect(status.inventory.count(of: .twigSword) == 1)
 
-        sim.enqueue(.sell(.twigSword, count: 1, to: .chanterelle), from: player)
+        sim.enqueue(.sell(.twigSword, count: 1, to: .oyster), from: player)
         _ = run(&sim, seconds: 0.1)
         status = try #require(sim.playerStatus(player))
         #expect(status.caps == 10 + ItemID.twigSword.definition.sellPrice)
         #expect(status.inventory.count(of: .twigSword) == 0)
 
-        sim.enqueue(.buy(.beetleBlade, from: .chanterelle), from: player)
+        sim.enqueue(.buy(.moonTalon, from: .oyster), from: player)
         #expect(run(&sim, seconds: 0.1).contains(.actionFailed(player: player, reason: .notAvailable)))
     }
 

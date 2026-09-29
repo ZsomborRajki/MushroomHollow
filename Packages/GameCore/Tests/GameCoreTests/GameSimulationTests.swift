@@ -61,7 +61,8 @@ import Testing
         for _ in 0..<(GameSimulation.tickRate * 60) { sim.step() }
         let later = sim.snapshot()
 
-        let spawnCount = sim.map.mobSpawns.reduce(0) { $0 + $1.count }
+        // Every field's pack, plus its Giant.
+        let spawnCount = sim.map.mobSpawns.reduce(0) { $0 + $1.count + ($1.kind.hasGiant ? 1 : 0) }
         #expect(later.entities.filter(\.kind.isMob).count == spawnCount)
 
         var movedCount = 0

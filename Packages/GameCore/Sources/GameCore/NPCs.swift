@@ -4,6 +4,9 @@ public enum NPCID: String, Codable, Sendable, CaseIterable {
     case shiitake
     case truffle
     case porcini
+    case oyster
+    case enoki
+    case maitake
 }
 
 public struct NPCDefinition: Sendable {
@@ -37,11 +40,9 @@ extension NPCID {
                 shopStock: [])
         case .chanterelle:
             NPCDefinition(
-                id: self, name: "Chanterelle", title: "Trader",
-                greeting: "Potions, blades, bucklers, boots! Everything a sprout needs. Selling shells? I'm buying.",
-                shopStock: [.dewPotion, .nectarVial, .twigSword, .pebbleHatchet, .barkBuckler, .grassMitts, .mossBoots, .acornCap, .leafTunic,
-                            .thornRapier, .shellShield, .barkMail, .dandelionSeed,
-                            .toadstoolMaul, .reedBow, .puffballWand, .dewdropStaff])
+                id: self, name: "Chanterelle", title: "General Store",
+                greeting: "Potions, tonics, Blinkwings! Never leave town without a stack of each. And I'll buy whatever's weighing down your bag.",
+                shopStock: [.dewPotion, .sapTonic, .honeydewDraught, .nectarVial, .moonNectar, .blinkwing, .dandelionSeed])
         case .shiitake:
             NPCDefinition(
                 id: self, name: "Shiitake", title: "Blacksmith",
@@ -57,6 +58,26 @@ extension NPCID {
                 id: self, name: "Porcini", title: "Naturalist",
                 greeting: "Specimens! Every critter under the tree leaves something behind, and I'm cataloguing the lot. Bring me what they drop and I'll pay you in caps and know-how.",
                 shopStock: [], buysMaterials: true)
+        case .oyster:
+            NPCDefinition(
+                id: self, name: "Oyster", title: "Weapon Shop",
+                greeting: "Swords, axes, and every class weapon a sprout could grow into. A new blade every few levels keeps the critters honest.",
+                shopStock: [.twigSword, .pebbleHatchet, .thornRapier, .hornCleaver, .beetleBlade, .toadstoolChopper,
+                            .stingerBlade, .mossbackCleaver, .silkfangSaber,
+                            .toadstoolMaul, .reedBow, .puffballWand, .dewdropStaff,
+                            .emberstoneMaul, .silkstringBow, .mothwingWand, .buttercupStaff])
+        case .enoki:
+            NPCDefinition(
+                id: self, name: "Enoki", title: "Armor Shop",
+                greeting: "Hats, coats, gloves, boots, shields. Dress for the field you're walking into, not the one you left.",
+                shopStock: [.acornCap, .beetleHelm, .honeycombHelm, .leafTunic, .barkMail, .turtleshellMail,
+                            .grassMitts, .chitinGauntlets, .silkweaveGloves, .mossBoots, .barkTreads, .frogHoppers,
+                            .barkBuckler, .shellShield, .beetleAegis, .lilypadTarge, .mossbackShield])
+        case .maitake:
+            NPCDefinition(
+                id: self, name: "Maitake", title: "Request Board",
+                greeting: "The board's full again. Every field around town has a request on it, and I pay the moment you're done. Come back as often as you like.",
+                shopStock: [])
         }
     }
 }

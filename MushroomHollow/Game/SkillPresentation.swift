@@ -60,6 +60,9 @@ extension MobKind {
         case .pillBug: 0.8
         case .acornling: 1.3
         case .bogFrog: 1.1
+        case .aphid: 0.9
+        case .earthworm: 0.8
+        case .cricket: 1.1
         case .fuzzbee: 1.8
         case .puffweed: 2.2
         case .puffling: 1.3
@@ -111,6 +114,14 @@ extension EntityKind {
         case let .mob(kind): kind.displayName
         case let .npc(id): id.definition.name
         }
+    }
+}
+
+extension EntitySnapshot {
+    /// "Giant Slug" for Giants.
+    var displayName: String {
+        if case let .mob(kind) = kind { return kind.displayName(giant: isGiant) }
+        return kind.displayName
     }
 }
 

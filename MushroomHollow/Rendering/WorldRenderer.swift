@@ -70,6 +70,10 @@ final class WorldRenderer {
         var lungeStart: Double?
         var hitStart: Double?
         var deathStart: Double?
+        /// Giants are drawn this much bigger.
+        var size: Float = 1
+        /// The floating name over mobs and NPCs, and the difficulty tier its color shows.
+        var nameplate: Nameplate?
 
         init(entity: Entity, model: Entity, kind: EntityKind) {
             self.entity = entity
@@ -143,6 +147,7 @@ final class WorldRenderer {
         let alpha = host.interpolationAlpha
         let previous = Dictionary(uniqueKeysWithValues: host.previousSnapshot.entities.map { ($0.id, $0) })
         var seen = Set<EntityID>()
+        let facingCamera = camera.orientation(relativeTo: nil)
 
         for current in host.currentSnapshot.entities {
             seen.insert(current.id)
@@ -171,7 +176,11 @@ final class WorldRenderer {
                 let normal = map.terrain.normal(at: position.xz, step: max(0.4, kind.radius))
                 rotation = simd_quatf(from: [0, 1, 0], to: normal) * rotation
             }
-            view.entity.transform = Transform(scale: .one, rotation: rotation, translation: worldPosition)
+            view.entity.transform = Transform(scale: SIMD3(repeating: view.size), rotation: rotation, translation: worldPosition)
+            if let plate = view.nameplate {
+                plate.update(level: current.level, viewerLevel: host.currentSnapshot.viewer?.stats.level,
+                             alive: current.isAlive && view.deathStart == nil, facing: facingCamera)
+            }
             if let shadow = view.shadow {
                 let lift = max(0, position.y)
                 shadow.position.y = 0.04 - lift
@@ -301,10 +310,13 @@ final class WorldRenderer {
     /// World point just above an entity's head.
     func headPosition(of id: EntityID) -> SIMD3<Float>? {
         guard let view = actors[id] else { return nil }
-        return view.entity.position + [0, view.kind.headHeight, 0]
+        return view.entity.position + [0, view.kind.headHeight * view.size, 0]
     }
 
     // MARK: - Quest markers
+
+    /// Quest and shop markers float above the NPC's nameplate.
+    private static let markerLift: Float = 1.05
 
     /// Floating "!" over quest givers (yellow: new quest, green: ready to turn in),
     /// a spinning coin over shopkeepers, and an amber gem over the blacksmith.
@@ -329,7 +341,7 @@ final class WorldRenderer {
                 marker.addPart(Meshes.cone, amber, at: [0, -0.1, 0], scale: [0.16, 0.2, 0.16],
                                rotation: simd_quatf(angle: .pi, axis: [1, 0, 0]))
             }
-            marker.position = [0, view.kind.headHeight + 0.5, 0]
+            marker.position = [0, view.kind.headHeight + Self.markerLift, 0]
             marker.components.set(DynamicLightShadowComponent(castsShadow: false))
             view.entity.addChild(marker)
             markers[npc] = (kind, marker)
@@ -340,7 +352,7 @@ final class WorldRenderer {
         let t = Float(time)
         for (npc, marker) in markers {
             guard let view = npcActors[npc] else { continue }
-            marker.entity.position.y = view.kind.headHeight + 0.5 + sin(t * 2.5) * 0.08
+            marker.entity.position.y = view.kind.headHeight + Self.markerLift + sin(t * 2.5) * 0.08
             marker.entity.orientation = simd_quatf(angle: t * 1.8, axis: [0, 1, 0])
         }
     }
@@ -365,7 +377,11 @@ final class WorldRenderer {
             entity.components.set(InputTargetComponent())
         }
 
-        let rig = snapshot.kind == .player ? PlayerRig() : nil
+        let rig: PlayerRig? = switch snapshot.kind {
+        case .player: PlayerRig()
+        case let .npc(npc): npc.makeRig()
+        case .mob: nil
+        }
         let model = rig?.root ?? ActorModels.make(snapshot.kind)
         entity.addChild(model)
         actorsRoot.addChild(entity)
@@ -393,6 +409,20 @@ final class WorldRenderer {
             view.telegraph = strip
         }
         if case let .npc(npc) = snapshot.kind { npcActors[npc] = view }
+        if snapshot.isGiant { view.size = Giant.sizeScale }
+        switch snapshot.kind {
+        case let .mob(kind):
+            let plate = Nameplate(title: kind.displayName(giant: snapshot.isGiant), subtitle: nil, isNPC: false,
+                                  isGiant: snapshot.isGiant)
+            plate.attach(to: entity, headHeight: kind.headHeight, size: view.size)
+            view.nameplate = plate
+        case let .npc(npc):
+            let plate = Nameplate(title: npc.definition.name, subtitle: npc.definition.title, isNPC: true, isGiant: false)
+            plate.attach(to: entity, headHeight: snapshot.kind.headHeight, size: 1)
+            view.nameplate = plate
+        case .player:
+            break
+        }
 
         actors[snapshot.id] = view
         return view

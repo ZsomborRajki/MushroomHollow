@@ -123,7 +123,7 @@ extension ItemID {
     /// Kibble a pet keeper bakes from one of these: mob materials only (amber and charms are for the forge).
     public var kibbleValue: Int? {
         guard case .material = definition.kind, self != .amberShard, self != .wardCharm else { return nil }
-        return 1 + definition.sellPrice / 5
+        return 1 + definition.sellPrice * 2 / 5
     }
 }
 

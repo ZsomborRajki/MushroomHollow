@@ -104,11 +104,15 @@ public struct StatBonus: Codable, Sendable, Equatable {
 public enum ItemID: String, Codable, Sendable, CaseIterable {
     // Consumables
     case dewPotion, nectarVial
+    case sapTonic, honeydewDraught, moonNectar
+    /// Flyff's Blinkwing: back to town in a flutter.
+    case blinkwing
     // Materials: one per mob, to sell or hand in
     case snailShell, slugSlime, beetleHorn, sporeSac, owlFeather
     case spottedWingCase, pillBugPlate, bitterAcorn, frogJelly
     case honeycombChip, pollenPuff, mossyScute, emberScale, spiderSilk, mothDust
     case hedgehogQuill, pineScale, mantisClaw, roseHip, grumbleSpore, stagMandible
+    case honeydewDrop, richLoam, cricketLeg
     // Upgrading (mob drops only): the stone every attempt needs, and the charm that protects the item
     case amberShard, wardCharm
     // Swords
@@ -159,6 +163,8 @@ public struct ItemDefinition: Sendable {
     public enum ConsumableEffect: Sendable {
         case restoreHP(Int)
         case restoreMP(Int)
+        /// Back to town (not mid-fight).
+        case returnToTown
     }
 
     public let id: ItemID
@@ -201,48 +207,66 @@ extension ItemID {
             item("Dew Potion", "Morning dew, bottled. Restores 60 HP.", .consumable(.restoreHP(60)), buy: 12, sell: 3, stack: 20)
         case .nectarVial:
             item("Nectar Vial", "Sweet and fizzy. Restores 40 MP.", .consumable(.restoreMP(40)), buy: 15, sell: 4, stack: 20)
+        case .sapTonic:
+            item("Sap Tonic", "Thick, amber, and bracing. Restores 180 HP.", .consumable(.restoreHP(180)),
+                 level: 10, buy: 32, sell: 8, stack: 20)
+        case .honeydewDraught:
+            item("Honeydew Draught", "The good stuff, aged in an acorn cup. Restores 420 HP.", .consumable(.restoreHP(420)),
+                 level: 20, buy: 75, sell: 18, stack: 20)
+        case .moonNectar:
+            item("Moon Nectar", "Gathered from night-blooming flowers. Restores 140 MP.", .consumable(.restoreMP(140)),
+                 level: 15, buy: 48, sell: 12, stack: 20)
+        case .blinkwing:
+            item("Blinkwing", "A pressed moth wing. Crumple it and you're home in a flutter. Not mid-fight.",
+                 .consumable(.returnToTown), buy: 25, sell: 6, stack: 20)
+        case .honeydewDrop:
+            item("Honeydew Drop", "Aphids make it; ants would kill for it.", .material, sell: 2, stack: 50)
+        case .richLoam:
+            item("Rich Loam", "An earthworm's finest work. Dark, crumbly, and prized by gardeners.", .material, sell: 4, stack: 50)
+        case .cricketLeg:
+            item("Cricket Leg", "Springy. It still twitches when you whistle.", .material, sell: 8, stack: 50)
         case .snailShell:
-            item("Snail Shell Shard", "Still faintly spiral.", .material, sell: 3, stack: 50)
+            item("Snail Shell Shard", "Still faintly spiral.", .material, sell: 2, stack: 50)
         case .slugSlime:
-            item("Slug Slime", "Surprisingly useful. Surprisingly sticky.", .material, sell: 5, stack: 50)
+            item("Slug Slime", "Surprisingly useful. Surprisingly sticky.", .material, sell: 3, stack: 50)
         case .beetleHorn:
-            item("Beetle Horn", "Hard as bark, twice as pointy.", .material, sell: 12, stack: 50)
+            item("Beetle Horn", "Hard as bark, twice as pointy.", .material, sell: 6, stack: 50)
         case .sporeSac:
-            item("Spore Sac", "Do not squeeze.", .material, sell: 18, stack: 50)
+            item("Spore Sac", "Do not squeeze.", .material, sell: 9, stack: 50)
         case .owlFeather:
-            item("Hollow Owl Feather", "Soft as moonlight. Proof you survived the night.", .material, sell: 150, stack: 50)
+            item("Hollow Owl Feather", "Soft as moonlight. Proof you survived the night.", .material, sell: 75, stack: 50)
         case .spottedWingCase:
-            item("Spotted Wing Case", "Seven spots. Lucky, apparently.", .material, sell: 4, stack: 50)
+            item("Spotted Wing Case", "Seven spots. Lucky, apparently.", .material, sell: 2, stack: 50)
         case .pillBugPlate:
-            item("Pill Bug Plate", "One overlapping plate. It still wants to curl up.", .material, sell: 8, stack: 50)
+            item("Pill Bug Plate", "One overlapping plate. It still wants to curl up.", .material, sell: 4, stack: 50)
         case .bitterAcorn:
-            item("Bitter Acorn", "Grumpy, even for an acorn.", .material, sell: 14, stack: 50)
+            item("Bitter Acorn", "Grumpy, even for an acorn.", .material, sell: 7, stack: 50)
         case .frogJelly:
-            item("Frog Jelly", "Wobbly, green, and oddly warm.", .material, sell: 20, stack: 50)
+            item("Frog Jelly", "Wobbly, green, and oddly warm.", .material, sell: 10, stack: 50)
         case .honeycombChip:
-            item("Honeycomb Chip", "Sticky, golden, and worth the stings.", .material, sell: 24, stack: 50)
+            item("Honeycomb Chip", "Sticky, golden, and worth the stings.", .material, sell: 12, stack: 50)
         case .pollenPuff:
-            item("Pollen Puff", "Achoo.", .material, sell: 26, stack: 50)
+            item("Pollen Puff", "Achoo.", .material, sell: 13, stack: 50)
         case .mossyScute:
-            item("Mossy Scute", "A turtle's shell plate with a little garden on top.", .material, sell: 28, stack: 50)
+            item("Mossy Scute", "A turtle's shell plate with a little garden on top.", .material, sell: 14, stack: 50)
         case .emberScale:
-            item("Ember Scale", "Still smouldering. Carry it in something that isn't a leaf.", .material, sell: 32, stack: 50)
+            item("Ember Scale", "Still smouldering. Carry it in something that isn't a leaf.", .material, sell: 16, stack: 50)
         case .spiderSilk:
-            item("Spider Silk", "Stronger than it looks, stickier than you'd like.", .material, sell: 36, stack: 50)
+            item("Spider Silk", "Stronger than it looks, stickier than you'd like.", .material, sell: 18, stack: 50)
         case .mothDust:
-            item("Moth Dust", "Glitters like dusk. Makes your nose itch.", .material, sell: 38, stack: 50)
+            item("Moth Dust", "Glitters like dusk. Makes your nose itch.", .material, sell: 19, stack: 50)
         case .hedgehogQuill:
-            item("Hedgehog Quill", "Hold it by the blunt end.", .material, sell: 40, stack: 50)
+            item("Hedgehog Quill", "Hold it by the blunt end.", .material, sell: 20, stack: 50)
         case .pineScale:
-            item("Pine Scale", "A pinecone's armor plate, sticky with sap.", .material, sell: 44, stack: 50)
+            item("Pine Scale", "A pinecone's armor plate, sticky with sap.", .material, sell: 22, stack: 50)
         case .mantisClaw:
-            item("Mantis Claw", "Folded politely, like it's praying. It isn't.", .material, sell: 48, stack: 50)
+            item("Mantis Claw", "Folded politely, like it's praying. It isn't.", .material, sell: 24, stack: 50)
         case .roseHip:
-            item("Rose Hip", "Tart, bright, and guarded by a lot of thorns.", .material, sell: 50, stack: 50)
+            item("Rose Hip", "Tart, bright, and guarded by a lot of thorns.", .material, sell: 25, stack: 50)
         case .grumbleSpore:
-            item("Grumble Spore", "It mutters if you hold it to your ear.", .material, sell: 52, stack: 50)
+            item("Grumble Spore", "It mutters if you hold it to your ear.", .material, sell: 26, stack: 50)
         case .stagMandible:
-            item("Stag Mandible", "Half of the grove king's crown.", .material, sell: 60, stack: 50)
+            item("Stag Mandible", "Half of the grove king's crown.", .material, sell: 30, stack: 50)
         case .twigSword:
             weapon("Twig Sword", "Every hero starts somewhere.", .sword, StatBonus(attack: 4),
                    level: 1, buy: 40, sell: 10)
@@ -251,13 +275,13 @@ extension ItemID {
                    level: 5, buy: 180, sell: 45)
         case .beetleBlade:
             weapon("Beetle-Horn Blade", "Glossy, sharp, and smug about it.", .sword, StatBonus(attack: 16, maxMP: 10),
-                   level: 9, sell: 120)
+                   level: 9, buy: 480, sell: 120)
         case .stingerBlade:
             weapon("Stinger Blade", "A fuzzbee's stinger on a honeycomb grip. Still buzzing.", .sword,
-                   StatBonus(attack: 22, maxMP: 15), level: 14, sell: 170)
+                   StatBonus(attack: 22, maxMP: 15), level: 14, buy: 800, sell: 170)
         case .silkfangSaber:
             weapon("Silkfang Saber", "A spider's fang, bound in its own silk.", .sword,
-                   StatBonus(attack: 32, maxMP: 25), level: 20, sell: 260)
+                   StatBonus(attack: 32, maxMP: 25), level: 20, buy: 1_300, sell: 260)
         case .mantisEdge:
             weapon("Mantis Edge", "Curved, pink, and terribly quick.", .sword,
                    StatBonus(attack: 44, maxMP: 35, critical: 0.03), level: 26, sell: 380)
@@ -269,13 +293,13 @@ extension ItemID {
                    level: 2, buy: 70, sell: 17)
         case .hornCleaver:
             weapon("Horn Cleaver", "A beetle horn ground into a wicked edge.", .axe, StatBonus(attack: 14, maxHP: 15),
-                   level: 7, sell: 95)
+                   level: 7, buy: 380, sell: 95)
         case .toadstoolChopper:
             weapon("Toadstool Chopper", "Heavy, spotted, and faintly glowing.", .axe, StatBonus(attack: 22, maxHP: 30),
-                   level: 11, sell: 160)
+                   level: 11, buy: 640, sell: 160)
         case .mossbackCleaver:
             weapon("Mossback Cleaver", "A turtle scute ground to an edge. Moss included.", .axe,
-                   StatBonus(attack: 30, maxHP: 45), level: 17, sell: 230)
+                   StatBonus(attack: 30, maxHP: 45), level: 17, buy: 1_000, sell: 230)
         case .quillsplitter:
             weapon("Quillsplitter", "Bristling with hedgehog quills. Mind your fingers.", .axe,
                    StatBonus(attack: 42, maxHP: 70), level: 23, sell: 330)
@@ -290,37 +314,37 @@ extension ItemID {
                  .equipment(.shield, StatBonus(defense: 4, maxHP: 15, block: 0.07)), level: 6, buy: 240, sell: 60)
         case .beetleAegis:
             item("Beetle Aegis", "A wing case polished to a mirror shine.",
-                 .equipment(.shield, StatBonus(defense: 7, maxHP: 30, block: 0.1)), level: 10, sell: 140)
+                 .equipment(.shield, StatBonus(defense: 7, maxHP: 30, block: 0.1)), level: 10, buy: 560, sell: 140)
         case .lilypadTarge:
             item("Lilypad Targe", "Springy, waterproof, and surprisingly hard to get past.",
-                 .equipment(.shield, StatBonus(defense: 9, maxHP: 40, block: 0.11)), level: 13, sell: 180)
+                 .equipment(.shield, StatBonus(defense: 9, maxHP: 40, block: 0.11)), level: 13, buy: 720, sell: 180)
         case .mossbackShield:
             item("Mossback Shield", "A turtle's shell. It carried its owner; now it carries you.",
-                 .equipment(.shield, StatBonus(defense: 12, maxHP: 60, block: 0.12)), level: 18, sell: 250)
+                 .equipment(.shield, StatBonus(defense: 12, maxHP: 60, block: 0.12)), level: 18, buy: 1_000, sell: 250)
         case .pineconeBulwark:
             item("Pinecone Bulwark", "Overlapping scales, closed tight.",
                  .equipment(.shield, StatBonus(defense: 17, maxHP: 90, block: 0.14)), level: 25, sell: 360)
         case .emberstoneMaul:
             weapon("Emberstone Maul", "A glowing creek stone on a charred handle. Guards only.", .maul,
-                   StatBonus(attack: 66, maxHP: 60), level: 20, sell: 420)
+                   StatBonus(attack: 66, maxHP: 60), level: 20, buy: 2_400, sell: 420)
         case .stagCrusher:
             weapon("Stag Crusher", "Both mandibles of a stag beetle, bolted to a log.", .maul,
                    StatBonus(attack: 100, maxHP: 130), level: 28, sell: 650)
         case .silkstringBow:
             weapon("Silkstring Bow", "Weaver silk makes a string that sings. Thornshots only.", .bow,
-                   StatBonus(attack: 40, maxMP: 15), level: 20, sell: 420)
+                   StatBonus(attack: 40, maxMP: 15), level: 20, buy: 2_400, sell: 420)
         case .mantisLongbow:
             weapon("Mantis Longbow", "Two mantis claws, bent into one terrible curve.", .bow,
                    StatBonus(attack: 60, maxMP: 30, critical: 0.03), level: 27, sell: 650)
         case .mothwingWand:
             weapon("Mothwing Wand", "Leaves a trail of glittering dust. Sporecasters only.", .wand,
-                   StatBonus(attack: 32, maxMP: 60), level: 21, sell: 420)
+                   StatBonus(attack: 32, maxMP: 60), level: 21, buy: 2_400, sell: 420)
         case .grumblecapScepter:
             weapon("Grumblecap Scepter", "A tiny grumblecap on a stick. It complains when you cast.", .wand,
                    StatBonus(attack: 50, maxMP: 110), level: 28, sell: 650)
         case .buttercupStaff:
             weapon("Buttercup Staff", "Hold it under your chin: you like healing. Dewkeepers only.", .staff,
-                   StatBonus(attack: 27, maxHP: 45, maxMP: 55), level: 19, sell: 420)
+                   StatBonus(attack: 27, maxHP: 45, maxMP: 55), level: 19, buy: 2_400, sell: 420)
         case .thornroseStaff:
             weapon("Thornrose Staff", "A rose that heals the hand that holds it, and no other.", .staff,
                    StatBonus(attack: 42, maxHP: 90, maxMP: 100), level: 28, sell: 650)
@@ -356,10 +380,10 @@ extension ItemID {
                  level: 2, buy: 60, sell: 15)
         case .beetleHelm:
             item("Beetle Helm", "Shiny blue and very hard.", .equipment(.hat, StatBonus(defense: 5, maxHP: 25)),
-                 level: 7, sell: 90)
+                 level: 7, buy: 360, sell: 90)
         case .honeycombHelm:
             item("Honeycomb Helm", "Six-sided, sturdy, faintly sweet.", .equipment(.hat, StatBonus(defense: 7, maxHP: 40)),
-                 level: 15, sell: 150)
+                 level: 15, buy: 600, sell: 150)
         case .pineconeHelm:
             item("Pinecone Helm", "Scales all the way up to a point.", .equipment(.hat, StatBonus(defense: 13, maxHP: 80)),
                  level: 24, sell: 300)
@@ -371,7 +395,7 @@ extension ItemID {
                  level: 8, buy: 320, sell: 80)
         case .turtleshellMail:
             item("Turtleshell Mail", "Scutes stitched on leather. Slow to put on, slower to get through.",
-                 .equipment(.body, StatBonus(defense: 12, maxHP: 70)), level: 18, sell: 240)
+                 .equipment(.body, StatBonus(defense: 12, maxHP: 70)), level: 18, buy: 960, sell: 240)
         case .mantisCarapace:
             item("Mantis Carapace", "Orchid-pink plates, light as petals.", .equipment(.body, StatBonus(defense: 18, maxHP: 120)),
                  level: 27, sell: 390)
@@ -380,10 +404,10 @@ extension ItemID {
                  level: 1, buy: 30, sell: 7)
         case .chitinGauntlets:
             item("Chitin Gauntlets", "Beetle plates over the knuckles.", .equipment(.gloves, StatBonus(attack: 3, defense: 3, maxHP: 10)),
-                 level: 8, sell: 85)
+                 level: 8, buy: 340, sell: 85)
         case .silkweaveGloves:
             item("Silkweave Gloves", "Grippy. Very grippy.", .equipment(.gloves, StatBonus(attack: 6, defense: 5, maxHP: 25)),
-                 level: 21, sell: 250)
+                 level: 21, buy: 1_000, sell: 250)
         case .rosethornGauntlets:
             item("Rosethorn Gauntlets", "Thorns on the outside, velvet within.",
                  .equipment(.gloves, StatBonus(attack: 9, defense: 8, maxHP: 40)), level: 28, sell: 400)
@@ -392,10 +416,10 @@ extension ItemID {
                  level: 1, buy: 35, sell: 8)
         case .barkTreads:
             item("Bark Treads", "Thick soles for rough roots.", .equipment(.boots, StatBonus(defense: 3, maxHP: 15, maxMP: 10)),
-                 level: 7, sell: 80)
+                 level: 7, buy: 320, sell: 80)
         case .frogHoppers:
             item("Frog Hoppers", "Springy soles. You bounce a little when you walk.",
-                 .equipment(.boots, StatBonus(defense: 5, maxHP: 25, maxMP: 15)), level: 13, sell: 140)
+                 .equipment(.boots, StatBonus(defense: 5, maxHP: 25, maxMP: 15)), level: 13, buy: 560, sell: 140)
         case .quilledBoots:
             item("Quilled Boots", "Nobody steps on your toes twice.", .equipment(.boots, StatBonus(defense: 8, maxHP: 40, maxMP: 20)),
                  level: 24, sell: 300)

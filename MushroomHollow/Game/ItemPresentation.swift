@@ -7,6 +7,13 @@ extension ItemID {
         switch self {
         case .dewPotion: "cross.vial.fill"
         case .nectarVial: "waterbottle.fill"
+        case .sapTonic: "cross.vial.fill"
+        case .honeydewDraught: "flask.fill"
+        case .moonNectar: "moon.haze.fill"
+        case .blinkwing: "wind.circle.fill"
+        case .honeydewDrop: "drop.fill"
+        case .richLoam: "circle.grid.cross.fill"
+        case .cricketLeg: "line.diagonal.arrow"
         case .snailShell: "hurricane"
         case .slugSlime: "humidity.fill"
         case .beetleHorn: "arrowtriangle.up.fill"
@@ -67,6 +74,13 @@ extension ItemID {
         switch self {
         case .dewPotion: .red
         case .nectarVial: .blue
+        case .sapTonic: .orange
+        case .honeydewDraught: Color(red: 1, green: 0.55, blue: 0.7)
+        case .moonNectar: .indigo
+        case .blinkwing: Color(red: 0.75, green: 0.9, blue: 1)
+        case .honeydewDrop: Color(red: 1, green: 0.85, blue: 0.4)
+        case .richLoam: Color(red: 0.5, green: 0.35, blue: 0.25)
+        case .cricketLeg: Color(red: 0.6, green: 0.42, blue: 0.24)
         case .snailShell: Color(red: 0.8, green: 0.6, blue: 0.4)
         case .slugSlime: Color(red: 0.8, green: 0.8, blue: 0.3)
         case .beetleHorn: Color(red: 0.4, green: 0.55, blue: 0.95)
@@ -140,6 +154,7 @@ extension Gear {
         switch definition.kind {
         case let .consumable(.restoreHP(amount)): "Restores \(amount) HP"
         case let .consumable(.restoreMP(amount)): "Restores \(amount) MP"
+        case .consumable(.returnToTown): "Back to Capstone Town"
         case .material: nil
         case .glider: "Lets you fly"
         case .pet: "Pet · fetches your drops"
@@ -240,6 +255,9 @@ extension NPCID {
         case .shiitake: "hammer.fill"
         case .truffle: "pawprint.fill"
         case .porcini: "book.pages.fill"
+        case .oyster: "wand.and.rays"
+        case .enoki: "tshirt.fill"
+        case .maitake: "list.clipboard.fill"
         }
     }
 }
@@ -262,6 +280,7 @@ extension ActionFailure {
         case .petHungry: "Too hungry to come out. Feed it Kibble"
         case .petFull: "Your pet is already full"
         case .noStatPoints: "No stat points left to spend"
+        case .inCombat: "Not while fighting"
         }
     }
 }

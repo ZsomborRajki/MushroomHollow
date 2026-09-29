@@ -27,7 +27,7 @@ import Testing
         var (sim, player, snail) = try arena()
         sim.enqueue(.target(snail, engage: true), from: player)
 
-        let events = run(&sim, seconds: 15)
+        let events = run(&sim, seconds: 25)
 
         #expect(events.contains(.died(entity: snail, killer: player)))
         #expect(events.contains { if case .xpGained(player, _) = $0 { true } else { false } })
@@ -82,9 +82,9 @@ import Testing
         var (sim, player, snail) = try arena()
         sim.enqueue(.target(snail, engage: true), from: player)
         run(&sim, seconds: 1.5)
-        // Run far away toward the village.
+        // Run far away, out past the glade.
         sim.enqueue(.target(nil, engage: false), from: player)
-        run(&sim, seconds: 12) { $0.enqueue(.move(Vec2(-1, 0)), from: player) }
+        run(&sim, seconds: 12) { $0.enqueue(.move(Vec2(1, 0)), from: player) }
         run(&sim, seconds: 20)
 
         let mob = try #require(sim.entity(snail))

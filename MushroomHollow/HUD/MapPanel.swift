@@ -114,6 +114,8 @@ private struct MapCanvas: View {
     static let labelAllSpan: Float = 200
     /// Closer than this, the villagers show.
     static let villagerSpan: Float = 80
+    /// Zoomed in this far, every hunting field gets its critter and level written in (like Flyff's map).
+    static let fieldSpan: Float = 110
 
     var body: some View {
         let image = Image(uiImage: session.mapImage)
@@ -237,6 +239,16 @@ private struct MapCanvas: View {
                         .font(.system(size: titleSize - 1, weight: .semibold, design: .rounded))
                         .foregroundStyle(MapStyle.levelColor(levels, player: level)),
                                at: CGPoint(x: labelAt.x, y: labelAt.y + titleSize + 2))
+                }
+            }
+            if halfSpan < Self.fieldSpan {
+                for area in map.mobSpawns {
+                    let at = point(area.center + Vec2(0, area.radius * 0.55))
+                    guard at.x > -60, at.x < size.width + 60, at.y > -30, at.y < size.height + 30 else { continue }
+                    let mobLevel = area.kind.stats.level
+                    layer.draw(Text("\(area.kind.pluralName) · Lv \(mobLevel)")
+                        .font(.system(size: 10, weight: .bold, design: .rounded))
+                        .foregroundStyle(MapStyle.levelColor(mobLevel...(mobLevel + 1), player: level)), at: at)
                 }
             }
             if let arena = map.bossArena {

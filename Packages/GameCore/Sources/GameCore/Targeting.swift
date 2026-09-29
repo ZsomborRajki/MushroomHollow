@@ -13,8 +13,10 @@ extension WorldSnapshot {
             }
     }
 
+    /// Auto-targeting never picks a fight with a Giant by accident (unless it's already after you);
+    /// cycling targets still reaches them.
     public func nearestHostile(to position: Vec3, within range: Float = targetingRange) -> EntityID? {
-        hostiles(near: position, within: range).first?.id
+        hostiles(near: position, within: range).first { !$0.isGiant || ($0.target != nil && $0.target == viewer?.id) }?.id
     }
 
     /// Steps through hostiles by distance; wraps around. With no current target, picks the nearest.

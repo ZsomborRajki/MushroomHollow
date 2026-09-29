@@ -75,6 +75,16 @@ extension MobKind {
         case .acornling:
             MobStats(level: 9, maxHP: 555, attack: 14, defense: 7, xp: 170, aggroRadius: 6,
                      chaseSpeed: 3.2, attackInterval: 1.4, reach: 0.5, respawnSeconds: 18)
+        // Filling the gaps, so every couple of levels brings a new field to hunt (as in Flaris).
+        case .aphid:
+            MobStats(level: 3, maxHP: 210, attack: 6, defense: 2, xp: 48, aggroRadius: 0,
+                     chaseSpeed: 2.6, attackInterval: 1.6, reach: 0.5, respawnSeconds: 12)
+        case .earthworm:
+            MobStats(level: 6, maxHP: 390, attack: 10, defense: 5, xp: 100, aggroRadius: 4,
+                     chaseSpeed: 2.4, attackInterval: 1.7, reach: 0.6, respawnSeconds: 16)
+        case .cricket:
+            MobStats(level: 11, maxHP: 660, attack: 16, defense: 8, xp: 215, aggroRadius: 6,
+                     chaseSpeed: 4.2, attackInterval: 1.3, reach: 0.6, respawnSeconds: 19)
         case .bogFrog:
             MobStats(level: 13, maxHP: 870, attack: 20, defense: 9, xp: 300, aggroRadius: 5,
                      chaseSpeed: 3.5, attackInterval: 1.6, reach: 0.6, respawnSeconds: 20)
@@ -136,8 +146,20 @@ extension MobKind {
 public enum Progression {
     public static let maxLevel = 30
 
+    /// The first fifteen levels come quickly; past the first job every level is a longer climb (the Flyff grind).
     public static func xpToNextLevel(_ level: Int) -> Int {
-        Int((40 * pow(Double(level), 1.8)).rounded())
+        let grind = 1 + 0.12 * Double(max(0, level - 15))
+        return Int((40 * pow(Double(level), 1.8) * grind).rounded())
+    }
+
+    /// From this level on, fainting costs XP (as in Flyff), though never a level.
+    public static let deathPenaltyLevel = 10
+    public static let deathPenaltyFraction: Double = 0.04
+
+    /// XP lost for fainting at `level` with `xp` into it.
+    public static func deathPenalty(level: Int, xp: Int) -> Int {
+        guard level >= deathPenaltyLevel, level < maxLevel else { return 0 }
+        return min(xp, Int((Double(xpToNextLevel(level)) * deathPenaltyFraction).rounded()))
     }
 
     /// Stats for a player at `level` with `playerClass`, wearing gear worth `bonus`, wielding `weapon`, and with

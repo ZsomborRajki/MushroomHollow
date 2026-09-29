@@ -74,7 +74,7 @@ import Testing
     @Test func truffleStandsInTheOpen() throws {
         let map = WorldMap.mushroomHollow
         let truffle = try #require(map.placement(of: .truffle))
-        #expect(map.zone(at: truffle.position)?.name == "Capstone Village")
+        #expect(map.zone(at: truffle.position)?.name == "Capstone Town")
         // Players can walk up to talk from any side.
         for angle in stride(from: Float(0), to: 2 * .pi, by: .pi / 2) {
             let spot = truffle.position + AngleMath.direction(forYaw: angle) * 1.5

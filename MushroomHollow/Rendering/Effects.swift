@@ -12,7 +12,7 @@ final class EffectsPlayer {
     private var ringMaterials: [UIColor: UnlitMaterial] = [:]
     private static let maxIdlePerKind = 32
 
-    private enum Kind { case burst, ring, bolt, arrow }
+    private enum Kind { case burst, ring, bolt, arrow, pillar }
 
     private struct Transient {
         let entity: Entity
@@ -78,6 +78,26 @@ final class EffectsPlayer {
             let eased = 1 - (1 - t) * (1 - t)
             entity.scale = SIMD3(repeating: 0.2 + (radius - 0.2) * eased)
             entity.components.set(OpacityComponent(opacity: 1 - t))
+        }
+    }
+
+    /// Flyff's level-up: a column of light that shoots up around the player, then thins and fades.
+    func pillar(at position: SIMD3<Float>, color: UIColor, height: Float = 7, radius: Float = 0.8, duration: Double = 1.6, time: Double) {
+        let pillar = reuse(.pillar) {
+            let pillar = ModelEntity(mesh: Meshes.cylinder, materials: [])
+            pillar.components.set(DynamicLightShadowComponent(castsShadow: false))
+            return pillar
+        }
+        var material = UnlitMaterial(color: color)
+        material.faceCulling = .none
+        material.blending = .transparent(opacity: .init(floatLiteral: 0.5))
+        (pillar as? ModelEntity)?.model?.materials = [material]
+        add(pillar, kind: .pillar, time: time, duration: duration) { entity, t in
+            let rise = min(1, t / 0.15)
+            let thin = t < 0.5 ? 1 : 1 - (t - 0.5) / 0.5
+            entity.scale = [radius * (0.4 + 0.6 * thin), height * rise, radius * (0.4 + 0.6 * thin)]
+            entity.position = position + [0, height * rise / 2, 0]
+            entity.components.set(OpacityComponent(opacity: t < 0.6 ? 1 : 1 - (t - 0.6) / 0.4))
         }
     }
 

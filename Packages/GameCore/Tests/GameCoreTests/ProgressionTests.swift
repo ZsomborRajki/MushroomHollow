@@ -240,7 +240,7 @@ import Testing
     @Test func porciniStandsInTheOpen() throws {
         let map = WorldMap.mushroomHollow
         let porcini = try #require(map.placement(of: .porcini))
-        #expect(map.zone(at: porcini.position)?.name == "Capstone Village")
+        #expect(map.zone(at: porcini.position)?.name == "Capstone Town")
         for angle in stride(from: Float(0), to: 2 * .pi, by: .pi / 2) {
             let spot = porcini.position + AngleMath.direction(forYaw: angle) * 1.5
             #expect(!map.isBlocked(spot, radius: GameSimulation.playerRadius), "blocked at \(angle)")

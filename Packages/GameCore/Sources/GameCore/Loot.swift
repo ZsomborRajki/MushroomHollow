@@ -5,32 +5,18 @@ struct DropEntry: Sendable {
 }
 
 extension MobKind {
+    /// A pile of caps drops only this often: in the Hollow, as in Flyff, money comes from quests,
+    /// hunting requests, and selling what you find, not from the critters' pockets.
+    static let capsDropChance: Float = 0.4
+
+    /// The size of one caps pile: a few caps per level of the mob.
     var capsDrop: ClosedRange<Int> {
         switch self {
-        case .snail: 1...3
-        case .slug: 3...6
-        case .beetle: 8...14
-        case .sporeBeast: 14...22
-        case .sporeling: 2...4
-        case .ladybug: 1...4
-        case .pillBug: 4...7
-        case .acornling: 9...15
-        case .bogFrog: 15...24
-        case .fuzzbee: 18...28
-        case .puffweed: 20...32
-        case .puffling: 3...6
-        case .mossTurtle: 24...36
-        case .emberNewt: 26...40
-        case .weaverSpider: 30...45
-        case .duskMoth: 32...48
-        case .hedgehog: 34...52
-        case .coneKnight: 38...58
-        case .mantis: 40...62
-        case .thornrose: 44...66
-        case .grumblecap: 46...70
-        case .stagBeetle: 55...85
-        case .mouse: 3...6
-        case .owl: 500...800
+        case .owl: return 150...250
+        case .sporeling, .puffling, .mouse: return 1...2
+        default:
+            let level = stats.level
+            return max(1, level * 2 / 3)...(level + 1)
         }
     }
 
@@ -103,6 +89,30 @@ extension MobKind {
              DropEntry(item: .hornCleaver, chance: 0.02, count: 1...1),
              DropEntry(item: .chitinGauntlets, chance: 0.02, count: 1...1),
              DropEntry(item: .amberShard, chance: 0.06, count: 1...1)]
+        case .aphid:
+            [DropEntry(item: .honeydewDrop, chance: 0.6, count: 1...1),
+             DropEntry(item: .dewPotion, chance: 0.08, count: 1...1),
+             DropEntry(item: .pebbleHatchet, chance: 0.02, count: 1...1),
+             DropEntry(item: .leafTunic, chance: 0.02, count: 1...1),
+             DropEntry(item: .mossBoots, chance: 0.02, count: 1...1),
+             DropEntry(item: .amberShard, chance: 0.03, count: 1...1)]
+        case .earthworm:
+            [DropEntry(item: .richLoam, chance: 0.55, count: 1...1),
+             DropEntry(item: .dewPotion, chance: 0.1, count: 1...1),
+             DropEntry(item: .blinkwing, chance: 0.04, count: 1...1),
+             DropEntry(item: .shellShield, chance: 0.02, count: 1...1),
+             DropEntry(item: .barkTreads, chance: 0.02, count: 1...1),
+             DropEntry(item: .hornCleaver, chance: 0.015, count: 1...1),
+             DropEntry(item: .amberShard, chance: 0.05, count: 1...1)]
+        case .cricket:
+            [DropEntry(item: .cricketLeg, chance: 0.5, count: 1...2),
+             DropEntry(item: .sapTonic, chance: 0.1, count: 1...1),
+             DropEntry(item: .nectarVial, chance: 0.08, count: 1...1),
+             DropEntry(item: .beetleAegis, chance: 0.02, count: 1...1),
+             DropEntry(item: .toadstoolChopper, chance: 0.02, count: 1...1),
+             DropEntry(item: .frogHoppers, chance: 0.02, count: 1...1),
+             DropEntry(item: .amberShard, chance: 0.07, count: 1...1),
+             DropEntry(item: .wardCharm, chance: 0.003, count: 1...1)]
         case .bogFrog:
             [DropEntry(item: .frogJelly, chance: 0.5, count: 1...2),
              DropEntry(item: .nectarVial, chance: 0.12, count: 1...1),
@@ -116,7 +126,7 @@ extension MobKind {
         // one Thistledown piece.
         case .fuzzbee:
             [DropEntry(item: .honeycombChip, chance: 0.5, count: 1...2),
-             DropEntry(item: .dewPotion, chance: 0.15, count: 1...2),
+             DropEntry(item: .sapTonic, chance: 0.15, count: 1...2),
              DropEntry(item: .stingerBlade, chance: 0.03, count: 1...1),
              DropEntry(item: .honeycombHelm, chance: 0.03, count: 1...1),
              DropEntry(item: .amberShard, chance: 0.08, count: 1...1),
@@ -132,7 +142,7 @@ extension MobKind {
              DropEntry(item: .amberShard, chance: 0.02, count: 1...1)]
         case .mossTurtle:
             [DropEntry(item: .mossyScute, chance: 0.55, count: 1...1),
-             DropEntry(item: .dewPotion, chance: 0.15, count: 1...2),
+             DropEntry(item: .sapTonic, chance: 0.15, count: 1...2),
              DropEntry(item: .mossbackCleaver, chance: 0.03, count: 1...1),
              DropEntry(item: .mossbackShield, chance: 0.03, count: 1...1),
              DropEntry(item: .turtleshellMail, chance: 0.02, count: 1...1),
@@ -140,13 +150,13 @@ extension MobKind {
              DropEntry(item: .wardCharm, chance: 0.006, count: 1...1)]
         case .emberNewt:
             [DropEntry(item: .emberScale, chance: 0.5, count: 1...2),
-             DropEntry(item: .nectarVial, chance: 0.15, count: 1...2),
+             DropEntry(item: .moonNectar, chance: 0.15, count: 1...2),
              DropEntry(item: .emberstoneMaul, chance: 0.02, count: 1...1),
              DropEntry(item: .amberShard, chance: 0.09, count: 1...2),
              DropEntry(item: .thistledownCoat, chance: 0.01, count: 1...1)]
         case .weaverSpider:
             [DropEntry(item: .spiderSilk, chance: 0.55, count: 1...2),
-             DropEntry(item: .dewPotion, chance: 0.15, count: 1...2),
+             DropEntry(item: .sapTonic, chance: 0.15, count: 1...2),
              DropEntry(item: .silkfangSaber, chance: 0.03, count: 1...1),
              DropEntry(item: .silkstringBow, chance: 0.02, count: 1...1),
              DropEntry(item: .silkweaveGloves, chance: 0.03, count: 1...1),
@@ -154,13 +164,13 @@ extension MobKind {
              DropEntry(item: .wardCharm, chance: 0.007, count: 1...1)]
         case .duskMoth:
             [DropEntry(item: .mothDust, chance: 0.55, count: 1...2),
-             DropEntry(item: .nectarVial, chance: 0.18, count: 1...2),
+             DropEntry(item: .moonNectar, chance: 0.18, count: 1...2),
              DropEntry(item: .mothwingWand, chance: 0.02, count: 1...1),
              DropEntry(item: .amberShard, chance: 0.1, count: 1...2),
              DropEntry(item: .thistledownGloves, chance: 0.01, count: 1...1)]
         case .hedgehog:
             [DropEntry(item: .hedgehogQuill, chance: 0.55, count: 1...2),
-             DropEntry(item: .dewPotion, chance: 0.18, count: 1...2),
+             DropEntry(item: .honeydewDraught, chance: 0.18, count: 1...2),
              DropEntry(item: .quillsplitter, chance: 0.03, count: 1...1),
              DropEntry(item: .quilledBoots, chance: 0.03, count: 1...1),
              DropEntry(item: .amberShard, chance: 0.1, count: 1...2),
@@ -168,14 +178,14 @@ extension MobKind {
              DropEntry(item: .thistledownBoots, chance: 0.01, count: 1...1)]
         case .coneKnight:
             [DropEntry(item: .pineScale, chance: 0.55, count: 1...2),
-             DropEntry(item: .nectarVial, chance: 0.18, count: 1...2),
+             DropEntry(item: .moonNectar, chance: 0.18, count: 1...2),
              DropEntry(item: .pineconeHelm, chance: 0.03, count: 1...1),
              DropEntry(item: .pineconeBulwark, chance: 0.03, count: 1...1),
              DropEntry(item: .amberShard, chance: 0.11, count: 1...2),
              DropEntry(item: .wardCharm, chance: 0.008, count: 1...1)]
         case .mantis:
             [DropEntry(item: .mantisClaw, chance: 0.5, count: 1...2),
-             DropEntry(item: .dewPotion, chance: 0.2, count: 1...2),
+             DropEntry(item: .honeydewDraught, chance: 0.2, count: 1...2),
              DropEntry(item: .mantisEdge, chance: 0.03, count: 1...1),
              DropEntry(item: .mantisLongbow, chance: 0.02, count: 1...1),
              DropEntry(item: .mantisCarapace, chance: 0.02, count: 1...1),
@@ -183,20 +193,20 @@ extension MobKind {
              DropEntry(item: .wardCharm, chance: 0.01, count: 1...1)]
         case .thornrose:
             [DropEntry(item: .roseHip, chance: 0.55, count: 1...2),
-             DropEntry(item: .nectarVial, chance: 0.2, count: 1...2),
+             DropEntry(item: .moonNectar, chance: 0.2, count: 1...2),
              DropEntry(item: .thornroseStaff, chance: 0.02, count: 1...1),
              DropEntry(item: .rosethornGauntlets, chance: 0.03, count: 1...1),
              DropEntry(item: .amberShard, chance: 0.12, count: 1...2),
              DropEntry(item: .wardCharm, chance: 0.01, count: 1...1)]
         case .grumblecap:
             [DropEntry(item: .grumbleSpore, chance: 0.55, count: 1...2),
-             DropEntry(item: .nectarVial, chance: 0.2, count: 1...2),
+             DropEntry(item: .moonNectar, chance: 0.2, count: 1...2),
              DropEntry(item: .grumblecapScepter, chance: 0.02, count: 1...1),
              DropEntry(item: .amberShard, chance: 0.13, count: 1...2),
              DropEntry(item: .wardCharm, chance: 0.01, count: 1...1)]
         case .stagBeetle:
             [DropEntry(item: .stagMandible, chance: 0.5, count: 1...2),
-             DropEntry(item: .dewPotion, chance: 0.2, count: 1...3),
+             DropEntry(item: .honeydewDraught, chance: 0.2, count: 1...3),
              DropEntry(item: .stagjawAxe, chance: 0.03, count: 1...1),
              DropEntry(item: .stagCrusher, chance: 0.02, count: 1...1),
              DropEntry(item: .amberShard, chance: 0.15, count: 1...3),
@@ -230,7 +240,8 @@ extension MobKind {
         case .emberNewt, .weaverSpider, .duskMoth, .hedgehog: 0.005
         case .sporeBeast, .fuzzbee, .puffweed, .mossTurtle: 0.004
         case .mouse: 0.003
-        case .snail, .slug, .beetle, .sporeling, .ladybug, .pillBug, .acornling, .bogFrog, .puffling: 0
+        case .snail, .slug, .beetle, .sporeling, .ladybug, .pillBug, .acornling, .bogFrog, .puffling,
+             .aphid, .earthworm, .cricket: 0
         }
     }
 }
@@ -249,15 +260,36 @@ extension GameSimulation {
     static let dropPickupDelayTicks = ticks(0.75)
     static let dropLifetimeTicks = ticks(180)
 
+    /// Mobs this many levels below the player drop only their material (and rarely): no caps, gear, or amber.
+    static let outlevelledGap = 8
+
     /// Rolls rewards at the defeated mob's position. Boss participants receive separate personal drops.
-    mutating func rollLoot(for kind: MobKind, ownedBy player: WorldEntity, at origin: Vec2) {
+    mutating func rollLoot(for kind: MobKind, giant: Bool = false, ownedBy player: WorldEntity, at origin: Vec2) {
         guard let data = player.player else { return }
-        spawnDrop(.caps(random.int(in: kind.capsDrop)), for: player.id, at: origin)
-        for entry in kind.drops where random.unit() < entry.chance {
-            spawnDrop(.item(entry.item, count: random.int(in: entry.count)), for: player.id, at: origin)
+        if !giant, player.stats.level - kind.stats.level >= Self.outlevelledGap {
+            if let material = kind.drops.first, random.unit() < material.chance / 2 {
+                spawnDrop(.item(material.item, count: 1), for: player.id, at: origin)
+            }
+            return
         }
-        if let job = data.playerClass, let set = ItemSet.forClass(job), kind.classSetChance > 0,
-           random.unit() < kind.classSetChance {
+        if giant || random.unit() < MobKind.capsDropChance {
+            let pile = random.int(in: kind.capsDrop)
+            spawnDrop(.caps(giant ? pile * Giant.capsMultiplier : pile), for: player.id, at: origin)
+        }
+        for _ in 0..<(giant ? Giant.lootRolls : 1) {
+            for entry in kind.drops where random.unit() < entry.chance {
+                spawnDrop(.item(entry.item, count: random.int(in: entry.count)), for: player.id, at: origin)
+            }
+        }
+        if giant {
+            // A Giant always leaves a piece of its field's gear behind.
+            let gear = kind.drops.filter { $0.item.definition.equipSlot != nil }
+            if !gear.isEmpty {
+                spawnDrop(.item(gear[random.int(in: 0...(gear.count - 1))].item, count: 1), for: player.id, at: origin)
+            }
+        }
+        let setChance = kind.classSetChance * (giant ? Giant.classSetMultiplier : 1)
+        if let job = data.playerClass, let set = ItemSet.forClass(job), setChance > 0, random.unit() < setChance {
             let pieces = set.definition.pieces
             spawnDrop(.item(pieces[random.int(in: 0...(pieces.count - 1))], count: 1), for: player.id, at: origin)
         }

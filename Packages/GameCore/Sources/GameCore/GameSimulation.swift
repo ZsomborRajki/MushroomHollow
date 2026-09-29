@@ -42,6 +42,7 @@ public struct GameSimulation: Sendable {
     struct PendingRespawn: Sendable {
         let areaIndex: Int
         var ticksLeft: Int
+        var giant = false
     }
 
     public init(map: WorldMap = .mushroomHollow, seed: UInt64, startTimeOfDay: Float = 0.32) {
@@ -60,6 +61,7 @@ public struct GameSimulation: Sendable {
             for _ in 0..<area.count {
                 spawnMob(areaIndex: index)
             }
+            if area.kind.hasGiant { spawnMob(areaIndex: index, giant: true) }
         }
     }
 
@@ -92,7 +94,8 @@ public struct GameSimulation: Sendable {
                     target: e.combat.engaged ? e.combat.target : nil,
                     gear: EquipSlot.allCases.compactMap { e.player?.equipment[$0]?.item },
                     playerClass: e.player?.playerClass, isFlying: e.isFlying,
-                    isAggressive: e.brain?.aggressive ?? false)
+                    isAggressive: e.brain?.aggressive ?? false,
+                    isGiant: e.brain?.isGiant ?? false)
             },
             hazards: hazardSnapshots,
             drops: drops.filter { viewer == nil || $0.owner == viewer }.map {
@@ -207,20 +210,21 @@ public struct GameSimulation: Sendable {
 
     /// Spawns a mob somewhere in its area, as far from everyone else as a few tries can find,
     /// so hunting grounds stay spread out and fights are usually one on one.
-    /// Only about one in `aggressiveShare` of an area's mobs is aggressive.
-    mutating func spawnMob(areaIndex: Int) {
+    /// Only about one in `aggressiveShare` of an area's mobs is aggressive (never its Giant).
+    mutating func spawnMob(areaIndex: Int, giant: Bool = false) {
         let area = map.mobSpawns[areaIndex]
         let kind = area.kind
+        let radius = kind.radius * (giant ? Giant.sizeScale : 1)
         var best: (spot: Vec2, room: Float)?
         for _ in 0..<12 {
             let candidate = random.point(inDiscAt: area.center, radius: area.radius)
-            guard !map.isBlocked(candidate, radius: kind.radius + 0.3) else { continue }
+            guard !map.isBlocked(candidate, radius: radius + 0.3) else { continue }
             let room = distanceToNearestCreature(from: candidate)
             if best == nil || room > best!.room { best = (candidate, room) }
         }
-        let spot = map.resolve(best?.spot ?? area.center, radius: kind.radius)
+        let spot = map.resolve(best?.spot ?? area.center, radius: radius)
         // Each pack keeps its quota of aggressive mobs: when one dies, the next to respawn takes its place.
-        let quota = kind.stats.aggroRadius > 0 ? max(1, area.count / Self.aggressiveShare) : 0
+        let quota = kind.stats.aggroRadius > 0 && !giant ? max(1, area.count / Self.aggressiveShare) : 0
         let aggressiveNow = order.count { id in
             guard let e = entities[id], e.stats.isAlive, let brain = e.brain else { return false }
             return brain.spawnArea == areaIndex && brain.aggressive
@@ -230,16 +234,17 @@ public struct GameSimulation: Sendable {
             kind: .mob(kind),
             position: Vec3(spot.x, 0, spot.y),
             yaw: random.float(in: -.pi...(.pi)),
-            radius: kind.radius,
+            radius: radius,
             moveSpeed: kind.wanderSpeed,
-            stats: kind.stats.combatStats,
+            stats: giant ? Giant.stats(for: kind) : kind.stats.combatStats,
             brain: MobBrain(
                 home: spot,
                 leashRadius: Self.mobLeashRadius,
                 wanderRadius: Self.mobWanderRadius,
                 spawnArea: areaIndex,
                 state: .idle(ticksLeft: random.int(in: 0...(Self.tickRate * 4))),
-                aggressive: aggressiveNow < quota
+                aggressive: aggressiveNow < quota,
+                isGiant: giant
             )
         ))
     }
@@ -270,8 +275,9 @@ public struct GameSimulation: Sendable {
             return e.kind.isMob && !e.stats.isAlive && e.deathTicks >= Self.corpseTicks
         }
         for id in expired {
-            if let area = entities[id]?.brain?.spawnArea, case let .mob(kind) = entities[id]?.kind {
-                respawnQueue.append(PendingRespawn(areaIndex: area, ticksLeft: Self.ticks(kind.stats.respawnSeconds)))
+            if let brain = entities[id]?.brain, let area = brain.spawnArea, case let .mob(kind) = entities[id]?.kind {
+                let seconds = brain.isGiant ? Giant.respawnSeconds : kind.stats.respawnSeconds
+                respawnQueue.append(PendingRespawn(areaIndex: area, ticksLeft: Self.ticks(seconds), giant: brain.isGiant))
             }
             removeEntity(id)
         }
@@ -282,7 +288,7 @@ public struct GameSimulation: Sendable {
         for i in respawnQueue.indices { respawnQueue[i].ticksLeft -= 1 }
         let ready = respawnQueue.filter { $0.ticksLeft <= 0 }
         respawnQueue.removeAll { $0.ticksLeft <= 0 }
-        for respawn in ready { spawnMob(areaIndex: respawn.areaIndex) }
+        for respawn in ready { spawnMob(areaIndex: respawn.areaIndex, giant: respawn.giant) }
     }
 
     /// Mobs shouldn't stack on top of each other: push overlapping pairs apart.

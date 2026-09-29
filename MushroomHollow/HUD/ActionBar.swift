@@ -227,6 +227,8 @@ private struct GlyphBadge: View {
 /// Shown after fainting.
 struct FaintedOverlay: View {
     let glyph: String?
+    /// What fainting cost (from level 10, as in Flyff).
+    let xpLost: Int
     let onRespawn: () -> Void
 
     var body: some View {
@@ -236,6 +238,11 @@ struct FaintedOverlay: View {
             Text("The snails will tell stories about this.")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
+            if xpLost > 0 {
+                Label("Lost \(xpLost) XP", systemImage: "arrow.down.circle.fill")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.red)
+            }
             Button(action: onRespawn) {
                 Label("Wake up in Capstone", systemImage: glyph ?? "house.fill")
                     .font(.headline)

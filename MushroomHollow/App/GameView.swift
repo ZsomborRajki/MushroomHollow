@@ -60,7 +60,7 @@ struct GameView: View {
             }
 
             if session.isFainted {
-                FaintedOverlay(glyph: session.glyphs?.primary) {
+                FaintedOverlay(glyph: session.glyphs?.primary, xpLost: session.lastXPLost) {
                     session.perform(.primary)
                 }
                 .ignoresSafeArea()

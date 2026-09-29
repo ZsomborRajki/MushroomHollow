@@ -68,6 +68,22 @@ public struct Zone: Codable, Sendable {
     }
 }
 
+/// A wooden sign at the edge of a hunting field (or the town gate): what lives there, and how tough it is.
+public struct Signpost: Codable, Sendable {
+    public let position: Vec2
+    /// The way its readable side faces.
+    public let yaw: Float
+    public let title: String
+    public let levels: ClosedRange<Int>?
+
+    public init(position: Vec2, yaw: Float, title: String, levels: ClosedRange<Int>?) {
+        self.position = position
+        self.yaw = yaw
+        self.title = title
+        self.levels = levels
+    }
+}
+
 /// Where the world boss lives.
 public struct BossArena: Codable, Sendable {
     public let kind: MobKind
@@ -105,6 +121,9 @@ public struct WorldMap: Codable, Sendable {
     public let plants: [Plant]
     public let boulders: [Boulder]
     public let twigs: [Twig]
+    /// The town's plaza fountain.
+    public let fountain: Disc?
+    public let signposts: [Signpost]
     public let colliders: [Collider]
     /// Too deep to walk (flyers and gliders pass over).
     public let waterColliders: [Collider]
@@ -127,7 +146,9 @@ public struct WorldMap: Codable, Sendable {
         trails: [Trail] = [],
         plants: [Plant] = [],
         boulders: [Boulder] = [],
-        twigs: [Twig] = []
+        twigs: [Twig] = [],
+        fountain: Disc? = nil,
+        signposts: [Signpost] = []
     ) {
         self.boundaryRadius = boundaryRadius
         self.trunkRadius = trunkRadius
@@ -146,8 +167,11 @@ public struct WorldMap: Codable, Sendable {
         self.plants = plants
         self.boulders = boulders
         self.twigs = twigs
+        self.fountain = fountain
+        self.signposts = signposts
 
-        var colliders = Self.structureColliders(trunkCollisionRadius: trunkCollisionRadius, roots: roots, houses: houses, npcs: npcs)
+        var colliders = Self.structureColliders(trunkCollisionRadius: trunkCollisionRadius, roots: roots, houses: houses, npcs: npcs,
+                                                fountain: fountain, signposts: signposts)
         colliders += boulders.map(\.collider)
         colliders += twigs.map(\.collider)
         for plant in plants where plant.collisionRadius > 0 {
@@ -158,9 +182,10 @@ public struct WorldMap: Codable, Sendable {
         grid = ColliderGrid(colliders: colliders, extent: boundaryRadius + 20)
     }
 
-    /// The trunk (always first), roots, houses, and NPCs.
+    /// The trunk (always first), roots, houses, NPCs, the fountain, and signposts.
     private static func structureColliders(trunkCollisionRadius: Float, roots: [TreeRoot], houses: [MushroomHouse],
-                                           npcs: [NPCPlacement]) -> [Collider] {
+                                           npcs: [NPCPlacement], fountain: Disc? = nil,
+                                           signposts: [Signpost] = []) -> [Collider] {
         var colliders: [Collider] = [.circle(center: .zero, radius: trunkCollisionRadius)]
         for root in roots {
             for i in 0..<(root.points.count - 1) {
@@ -173,6 +198,12 @@ public struct WorldMap: Codable, Sendable {
         }
         for npc in npcs {
             colliders.append(.circle(center: npc.position, radius: 0.45))
+        }
+        if let fountain {
+            colliders.append(.circle(center: fountain.center, radius: fountain.radius))
+        }
+        for sign in signposts {
+            colliders.append(.circle(center: sign.position, radius: 0.2))
         }
         return colliders
     }
@@ -245,7 +276,7 @@ public struct WorldMap: Codable, Sendable {
 
 extension WorldMap {
     /// The forest floor under the giant tree: a wide, shallow bowl. The trunk is at the origin;
-    /// +Z is "south", where Capstone Village sits between two roots. An inner ring of hunting
+    /// +Z is "south", where Capstone Town sits between two roots. An inner ring of hunting
     /// grounds lies between the roots, an outer ring on a trail at radius 190, and Dewdrop Lake
     /// glitters between the two, southwest of the village.
     public static let mushroomHollow: WorldMap = {
@@ -267,39 +298,43 @@ extension WorldMap {
             return TreeRoot(points: points, radii: radii)
         }
 
-        let villageCenter = Vec2(0, 36)
-        let villageRadius: Float = 17
-        let houseSpots: [(Vec2, Float, Float)] = [
-            (Vec2(-7.5, 28), 1.2, 3.2),
-            (Vec2(7.5, 29), 1.0, 2.8),
-            (Vec2(-10, 39), 1.4, 3.6),
-            (Vec2(10.5, 40), 1.1, 3.0),
-            (Vec2(-4.5, 47), 1.3, 3.4),
-            (Vec2(6, 48.5), 1.5, 3.9),
-        ]
-        let houses = houseSpots.map { position, stemRadius, stemHeight in
-            MushroomHouse(
-                position: position,
-                yaw: AngleMath.yaw(facing: villageCenter - position),
-                stemRadius: stemRadius,
-                stemHeight: stemHeight,
-                capRadius: stemRadius * 2.6
-            )
-        }
-        let npcs = [
-            NPCPlacement(id: .elderMorel, position: villageCenter + Vec2(-3.2, -2.5), yaw: 0.6),
-            NPCPlacement(id: .chanterelle, position: villageCenter + Vec2(3.6, -1.5), yaw: -0.9),
-            NPCPlacement(id: .shiitake, position: villageCenter + Vec2(0.5, -6), yaw: 0.1),
-            NPCPlacement(id: .truffle, position: villageCenter + Vec2(-3.5, 4.5), yaw: AngleMath.yaw(facing: Vec2(3.5, -4.5))),
-            NPCPlacement(id: .porcini, position: villageCenter + Vec2(4, 5), yaw: AngleMath.yaw(facing: Vec2(-4, -5))),
-        ]
-
         func at(_ degrees: Float, _ distance: Float) -> Vec2 {
             AngleMath.direction(forYaw: degrees * .pi / 180) * distance
         }
 
+        // Capstone Town, nestled between the two southern roots: a ring of mushroom houses around a
+        // fountain plaza, with every shop and service facing the fountain (like Flarine's square).
+        let villageCenter = Vec2(0, 44)
+        let villageRadius: Float = 22
+        let plaza = villageCenter + Vec2(0, 2)
+        let fountain = Disc(center: plaza, radius: 2.2)
+        func around(_ center: Vec2, _ degrees: Float, _ distance: Float) -> Vec2 { center + at(degrees, distance) }
+        let houseSpots: [(degrees: Float, distance: Float, stemRadius: Float, stemHeight: Float)] = [
+            (38, 17, 1.2, 3.2), (72, 16, 1.0, 2.8), (108, 15.5, 1.4, 3.6), (148, 14, 1.1, 3.0),
+            (212, 14, 1.3, 3.4), (252, 15.5, 1.5, 3.9), (288, 16, 1.1, 3.1), (322, 17, 1.25, 3.3),
+        ]
+        let houses = houseSpots.map { spot in
+            let position = around(villageCenter, spot.degrees, spot.distance)
+            return MushroomHouse(
+                position: position,
+                yaw: AngleMath.yaw(facing: plaza - position),
+                stemRadius: spot.stemRadius,
+                stemHeight: spot.stemHeight,
+                capRadius: spot.stemRadius * 2.6
+            )
+        }
+        // Around the fountain, clockwise from the elder's seat on the trunk side.
+        let npcSpots: [(NPCID, Float, Float)] = [
+            (.elderMorel, 180, 7.5), (.chanterelle, 135, 7.5), (.oyster, 90, 7.5), (.enoki, 52, 7.5),
+            (.maitake, 18, 10), (.truffle, 312, 7.5), (.shiitake, 270, 7.5), (.porcini, 225, 7.5),
+        ]
+        let npcs = npcSpots.map { id, degrees, distance in
+            let position = around(plaza, degrees, distance)
+            return NPCPlacement(id: id, position: position, yaw: AngleMath.yaw(facing: plaza - position))
+        }
+
         // The inner ring, between the roots.
-        let innerDistance: Float = 74, innerRadius: Float = 28
+        let innerDistance: Float = 74, innerRadius: Float = 32
         let innerAngles: [Float] = [60, 120, 176, 233, 296]
         let glade = at(60, innerDistance)
         let maze = at(120, innerDistance)
@@ -325,8 +360,13 @@ extension WorldMap {
             return [MobSpawnArea(kind: first, center: center - side, radius: radius, count: counts.0),
                     MobSpawnArea(kind: second, center: center + side, radius: radius, count: counts.1)]
         }
-        func inner(_ first: MobKind, _ second: MobKind, at center: Vec2, counts: (Int, Int) = (6, 6)) -> [MobSpawnArea] {
-            pair(first, second, at: center, counts: counts, radius: 17, spread: 10)
+        /// Flaris-style fields: each species gets a patch of its own, walked in level order: two near the
+        /// roots, one further out between them.
+        func fields(_ kinds: [MobKind], around degrees: Float) -> [MobSpawnArea] {
+            let spots = kinds.count == 3
+                ? [at(degrees - 16, 64), at(degrees, 84), at(degrees + 16, 64)]
+                : [at(degrees - 14, 70), at(degrees + 14, 70)]
+            return zip(kinds, spots).map { MobSpawnArea(kind: $0, center: $1, radius: 11, count: 6) }
         }
         func outer(_ first: MobKind, _ second: MobKind, at center: Vec2, counts: (Int, Int) = (7, 7)) -> [MobSpawnArea] {
             pair(first, second, at: center, counts: counts, radius: 24, spread: 17)
@@ -334,10 +374,10 @@ extension WorldMap {
 
         // Zones run clockwise around the trunk, getting tougher as you go.
         let mobSpawns: [MobSpawnArea] = [
-            inner(.snail, .ladybug, at: glade, counts: (8, 6)),
-            inner(.slug, .pillBug, at: maze),
-            inner(.beetle, .acornling, at: barkfall),
-            inner(.sporeBeast, .bogFrog, at: fen),
+            fields([.snail, .ladybug, .aphid], around: innerAngles[0]),
+            fields([.slug, .pillBug, .earthworm], around: innerAngles[1]),
+            fields([.beetle, .acornling, .cricket], around: innerAngles[2]),
+            fields([.sporeBeast, .bogFrog], around: innerAngles[3]),
             outer(.fuzzbee, .puffweed, at: meadow),
             outer(.mossTurtle, .emberNewt, at: creek),
             outer(.weaverSpider, .duskMoth, at: thicket),
@@ -394,7 +434,7 @@ extension WorldMap {
             hills: hills,
             flats: [
                 FlatArea(center: .zero, radius: 22, fade: 18, height: 0),
-                FlatArea(center: villageCenter, radius: villageRadius + 2, fade: 12, height: 0),
+                FlatArea(center: villageCenter, radius: villageRadius + 2, fade: 14, height: 0),
                 FlatArea(center: arena.center, radius: arena.radius + 1, fade: 10, height: 0.4),
             ],
             lakes: [lake],
@@ -402,8 +442,14 @@ extension WorldMap {
 
         // Dirt roads: south from the village past the lake to the outer ring, a loop just past
         // the root tips with a spur into each inner hunting ground, and the outer ring itself.
+        let plazaRing = Trail(points: (0..<24).map { around(plaza, Float($0) * 15, 5.2) }, width: 3.4, closed: true)
         var trails = [
-            Trail(points: [Vec2(0, 50), Vec2(2, 80), Vec2(-1, 110), Vec2(3, 150), Vec2(0, outerDistance)], width: 3.2),
+            plazaRing,
+            Trail(points: [plaza + Vec2(0, 5), Vec2(0, 66), Vec2(2, 80), Vec2(-1, 110), Vec2(3, 150), Vec2(0, outerDistance)],
+                  width: 3.2),
+            // Out of the town gate and round the root tips: east to the first fields, west toward the lake.
+            Trail(points: [Vec2(1, 60), Vec2(14, 62), Vec2(28, 62), at(49, 50)], width: 2.4),
+            Trail(points: [Vec2(-1, 60), Vec2(-14, 62), Vec2(-30, 64), Vec2(-44, 72)], width: 2.2),
             Trail(points: [Vec2(1, 128), Vec2(-8, 131), Vec2(-15, 134)], width: 2.2),
             Trail.ring(radius: 100, width: 2.8),
             Trail.ring(radius: outerDistance, segments: 128, width: 3.4),
@@ -413,15 +459,15 @@ extension WorldMap {
         }
 
         let zones = [
-            Zone(name: "Capstone Village", center: villageCenter, radius: villageRadius, levels: nil,
-                 blurb: "A safe place to rest"),
+            Zone(name: "Capstone Town", center: villageCenter, radius: villageRadius, levels: nil,
+                 blurb: "Shops, the request board, and a fountain to rest by"),
             Zone(name: "Dewleaf Glade", center: glade, radius: innerRadius, levels: 1...4,
                  blurb: "Daisies, clover, and sleepy snails"),
-            Zone(name: "Root Maze", center: maze, radius: innerRadius, levels: 3...7,
+            Zone(name: "Root Maze", center: maze, radius: innerRadius, levels: 4...8,
                  blurb: "Ferns and bluebells between the roots"),
-            Zone(name: "Barkfall Hollow", center: barkfall, radius: innerRadius, levels: 7...11,
-                 blurb: "Bark litter and fallen twigs"),
-            Zone(name: "Spore Fen", center: fen, radius: innerRadius, levels: 10...15,
+            Zone(name: "Barkfall Hollow", center: barkfall, radius: innerRadius, levels: 8...12,
+                 blurb: "Bark litter, fallen twigs, and chirping"),
+            Zone(name: "Spore Fen", center: fen, radius: innerRadius, levels: 12...15,
                  blurb: "A glowing purple bog"),
             Zone(name: "The Great Bough", center: bough, radius: innerRadius, levels: 15...20,
                  blurb: "The Hollow Owl hunts here at night"),
@@ -443,12 +489,22 @@ extension WorldMap {
                  blurb: "Wild forest between the hunting grounds"),
         ]
 
+        // A signpost at the edge of every field, on the side facing the trunk road, and one at the town gate.
+        var signposts = mobSpawns.map { area in
+            let inward = (-area.center).normalizedOrZero
+            let position = area.center + inward * (area.radius + 1.5)
+            let level = area.kind.stats.level
+            return Signpost(position: position, yaw: AngleMath.yaw(facing: inward), title: area.kind.pluralName,
+                            levels: level...(level + 1))
+        }
+        signposts.append(Signpost(position: Vec2(-3.2, 64), yaw: 0, title: "Capstone Town", levels: nil))
+
         let layout = SceneryLayout(
             boundaryRadius: 300,
             blockers: structureColliders(trunkCollisionRadius: trunkRadius + 2, roots: roots + [fallenBranch],
-                                         houses: houses, npcs: npcs),
+                                         houses: houses, npcs: npcs, fountain: fountain, signposts: signposts),
             keepClear: [Disc(center: villageCenter, radius: villageRadius + 3), Disc(center: arena.center, radius: arena.radius + 2),
-                        Disc(center: Vec2(0, 50), radius: 6)],
+                        Disc(center: Vec2(0, 64), radius: 6)],
             trails: trails, terrain: terrain, spawns: mobSpawns,
             biomes: [
                 (Disc(center: glade, radius: innerRadius), .glade), (Disc(center: maze, radius: innerRadius), .maze),
@@ -468,7 +524,7 @@ extension WorldMap {
             houses: houses,
             villageCenter: villageCenter,
             villageRadius: villageRadius,
-            playerSpawn: Vec2(0, 37),
+            playerSpawn: plaza + Vec2(0, 4),
             mobSpawns: mobSpawns,
             npcs: npcs,
             zones: zones,
@@ -477,7 +533,9 @@ extension WorldMap {
             trails: trails,
             plants: scenery.plants,
             boulders: scenery.boulders,
-            twigs: scenery.twigs
+            twigs: scenery.twigs,
+            fountain: fountain,
+            signposts: signposts
         )
     }()
 }

@@ -210,6 +210,8 @@ final class GameSession {
     private(set) var timers = HUDTimers()
     /// Mirrors `hud.isFainted`, so the root view doesn't have to watch all of `hud`.
     private(set) var isFainted = false
+    /// XP the last faint cost (shown on the faint screen).
+    private(set) var lastXPLost = 0
     private(set) var glyphs: ControllerGlyphs?
     private(set) var floatingTexts: [FloatingText] = []
     private(set) var feed: [FeedLine] = []
@@ -931,7 +933,8 @@ final class GameSession {
             let detail = "\(quest.story)\n\n\(quest.objective.summary)\nReward: \(quest.rewardLine)"
             func row(_ symbol: String, _ tint: Color, _ trailing: String, _ enabled: Bool, _ action: PanelRow.Action) -> PanelRow {
                 PanelRow(id: quest.id.rawValue, symbol: symbol, tint: tint, title: quest.title,
-                         subtitle: quest.objective.summary, trailing: trailing, detail: detail,
+                         subtitle: quest.isRepeatable ? "\(quest.objective.summary) · pays \(quest.rewardCaps) caps" : quest.objective.summary,
+                         trailing: trailing, detail: detail,
                          isEnabled: enabled, action: action)
             }
             switch status.state {
@@ -1177,6 +1180,7 @@ final class GameSession {
 
         case let .died(entity, killer):
             if entity == me {
+                lastXPLost = 0 // the penalty, if any, arrives right after
                 feedback.fainted += 1
                 rumble.play(.heavy)
                 requestSave()
@@ -1189,6 +1193,21 @@ final class GameSession {
 
         case let .xpGained(player, amount):
             if player == me { float("+\(amount) XP", style: .xp, above: player) }
+
+        case let .xpLost(player, amount):
+            guard player == me else { return }
+            lastXPLost = amount
+            addFeed(symbol: "arrow.down.circle.fill", text: "Lost \(amount) XP", tint: .red)
+
+        case let .blinked(player):
+            renderer.sounds.play(.whoosh, from: renderer.entity(for: player), gain: -2)
+            guard player == me else { return }
+            addFeed(symbol: ItemID.blinkwing.symbol, text: "Back in Capstone Town", tint: ItemID.blinkwing.tint)
+            requestSave()
+            if let position = renderer.renderedPosition(of: player) {
+                renderer.effects.burst(at: position + [0, 0.6, 0], color: UIColor(red: 0.75, green: 0.9, blue: 1, alpha: 1), count: 60,
+                                       speed: 1.6, size: 0.06, lifetime: 1, rise: 1.5, spread: 0.5, time: elapsed)
+            }
 
         case let .levelUp(player, level):
             renderer.playCheer(player, time: elapsed)
@@ -1206,6 +1225,7 @@ final class GameSession {
                 renderer.effects.burst(at: position + [0, 0.2, 0], color: gold, count: 90, speed: 1.2,
                                        size: 0.07, lifetime: 1.6, rise: 2.5, spread: 0.6, time: elapsed)
                 renderer.effects.shockwave(at: position, radius: 3, color: gold, duration: 0.7, time: elapsed)
+                renderer.effects.pillar(at: position, color: gold, time: elapsed)
             }
 
         case .respawned:
@@ -1494,7 +1514,7 @@ final class GameSession {
         var state = HUDState(player: snapshot.viewer)
         if let viewer = snapshot.viewer, let targetID = viewer.target, let target = snapshot.entity(targetID) {
             state.target = TargetInfo(
-                id: targetID, name: target.kind.displayName, level: target.level,
+                id: targetID, name: target.displayName, level: target.level,
                 hp: target.hp, maxHP: target.maxHP,
                 levelDelta: target.level - viewer.stats.level,
                 isFightingYou: target.target == viewer.id, isAggressive: target.isAggressive)
@@ -1666,6 +1686,9 @@ private struct DebugLaunch {
         case "smith": .npc(.shiitake)
         case "truffle": .npc(.truffle)
         case "porcini": .npc(.porcini)
+        case "weapons": .npc(.oyster)
+        case "armor": .npc(.enoki)
+        case "board": .npc(.maitake)
         case "stats": .character
         case "map": .map
         default: nil
@@ -1690,7 +1713,7 @@ private struct DebugLaunch {
         case "grove": .stagBeetle
         default: nil
         }
-        if value(after: "-spawn") == "village" { return map.villageCenter + Vec2(0, 3) }
+        if value(after: "-spawn") == "village" { return map.playerSpawn }
         if value(after: "-spawn") == "lake", let lake = map.terrain.lakes.first {
             return lake.discs[0].center + Vec2(lake.discs[0].radius + 4, 0)
         }
