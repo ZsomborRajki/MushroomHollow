@@ -6,6 +6,8 @@ struct HUDView: View {
     let session: GameSession
 
     var body: some View {
+        // The frames' glass is rendered together over the live 3D view (see ActionBar).
+        GlassEffectContainer(spacing: 4) {
         VStack(spacing: 0) {
             HStack(alignment: .top, spacing: 12) {
                 if let player = session.hud.player {
@@ -57,6 +59,7 @@ struct HUDView: View {
                 .foregroundStyle(.white.opacity(0.5))
                 .frame(maxWidth: .infinity, alignment: .leading)
             #endif
+        }
         }
         .padding()
         .animation(.snappy, value: session.hud.target?.id)

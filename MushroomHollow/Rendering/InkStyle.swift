@@ -145,8 +145,16 @@ enum InkMaterials {
             guard var material = make("toonSurface") else { return nil }
             material.baseColor = .init(tint: color)
             material.custom.value = [0, shine ? 1 : 0, 1, 1]
+            if let fingerprint = PartMerger.fingerprint(material) { toonColors[fingerprint] = (color, shine) }
             return material
         }
+    }
+
+    /// Opaque toon materials by `PartMerger.fingerprint`, so merged parts can move into the atlas.
+    private static var toonColors: [String: (color: UIColor, shine: Bool)] = [:]
+
+    static func toonColor(fingerprint: String) -> (color: UIColor, shine: Bool)? {
+        toonColors[fingerprint]
     }
 
     static func translucent(_ color: UIColor, opacity: Float) -> (any RealityKit.Material)? {
@@ -168,12 +176,13 @@ enum InkMaterials {
         return material
     }
 
-    /// Batched scenery: the color atlas, glowing colors in the emissive atlas, wobbly outlines.
-    static func atlas(base: TextureResource, glow: TextureResource, doubleSided: Bool) -> (any RealityKit.Material)? {
-        guard var material = make("toonAtlas", geometry: "toonWobble") else { return nil }
+    /// Batched scenery: the color atlas, glowing colors in the emissive atlas (its wobble is baked in,
+    /// see `InkWobble`). `shine` adds the cartoon highlight (batched actor parts).
+    static func atlas(base: TextureResource, glow: TextureResource, doubleSided: Bool, shine: Bool = false) -> (any RealityKit.Material)? {
+        guard var material = make("toonAtlas") else { return nil }
         material.baseColor = .init(tint: .white, texture: .init(base))
         material.emissiveColor = .init(color: .black, texture: .init(glow))
-        material.custom.value = [0.05, 0, 1, 1]
+        material.custom.value = [0, shine ? 1 : 0, 1, 1]
         if doubleSided { material.faceCulling = .none }
         return material
     }
@@ -218,6 +227,49 @@ enum InkMaterials {
     }()
 }
 
+// MARK: - Wobble
+
+/// Nothing drawn by hand is perfectly round: static scenery gets its vertices nudged by smooth
+/// noise of their position, baked in when the chunk is built (it used to be a per-frame vertex
+/// shader, recomputing the same offsets every frame). Every vertex at one spot moves the same way,
+/// so hard edges don't split.
+nonisolated enum InkWobble {
+    /// How far a vertex can move, in meters.
+    static let amount: Float = 0.05
+
+    static func apply(to positions: inout [SIMD3<Float>]) {
+        let frequency = 0.08 / amount
+        for i in positions.indices {
+            let m = positions[i] * frequency
+            let offset = SIMD3(noise(m), noise(m + 17.3), noise(m + 41.7)) - 0.5
+            positions[i] += offset * 2 * amount
+        }
+    }
+
+    /// Smooth value noise, 0...1.
+    private static func noise(_ p: SIMD3<Float>) -> Float {
+        let i = p.rounded(.down), f = p - i
+        let s = f * f * (3 - 2 * f)
+        let x = Int32(clamping: Int(i.x)), y = Int32(clamping: Int(i.y)), z = Int32(clamping: Int(i.z))
+        func h(_ dx: Int32, _ dy: Int32, _ dz: Int32) -> Float { hash(x &+ dx, y &+ dy, z &+ dz) }
+        let a = lerp(h(0, 0, 0), h(1, 0, 0), s.x), b = lerp(h(0, 1, 0), h(1, 1, 0), s.x)
+        let c = lerp(h(0, 0, 1), h(1, 0, 1), s.x), d = lerp(h(0, 1, 1), h(1, 1, 1), s.x)
+        return lerp(lerp(a, b, s.y), lerp(c, d, s.y), s.z)
+    }
+
+    private static func hash(_ x: Int32, _ y: Int32, _ z: Int32) -> Float {
+        var n = UInt32(bitPattern: x) &* 0x8DA6_B343 ^ UInt32(bitPattern: y) &* 0xD816_3841 ^ UInt32(bitPattern: z) &* 0xCB1A_B31F
+        n ^= n >> 16
+        n &*= 0x7FEB_352D
+        n ^= n >> 15
+        n &*= 0x846C_A68B
+        n ^= n >> 16
+        return Float(n >> 8) / 16_777_216
+    }
+
+    private static func lerp(_ a: Float, _ b: Float, _ t: Float) -> Float { a + (b - a) * t }
+}
+
 // MARK: - Outlines and shadows
 
 extension Entity {
@@ -232,7 +284,8 @@ extension Entity {
     private func addInkHulls(_ material: any RealityKit.Material, root: Entity, minimumSize: Float) {
         for child in Array(children) where child.name != InkStyle.hullName {
             if let part = child as? ModelEntity, let model = part.model, !model.materials.isEmpty,
-               model.materials.allSatisfy(Self.takesOutline),
+               !part.name.hasSuffix(PartMerger.noHullSuffix),
+               model.materials.allSatisfy(Self.takesInkOutline),
                !part.children.contains(where: { $0.name == InkStyle.hullName }) {
                 let size = model.mesh.bounds.extents * part.scale(relativeTo: root)
                 if max(size.x, size.y, size.z) >= minimumSize {
@@ -247,7 +300,7 @@ extension Entity {
     }
 
     /// Opaque toon surfaces only (glowing `UnlitMaterial`s and see-through parts stay clean).
-    private static func takesOutline(_ material: any RealityKit.Material) -> Bool {
+    static func takesInkOutline(_ material: any RealityKit.Material) -> Bool {
         guard let custom = material as? CustomMaterial, custom.faceCulling != .front else { return false }
         if case .opaque = custom.blending { return true }
         return false

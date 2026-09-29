@@ -9,6 +9,7 @@ struct GradeUniforms {
     float4 ink;         // x = boil frame, y = line radius (px), z = boil amount (px), w = paper grain strength
     float4 inkColor;    // rgb = line color, a = line strength (0 = no ink: the classic style)
     float4 inkShape;    // x = radians per pixel, y/z = lines fade out between these distances (m), w = pixels per point
+    float4 depthInfo;   // x = smallest depth step the format can store (0 for float depth)
 };
 
 struct FullscreenVertex {
@@ -25,12 +26,15 @@ vertex FullscreenVertex fullscreenVertex(uint id [[vertex_id]]) {
 
 // MARK: - Noise
 
+/// Integer hash of a lattice point: no `sin`, so it's cheap and never bands at large coordinates.
 static float hash21(float2 p) {
-    return fract(sin(dot(p, float2(127.1, 311.7))) * 43758.5453);
+    uint2 q = uint2(int2(floor(p))) * uint2(1597334673u, 3812015801u);
+    uint n = (q.x ^ q.y) * 1597334673u;
+    return float(n) * (1.0 / 4294967296.0);
 }
 
 static float valueNoise(float2 p) {
-    float2 i = floor(p), f = fract(p), s = f * f * (3.0 - 2.0 * f);
+    float2 i = floor(p), f = p - i, s = f * f * (3.0 - 2.0 * f);
     return mix(mix(hash21(i), hash21(i + float2(1, 0)), s.x),
                mix(hash21(i + float2(0, 1)), hash21(i + float2(1, 1)), s.x), s.y);
 }
@@ -52,12 +56,8 @@ static half3 grade(half3 color, float2 uv, constant GradeUniforms &u) {
 
 // MARK: - Ink
 
-/// Linear view distance at a pixel (depth may be a different resolution than color).
-static float viewDistance(depth2d<float, access::read> depth, float2 p, float2 toDepth, constant GradeUniforms &u) {
-    float2 limit = float2(depth.get_width(), depth.get_height()) - 1.0;
-    uint2 c = uint2(clamp(p * toDepth, float2(0), limit));
-    // From the projection's z terms (works for standard and reverse-Z).
-    return u.settings.w / max(depth.read(c) + u.settings.z, 1e-6);
+static float depthAt(depth2d<float, access::read> depth, int2 c, int2 limit) {
+    return depth.read(uint2(clamp(c, int2(0), limit)));
 }
 
 static half lumaAt(texture2d<half, access::read> source, float2 p) {
@@ -65,12 +65,26 @@ static half lumaAt(texture2d<half, access::read> source, float2 p) {
     return dot(source.read(uint2(clamp(p, float2(0), limit))).rgb, half3(0.2126h, 0.7152h, 0.0722h));
 }
 
-/// How much ink this pixel gets: 0 = paper, 1 = a full line.
+/// How strongly the surface bends across `c` along `step` (depth texels): 0 on anything flat.
 ///
-/// Edges come from the second difference of *inverse* depth, which is exactly zero on any flat
-/// surface (however steeply it's seen) and jumps at silhouettes. Divided by the local inverse depth
-/// and the pixel angle it reads as "how much the surface slope changes here", so creases get lines
-/// at the same angle near and far. A little luminance edge on top picks up painted detail.
+/// Inverse view distance is `(depth + a) / b`, affine in the stored depth, and on a plane it's affine
+/// in screen position too, so the second difference of the raw depth is exactly zero on any flat
+/// surface however steeply it's seen. The taps must sit symmetrically on whole texels for that to
+/// hold: truncating fractional sample points unevenly turns a plane's slope into fake "edges" all
+/// over grazing ground (the smoky, boiling blotches this used to draw on device).
+///
+/// A silhouette (one side jumps away) scores up to ~8. A crease scores its slope change, damped where
+/// the surface is seen edge-on, so terrain facets at grazing angles don't light up.
+static float bendAlong(depth2d<float, access::read> depth, int2 c, int2 step, int2 limit, float center,
+                       float scale, float quantum) {
+    float before = depthAt(depth, c - step, limit);
+    float after = depthAt(depth, c + step, limit);
+    float second = max(abs(before + after - 2.0 * center) - 2.0 * quantum, 0.0) * scale;
+    float slope = max(abs(after - before) - quantum, 0.0) * 0.5 * scale;
+    return second / (1.0 + 0.25 * slope);
+}
+
+/// How much ink this pixel gets: 0 = paper, 1 = a full line.
 static float inkAmount(float2 p, float2 toDepth, depth2d<float, access::read> depth,
                        texture2d<half, access::read> source, constant GradeUniforms &u)
 {
@@ -84,35 +98,42 @@ static float inkAmount(float2 p, float2 toDepth, depth2d<float, access::read> de
     // Brush: the kernel radius swells and thins along a stroke, like a marker pressed harder.
     float r = u.ink.y * (0.55 + 0.9 * valueNoise(n * 0.02 + float2(frame * 0.61, 3.7)));
 
-    float2 dx = float2(r, 0), dy = float2(0, r), d1 = float2(r, r) * 0.7071, d2 = float2(r, -r) * 0.7071;
-    half gx = lumaAt(source, q + dx) - lumaAt(source, q - dx);
-    half gy = lumaAt(source, q + dy) - lumaAt(source, q - dy);
+    half gx = lumaAt(source, q + float2(r, 0)) - lumaAt(source, q - float2(r, 0));
+    half gy = lumaAt(source, q + float2(0, r)) - lumaAt(source, q - float2(0, r));
     float colorEdge = smoothstep(0.22, 0.45, float(abs(gx) + abs(gy)));
     float dryBrush = 0.72 + 0.28 * smoothstep(0.25, 0.55, valueNoise(n * 0.11 + frame * 7.7));
 
+    int2 limit = int2(depth.get_width(), depth.get_height()) - 1;
+    int2 c = int2(q * toDepth);
+    float center = depthAt(depth, c, limit);
     // Some renderers (the Simulator) hand over an empty depth buffer: then the lines come from
     // color edges alone (materials draw their own contours, actors have hull outlines).
-    float2 limit = float2(depth.get_width(), depth.get_height()) - 1.0;
-    if (depth.read(uint2(clamp(q * toDepth, float2(0), limit))) <= 0.0) {
+    if (center <= 0.0) {
         return 0.8 * colorEdge * dryBrush;
     }
+    float wc = center + u.settings.z;        // inverse distance × projection b
+    float distance = u.settings.w / max(wc, 1e-9);
+    // Thin out into the haze, and never draw on the sky.
+    float fade = 1.0 - smoothstep(u.inkShape.y, u.inkShape.z, distance);
+    if (fade <= 0.0) return 0.0;
 
-    float wc = 1.0 / viewDistance(depth, q, toDepth, u);
-    float h = abs(1.0 / viewDistance(depth, q - dx, toDepth, u) + 1.0 / viewDistance(depth, q + dx, toDepth, u) - 2.0 * wc);
-    float v = abs(1.0 / viewDistance(depth, q - dy, toDepth, u) + 1.0 / viewDistance(depth, q + dy, toDepth, u) - 2.0 * wc);
-    float a = abs(1.0 / viewDistance(depth, q - d1, toDepth, u) + 1.0 / viewDistance(depth, q + d1, toDepth, u) - 2.0 * wc);
-    float b = abs(1.0 / viewDistance(depth, q - d2, toDepth, u) + 1.0 / viewDistance(depth, q + d2, toDepth, u) - 2.0 * wc);
-    float bend = max(max(h, v), max(a, b)) / (wc * r * u.inkShape.x);
+    // Whole-texel taps, `k` texels out (about the brush radius), in four directions.
+    int k = max(1, int(round(r * toDepth.x)));
+    float perTexel = u.inkShape.x / toDepth.x; // radians per depth texel
+    float axis = 1.0 / (abs(wc) * float(k) * perTexel);
+    float diagonal = axis * 0.70710678;
+    float quantum = u.depthInfo.x;
+    float bend = max(max(bendAlong(depth, c, int2(k, 0), limit, center, axis, quantum),
+                         bendAlong(depth, c, int2(0, k), limit, center, axis, quantum)),
+                     max(bendAlong(depth, c, int2(k, k), limit, center, diagonal, quantum),
+                         bendAlong(depth, c, int2(k, -k), limit, center, diagonal, quantum)));
     // Silhouettes and creases, plus faint painted detail (spots, stripes, the eyes); kept faint so
     // shading bands don't all get outlined.
     float edge = max(smoothstep(1.3, 2.6, bend), 0.55 * colorEdge) * dryBrush;
-
-    // Thin out into the haze, and never draw on the sky.
-    float distance = 1.0 / wc;
-    return edge * (1.0 - smoothstep(u.inkShape.y, u.inkShape.z, distance));
+    return edge * fade;
 }
 
-/// Paper under everything: faint fibers plus a coarser tooth, boiling at a slower rate.
+/// Paper under everything: faint fibers plus a coarser tooth, re-laid at a slower beat than the lines.
 static half paperGrain(float2 p, constant GradeUniforms &u) {
     float2 n = p / u.inkShape.w;
     float slow = floor(u.ink.x * 0.25);
@@ -134,7 +155,9 @@ fragment half4 gradeInkFragment(FullscreenVertex in [[stage_in]],
     half4 color = source.read(uint2(p));
     float2 toDepth = float2(depth.get_width(), depth.get_height()) / size;
 
-    float distance = viewDistance(depth, p, toDepth, u);
+    int2 limit = int2(depth.get_width(), depth.get_height()) - 1;
+    float d = depthAt(depth, int2(p * toDepth), limit);
+    float distance = d > 0.0 ? u.settings.w / max(d + u.settings.z, 1e-9) : 0.0;
     float ink = u.inkColor.a > 0.0 ? inkAmount(p, toDepth, depth, source, u) * u.inkColor.a : 0.0;
 
     float haze = (1.0 - exp(-distance * u.fog.a)) * 0.8;

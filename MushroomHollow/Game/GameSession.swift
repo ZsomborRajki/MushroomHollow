@@ -503,12 +503,12 @@ final class GameSession {
         if flying { host.send(.climb(frameInput.climb)) }
 
         host.advance(by: deltaTime)
-        renderer.render(host: host, time: elapsed)
-        for event in host.drainEvents() { handle(event) }
+        renderer.prepare(host: host, time: elapsed)
 
+        // The camera goes first, so the actors are culled against this frame's view.
         // Big fights need a wider view.
         camera.minimumDistance = hud.boss != nil ? 16 : 0
-        if let player = renderer.renderedPosition(of: host.localPlayerID) {
+        if let player = renderer.interpolatedPosition(of: host.localPlayerID, host: host) {
             camera.follow(player, deltaTime: dt)
         }
         let map = host.map
@@ -519,6 +519,8 @@ final class GameSession {
             cameraPosition += SIMD3(sin(Float(elapsed) * 83), sin(Float(elapsed) * 97), cos(Float(elapsed) * 71)) * shakeStrength * fade
         }
         renderer.placeCamera(at: cameraPosition, lookingAt: camera.focus)
+        renderer.render(host: host)
+        for event in host.drainEvents() { handle(event) }
 
         updateHUD()
         updateFloatingTexts()

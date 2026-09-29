@@ -15,6 +15,7 @@ final class Atmosphere {
     private weak var sky: ModelEntity?
     private var lastApplied: Float = -1
     private var fireflyRate: Float = -1
+    private var skyWeights = SIMD4<Float>(repeating: -1)
 
     /// 0 at noon, 1 at midnight, smooth in between.
     private(set) var nightFactor: Float = 0
@@ -23,26 +24,28 @@ final class Atmosphere {
         self.sky = sky
 
         // Ink-style surfaces are unlit (ToonLighting shades them) and actors get drawn blob
-        // shadows, so shadow maps would only cost time.
+        // shadows, so lights (and their shadow maps) would only cost time.
         if !ArtStyle.isInk {
             var shadow = DirectionalLightComponent.Shadow(shadowProjection: .automatic(maximumDistance: 45), depthBias: 1.5)
             shadow.cascades = .automatic
             sun.shadow = shadow
+            root.addChild(sun)
+
+            lantern.light.color = Palette.windowGlow
+            lantern.light.attenuationRadius = 20
+            lantern.position = [map.villageCenter.x, 4, map.villageCenter.y]
+            root.addChild(lantern)
         }
-        root.addChild(sun)
 
-        lantern.light.color = Palette.windowGlow
-        lantern.light.attenuationRadius = 20
-        lantern.position = [map.villageCenter.x, 4, map.villageCenter.y]
-        root.addChild(lantern)
-
+        fireflies.components.set(Self.makeFireflies())
         root.addChild(fireflies)
     }
 
     /// Call every frame; does real work only when the time has moved noticeably.
     func update(timeOfDay: Float, focus: SIMD3<Float>) {
         fireflies.position = [focus.x, focus.y - 1.3, focus.z]
-        guard abs(timeOfDay - lastApplied) > 0.0005 else { return }
+        // 0.001 of a day is under a second: the sky still turns smoothly.
+        guard abs(timeOfDay - lastApplied) > 0.001 else { return }
         lastApplied = timeOfDay
 
         // Sun angle: 0 at dawn (0.25), up at noon, down at dusk (0.75).
@@ -52,8 +55,10 @@ final class Atmosphere {
         let dusk = max(0, 1 - abs(elevation) / 0.3) // near the horizon, either side
         nightFactor = 1 - smoothstep(-0.2, 0.05, elevation)
 
-        // One directional light plays the sun by day and the moon by night.
-        if elevation > -0.02 {
+        // One directional light plays the sun by day and the moon by night (the classic style).
+        if ArtStyle.isInk {
+            // Unlit: ToonLighting does the sun's job.
+        } else if elevation > -0.02 {
             let horizontal = cos(angle)
             sun.look(at: .zero, from: [horizontal * 70, max(elevation, 0.05) * 90 + 8, 45], relativeTo: nil)
             let warm = smoothstep(0, 0.5, elevation)
@@ -66,11 +71,13 @@ final class Atmosphere {
             sun.light.intensity = 500 * nightFactor + 150
         }
 
-        lantern.light.intensity = 12000 + 30000 * nightFactor
+        if !ArtStyle.isInk { lantern.light.intensity = 12000 + 30000 * nightFactor }
 
-        if let sky, var material = sky.model?.materials.first as? CustomMaterial {
-            let dayWeight = max(0, daylight - dusk * 0.6)
-            material.custom.value = [dayWeight, dusk, nightFactor, 0]
+        let weights = SIMD4<Float>(max(0, daylight - dusk * 0.6), dusk, nightFactor, 0)
+        if let sky, simd_reduce_max(abs(weights - skyWeights)) > 0.004,
+           var material = sky.model?.materials.first as? CustomMaterial {
+            skyWeights = weights
+            material.custom.value = weights
             sky.model?.materials = [material]
         }
 
@@ -90,10 +97,13 @@ final class Atmosphere {
         }
         grade.set(uniforms)
 
+        // Change the rate in place: a fresh emitter would drop the fireflies already out.
         let rate = (nightFactor * 30).rounded()
-        if rate != fireflyRate {
+        if rate != fireflyRate, var emitter = fireflies.components[ParticleEmitterComponent.self] {
             fireflyRate = rate
-            fireflies.components.set(Self.makeFireflies(birthRate: rate))
+            emitter.mainEmitter.birthRate = rate
+            emitter.isEmitting = rate > 0
+            fireflies.components.set(emitter)
         }
     }
 
@@ -118,7 +128,7 @@ final class Atmosphere {
         uniforms.inkShape = [0, 55, 140, 1]
     }
 
-    private static func makeFireflies(birthRate: Float) -> ParticleEmitterComponent {
+    private static func makeFireflies() -> ParticleEmitterComponent {
         var emitter = ParticleEmitterComponent()
         emitter.emitterShape = .box
         emitter.birthLocation = .volume
@@ -126,7 +136,7 @@ final class Atmosphere {
         emitter.fieldSimulationSpace = .global
         emitter.speed = 0.2
         emitter.speedVariation = 0.15
-        emitter.mainEmitter.birthRate = birthRate
+        emitter.mainEmitter.birthRate = 0
         emitter.mainEmitter.lifeSpan = 5
         emitter.mainEmitter.lifeSpanVariation = 2
         emitter.mainEmitter.size = 0.06
@@ -139,7 +149,7 @@ final class Atmosphere {
         emitter.mainEmitter.color = .constant(.random(
             a: UIColor(red: 0.85, green: 1, blue: 0.4, alpha: 1),
             b: UIColor(red: 1, green: 0.85, blue: 0.35, alpha: 1)))
-        emitter.isEmitting = birthRate > 0
+        emitter.isEmitting = false
         return emitter
     }
 }

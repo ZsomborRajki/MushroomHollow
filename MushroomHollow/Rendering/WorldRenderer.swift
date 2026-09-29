@@ -74,6 +74,12 @@ final class WorldRenderer {
         var size: Float = 1
         /// The floating name over mobs and NPCs, and the difficulty tier its color shows.
         var nameplate: Nameplate?
+        /// A rig's merged parts, taken apart again before it changes gear.
+        var merged: PartMerger.Record?
+        /// Ground under the actor (and the slope it leans to), kept while it stands still.
+        var groundAt: SIMD2<Float>?
+        var ground: Float = 0
+        var slope = simd_quatf.identity
 
         init(entity: Entity, model: Entity, kind: EntityKind) {
             self.entity = entity
@@ -95,6 +101,14 @@ final class WorldRenderer {
 
     /// Beyond this, mobs aren't drawn (the world is 600 m across; a critter here is ~3 px tall).
     private static let mobDrawDistance: Float = 120
+
+    /// Each mob kind is built, merged, and outlined once; actors get clones (sharing meshes).
+    private var mobTemplates: [MobKind: Entity] = [:]
+    /// The previous snapshot's entities by ID, rebuilt once per tick rather than every frame.
+    private var previousByID: [EntityID: EntitySnapshot] = [:]
+    private var previousKey: (UInt64, UInt64)?
+    private var selectionEngaged: Bool?
+    private var hazardOpacity: [UInt32: Float] = [:]
 
     init(map: WorldMap) {
         SimEntityComponent.registerComponent()
@@ -141,44 +155,73 @@ final class WorldRenderer {
         actors[id]?.entity.position
     }
 
-    func render(host: some WorldHost, time: Double) {
+    /// Call first each frame, before `interpolatedPosition` and `placeCamera`.
+    func prepare(host: some WorldHost, time: Double) {
         self.time = time
         timeOfDay = host.currentSnapshot.timeOfDay
+        let key = (host.previousSnapshot.tick, host.currentSnapshot.tick)
+        if previousKey.map({ $0 != key }) ?? true {
+            previousKey = key
+            previousByID = Dictionary(uniqueKeysWithValues: host.previousSnapshot.entities.map { ($0.id, $0) })
+        }
+    }
+
+    /// Where an entity stands this frame, between the last two ticks (for the camera to follow).
+    func interpolatedPosition(of id: EntityID, host: some WorldHost) -> SIMD3<Float>? {
+        guard let current = host.currentSnapshot.entity(id) else { return nil }
+        let from = previousByID[id] ?? current
+        let position = simd_mix(from.position, current.position, SIMD3(repeating: host.interpolationAlpha))
+        return position + SIMD3<Float>(0, standingHeight(at: position.xz), 0)
+    }
+
+    /// Mirrors the snapshot into the scene. Call after `placeCamera`, so culling uses this frame's view.
+    func render(host: some WorldHost) {
         let alpha = host.interpolationAlpha
-        let previous = Dictionary(uniqueKeysWithValues: host.previousSnapshot.entities.map { ($0.id, $0) })
-        var seen = Set<EntityID>()
+        let viewer = host.currentSnapshot.viewer
+        var seen = Set<EntityID>(minimumCapacity: host.currentSnapshot.entities.count)
         let facingCamera = camera.orientation(relativeTo: nil)
+        let cameraPosition = camera.position
 
         for current in host.currentSnapshot.entities {
             seen.insert(current.id)
-            let from = previous[current.id] ?? current
+            let from = previousByID[current.id] ?? current
             let position = simd_mix(from.position, current.position, SIMD3(repeating: alpha))
             // Tiny mobs beyond the haze are cheaper to skip before any terrain or view work.
             let isDistant = current.kind.isMob && current.kind != .mob(.owl)
-                && simd_distance_squared(position, camera.position) > Self.mobDrawDistance * Self.mobDrawDistance
+                && simd_distance_squared(position, cameraPosition) > Self.mobDrawDistance * Self.mobDrawDistance
             if isDistant {
-                actors[current.id]?.entity.isEnabled = false
+                if let view = actors[current.id], view.entity.isEnabled { view.entity.isEnabled = false }
                 continue
             }
-            let ground = standingHeight(at: position.xz)
+            let existing = actors[current.id]
+            let ground = existing.map { ground(for: $0, at: position.xz) } ?? standingHeight(at: position.xz)
             let worldPosition = position + SIMD3<Float>(0, ground, 0)
             let visible = current.kind == .player || viewFrustum?.contains(
                 center: worldPosition + SIMD3<Float>(0, current.kind.headHeight * 0.5, 0),
                 radius: Self.actorRadius(current.kind)) != false
-            guard let view = actors[current.id] ?? (visible ? makeActor(current) : nil) else { continue }
-            let shouldDraw = visible
-            if view.entity.isEnabled != shouldDraw { view.entity.isEnabled = shouldDraw }
+            guard let view = existing ?? (visible ? makeActor(current) : nil) else { continue }
+            if existing == nil { _ = self.ground(for: view, at: position.xz) }
+            if view.entity.isEnabled != visible { view.entity.isEnabled = visible }
+            if !current.isAlive, view.deathStart == nil {
+                view.deathStart = time
+                view.entity.components.remove(InputTargetComponent.self)
+            } else if current.isAlive, view.deathStart != nil {
+                view.deathStart = nil
+                if current.kind.isMob { view.entity.components.set(InputTargetComponent()) }
+            }
+            // Off screen: nothing to pose until it comes back into view.
+            guard visible else { continue }
+
             let yaw = AngleMath.lerp(from.yaw, current.yaw, alpha)
             // The simulation's y is height above the ground: stand on the terrain (or wade in the shallows).
             var rotation = simd_quatf(angle: yaw, axis: [0, 1, 0])
             if case let .mob(kind) = current.kind, !kind.hovers, kind != .owl, current.isAlive, position.y < 0.05 {
                 // Critters hug the slope they're walking on.
-                let normal = map.terrain.normal(at: position.xz, step: max(0.4, kind.radius))
-                rotation = simd_quatf(from: [0, 1, 0], to: normal) * rotation
+                rotation = view.slope * rotation
             }
             view.entity.transform = Transform(scale: SIMD3(repeating: view.size), rotation: rotation, translation: worldPosition)
             if let plate = view.nameplate {
-                plate.update(level: current.level, viewerLevel: host.currentSnapshot.viewer?.stats.level,
+                plate.update(level: current.level, viewerLevel: viewer?.stats.level,
                              alive: current.isAlive && view.deathStart == nil, facing: facingCamera)
             }
             if let shadow = view.shadow {
@@ -187,19 +230,11 @@ final class WorldRenderer {
                 shadow.scale = SIMD3(repeating: view.shadowRadius * max(0.4, 1 - lift / 14))
                 if shadow.isEnabled != current.isAlive { shadow.isEnabled = current.isAlive }
             }
-
-            if !current.isAlive, view.deathStart == nil {
-                view.deathStart = time
-                view.entity.components.remove(InputTargetComponent.self)
-            } else if current.isAlive, view.deathStart != nil {
-                view.deathStart = nil
-                if current.kind.isMob { view.entity.components.set(InputTargetComponent()) }
-            }
             if current.gear != view.gear || current.playerClass != view.playerClass {
                 updateGear(view, current.gear, playerClass: current.playerClass)
             }
             if current.kind == .player { updateGlider(view, airborne: current.isFlying || current.position.y > 0.05) }
-            if shouldDraw { animate(view, snapshot: current, time: time) }
+            animate(view, snapshot: current, time: time)
         }
 
         for (id, view) in actors where !seen.contains(id) {
@@ -212,8 +247,20 @@ final class WorldRenderer {
         renderDrops(host.currentSnapshot.drops)
         renderPets(host: host, alpha: alpha, time: time)
         animateMarkers(time: time)
-        updateSelection(host.currentSnapshot.viewer, time: time)
+        updateSelection(viewer, time: time)
         effects.update(time: time)
+    }
+
+    /// Ground height under an actor, and the slope a walking critter leans to; only recomputed
+    /// when it has moved (most mobs stand still most of the time).
+    private func ground(for view: ActorView, at point: SIMD2<Float>) -> Float {
+        if let at = view.groundAt, simd_distance_squared(at, point) < 1e-6 { return view.ground }
+        view.groundAt = point
+        view.ground = standingHeight(at: point)
+        if case let .mob(kind) = view.kind, !kind.hovers, kind != .owl {
+            view.slope = simd_quatf(from: [0, 1, 0], to: map.terrain.normal(at: point, step: max(0.4, kind.radius)))
+        }
+        return view.ground
     }
 
     func placeCamera(at position: SIMD3<Float>, lookingAt target: SIMD3<Float>) {
@@ -226,17 +273,6 @@ final class WorldRenderer {
                                     near: Float(camera.camera.near), far: Float(camera.camera.far))
         viewFrustum = frustum
         culler.update(frustum: frustum)
-        for view in actors.values {
-            let center = view.entity.position + SIMD3<Float>(0, view.kind.headHeight * 0.5, 0)
-            let visible = view.kind == .player || frustum.contains(center: center, radius: Self.actorRadius(view.kind))
-            let distant = view.kind.isMob && view.kind != .mob(.owl)
-                && simd_distance_squared(view.entity.position, position) > Self.mobDrawDistance * Self.mobDrawDistance
-            let shouldDraw = visible && !distant
-            if view.entity.isEnabled != shouldDraw { view.entity.isEnabled = shouldDraw }
-        }
-        if selectionRing.isEnabled && !frustum.contains(center: selectionRing.position, radius: 1) {
-            selectionRing.isEnabled = false
-        }
     }
 
     private static func actorRadius(_ kind: EntityKind) -> Float {
@@ -382,14 +418,24 @@ final class WorldRenderer {
         case let .npc(npc): npc.makeRig()
         case .mob: nil
         }
-        let model = rig?.root ?? ActorModels.make(snapshot.kind)
+        let model: Entity
+        if let rig {
+            model = rig.root
+        } else if case let .mob(kind) = snapshot.kind {
+            model = mobTemplate(kind).clone(recursive: true)
+        } else {
+            model = ActorModels.make(snapshot.kind)
+        }
         entity.addChild(model)
         actorsRoot.addChild(entity)
         let view = ActorView(entity: entity, model: model, kind: snapshot.kind)
         view.rig = rig
         view.wings = ActorModels.wingNames.compactMap { model.findEntity(named: $0) }
-        if ArtStyle.isInk {
+        if rig != nil {
+            view.merged = PartMerger.merge(model)
             model.addInkHulls(width: InkStyle.hullWidth(for: snapshot.kind))
+        }
+        if ArtStyle.isInk {
             if let shadow = Entity.makeBlobShadow(radius: InkStyle.shadowRadius(for: snapshot.kind)) {
                 entity.addChild(shadow)
                 view.shadow = shadow
@@ -428,8 +474,21 @@ final class WorldRenderer {
         return view
     }
 
+    /// A mob kind's model, built, merged, and outlined once.
+    private func mobTemplate(_ kind: MobKind) -> Entity {
+        if let template = mobTemplates[kind] { return template }
+        let model = ActorModels.make(.mob(kind))
+        PartMerger.merge(model)
+        model.addInkHulls(width: InkStyle.hullWidth(for: .mob(kind)))
+        mobTemplates[kind] = model
+        return model
+    }
+
     private func updateGear(_ view: ActorView, _ gear: [ItemID], playerClass: PlayerClass?) {
+        // The rig swaps materials on (and hangs gear off) its original parts: put them back first.
+        view.merged?.restore()
         view.rig?.dress(gear, playerClass: playerClass)
+        view.merged = PartMerger.merge(view.model)
         view.model.addInkHulls(width: InkStyle.hullWidth(for: view.kind))
         view.gear = gear
         view.playerClass = playerClass
@@ -440,6 +499,7 @@ final class WorldRenderer {
         if airborne, view.glider == nil {
             let glider = ActorModels.makeGlider(grip: PlayerRig.gliderGrip)
             glider.components.set(Self.makePollenTrail())
+            PartMerger.merge(glider)
             glider.addInkHulls(width: InkStyle.hullWidth(for: view.kind))
             view.model.addChild(glider)
             view.glider = glider
@@ -451,17 +511,22 @@ final class WorldRenderer {
 
     private func updateSelection(_ viewer: PlayerStatus?, time: Double) {
         guard let targetID = viewer?.target, let target = actors[targetID], target.deathStart == nil,
-              target.entity.isEnabled else {
-            selectionRing.isEnabled = false
+              target.entity.isEnabled,
+              viewFrustum?.contains(center: target.entity.position, radius: 1.5) != false else {
+            if selectionRing.isEnabled { selectionRing.isEnabled = false }
             return
         }
         let radius: Float = if case let .mob(kind) = target.kind { kind.radius * 1.5 } else { 0.8 }
         let pulse = 1 + sin(Float(time) * 5) * 0.05
-        selectionRing.isEnabled = true
-        selectionRing.position = target.entity.position + [0, 0.04, 0]
-        selectionRing.scale = SIMD3(repeating: radius * pulse)
-        selectionRing.orientation = simd_quatf(angle: Float(time) * 0.8, axis: [0, 1, 0])
-        selectionRing.model?.materials = [viewer?.isEngaged == true ? engagedMaterial : selectedMaterial]
+        if !selectionRing.isEnabled { selectionRing.isEnabled = true }
+        selectionRing.transform = Transform(scale: SIMD3(repeating: radius * pulse),
+                                            rotation: simd_quatf(angle: Float(time) * 0.8, axis: [0, 1, 0]),
+                                            translation: target.entity.position + [0, 0.04, 0])
+        let engaged = viewer?.isEngaged == true
+        if engaged != selectionEngaged {
+            selectionEngaged = engaged
+            selectionRing.model?.materials = [engaged ? engagedMaterial : selectedMaterial]
+        }
     }
 
     /// Cheap procedural motion until we have skeletal animation.
@@ -527,8 +592,9 @@ final class WorldRenderer {
             scale *= [1.05, 1.05, 1.05]
         }
         if let telegraph = view.telegraph {
-            telegraph.isEnabled = snapshot.pose == .windingUp
-            if telegraph.isEnabled {
+            let winding = snapshot.pose == .windingUp
+            if telegraph.isEnabled != winding { telegraph.isEnabled = winding }
+            if winding {
                 telegraph.components.set(OpacityComponent(opacity: 0.55 + sin(t * 18) * 0.35))
             }
         }
@@ -601,8 +667,10 @@ final class WorldRenderer {
             let visible = viewFrustum?.contains(center: center, radius: radius * 1.5) != false
             if !visible, telegraphs[key] == nil { continue }
             let parts = telegraphs[key] ?? makeTelegraph(key, shape: telegraph.shape)
-            parts.outline.isEnabled = visible
-            parts.fill.isEnabled = visible
+            if parts.outline.isEnabled != visible {
+                parts.outline.isEnabled = visible
+                parts.fill.isEnabled = visible
+            }
             if !visible { continue }
             let pulse = 0.55 + 0.25 * sin(Float(time) * 14)
             switch telegraph.shape {
@@ -658,11 +726,14 @@ final class WorldRenderer {
             let visible = viewFrustum?.contains(center: center, radius: hazard.radius * 1.5) != false
             if !visible, hazards[hazard.id] == nil { continue }
             let entity = hazards[hazard.id] ?? makeHazard(hazard)
-            entity.isEnabled = visible
+            if entity.isEnabled != visible { entity.isEnabled = visible }
             if !visible { continue }
             // Fade in quickly, fade out over the last third of its life.
             let opacity = min(1, hazard.remaining * 3)
-            entity.components.set(OpacityComponent(opacity: opacity))
+            if hazardOpacity[hazard.id] != opacity {
+                hazardOpacity[hazard.id] = opacity
+                entity.components.set(OpacityComponent(opacity: opacity))
+            }
             if hazard.kind.isCloud {
                 entity.scale = SIMD3(repeating: 0.85 + sin(Float(time) * 3 + Float(hazard.id)) * 0.05)
             }
@@ -670,6 +741,7 @@ final class WorldRenderer {
         for (id, entity) in hazards where !seen.contains(id) {
             entity.removeFromParent()
             hazards[id] = nil
+            hazardOpacity[id] = nil
         }
     }
 
@@ -721,7 +793,7 @@ final class WorldRenderer {
                 && viewFrustum?.contains(center: position + [0, 0.25, 0], radius: 0.7) != false
             if !visible, drops[drop.id] == nil { continue }
             let entity = drops[drop.id] ?? makeDrop(drop, at: position)
-            entity.isEnabled = visible
+            if entity.isEnabled != visible { entity.isEnabled = visible }
         }
         for (id, entity) in drops where !seen.contains(id) {
             entity.removeFromParent()
@@ -760,6 +832,7 @@ final class WorldRenderer {
 
     private func makePet(_ pet: PetSnapshot, at position: SIMD3<Float>) -> PetView {
         let view = PetView(kind: pet.kind)
+        PartMerger.merge(view.rig.root, hullMinimumSize: 0.03)
         if ArtStyle.isInk {
             view.rig.root.addInkHulls(width: 0.012, minimumSize: 0.03)
             if let shadow = Entity.makeBlobShadow(radius: 0.24) { view.entity.addChild(shadow) }
@@ -874,6 +947,17 @@ final class WorldRenderer {
         emitter.mainEmitter.color = .constant(.random(
             a: UIColor(red: 1.0, green: 0.95, blue: 0.6, alpha: 1),
             b: UIColor(red: 0.7, green: 1.0, blue: 0.8, alpha: 1)))
+        if ArtStyle.isInk, let mote = InkPainter.mote() {
+            // Fewer, drawn motes: additive glows wash out into drifting smoke over the ink style's pale colors.
+            emitter.mainEmitter.image = mote
+            emitter.mainEmitter.blendMode = .alpha
+            emitter.mainEmitter.birthRate = 10
+            emitter.mainEmitter.size = 0.06
+            emitter.mainEmitter.sizeVariation = 0.015
+            emitter.mainEmitter.color = .constant(.random(
+                a: UIColor(red: 1.0, green: 0.97, blue: 0.85, alpha: 1),
+                b: UIColor(red: 0.85, green: 1.0, blue: 0.85, alpha: 1)))
+        }
         return emitter
     }
 }

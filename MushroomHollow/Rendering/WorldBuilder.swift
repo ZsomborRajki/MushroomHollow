@@ -51,9 +51,28 @@ enum WorldBuilder {
         culler.add(details.build(into: world, name: "Details", castsShadow: false), drawDistance: detailDrawDistance)
         culler.add(TerrainBuilder.addGrass(map, to: world, random: &random), drawDistance: grassDrawDistance)
 
-        addForge(map, to: world)
-        TownBuilder.build(map, into: world)
+        // The town and the forge are hundreds of hand-placed parts that never move: flatten them
+        // into a few merged meshes per patch of ground.
+        let town = Entity()
+        town.name = "Town"
+        addForge(map, to: town)
+        TownBuilder.build(map, into: town)
+        PartMerger.flatten(town, cellSize: 40)
+        world.addChild(town)
+
+        // Every ink-style material is unlit, so point lights would only cost time.
+        if ArtStyle.isInk { removeLights(from: world) }
         return BuiltWorld(root: world, culler: culler, groundPainting: painting)
+    }
+
+    private static func removeLights(from entity: Entity) {
+        for child in Array(entity.children) {
+            if child is PointLight {
+                child.removeFromParent()
+            } else {
+                removeLights(from: child)
+            }
+        }
     }
 
     private static func onGround(_ map: WorldMap, _ p: Vec2, lift: Float = 0) -> SIMD3<Float> {

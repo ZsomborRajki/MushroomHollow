@@ -126,20 +126,37 @@ void swingTrail(realitykit::surface_parameters params)
 //   texel 1: rgb = shadow multiplier, a = hatching strength
 //   texel 2: rgb = ink color (day ink, night chalk)
 //   texel 3: xyz = key light direction, a = rim strength
-// custom_parameter: x = wobble (m), y = shine, z = hatching, w = opacity (surfaces); x = width (hulls).
+// custom_parameter: y = shine, z = hatching, w = opacity (surfaces); x = width (hulls).
+// (Static scenery's hand-drawn wobble is baked into its meshes: see InkWobble.)
 
 namespace inkstyle {
 
+/// Integer hashes of the float bits: no `sin`, so they stay cheap and don't fall into visible
+/// patterns once the arguments get large (the boil frame keeps counting up).
+static uint mixBits(uint n) {
+    n ^= n >> 16;
+    n *= 0x7feb352du;
+    n ^= n >> 15;
+    n *= 0x846ca68bu;
+    n ^= n >> 16;
+    return n;
+}
+
+static float toUnit(uint n) {
+    return float(n >> 8) * (1.0 / 16777216.0);
+}
+
 static float hash11(float x) {
-    return fract(sin(x * 91.3458) * 47453.5453);
+    return toUnit(mixBits(as_type<uint>(x)));
 }
 
 static float hash21(float2 p) {
-    return fract(sin(dot(p, float2(127.1, 311.7))) * 43758.5453);
+    return toUnit(mixBits(as_type<uint>(p.x) ^ mixBits(as_type<uint>(p.y) + 0x9e3779b9u)));
 }
 
 static float hash31(float3 p) {
-    return fract(sin(dot(p, float3(12.9898, 78.233, 37.719))) * 43758.5453);
+    uint h = mixBits(as_type<uint>(p.x) ^ mixBits(as_type<uint>(p.y) + 0x9e3779b9u));
+    return toUnit(mixBits(h ^ (as_type<uint>(p.z) + 0x7f4a7c15u)));
 }
 
 static float noise3(float3 p) {
@@ -152,8 +169,9 @@ static float noise3(float3 p) {
 }
 
 /// Lines are redrawn on this beat (keep in step with InkStyle.boilRate).
+/// Wrapped, so the noise it seeds never runs out of float precision in a long session.
 static float boilFrame(float time) {
-    return floor(time * 8.0);
+    return fmod(floor(time * 8.0), 1024.0);
 }
 
 struct Light {
@@ -300,18 +318,6 @@ void toonAtlas(realitykit::surface_parameters params)
     float4 c = params.uniforms().custom_parameter();
     params.surface().set_emissive_color(inkstyle::shade(params, albedo, l, c) + glow * 1.2h);
     params.surface().set_opacity(1.0h);
-}
-
-// Nothing drawn by hand is perfectly round: nudge vertices by smooth noise of their model position
-// (the same for every vertex at one spot, so hard edges don't split). custom_parameter.x = meters.
-[[visible]]
-void toonWobble(realitykit::geometry_parameters params)
-{
-    float amount = params.uniforms().custom_parameter().x;
-    if (amount <= 0.0) return;
-    float3 m = params.geometry().model_position() * (0.08 / amount);
-    float3 offset = float3(inkstyle::noise3(m), inkstyle::noise3(m + 17.3), inkstyle::noise3(m + 41.7)) - 0.5;
-    params.geometry().set_world_position_offset(offset * 2.0 * amount);
 }
 
 // The forest floor: painted texture, contact shadows (roughness slot, 1 = shadow) filled with

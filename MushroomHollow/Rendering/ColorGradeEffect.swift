@@ -16,6 +16,8 @@ nonisolated struct GradeUniforms: Sendable {
     var inkColor = SIMD4<Float>(0, 0, 0, 0)
     /// x = radians per pixel (filled per frame), y/z = lines fade out between these distances, w = pixels per point (filled per frame)
     var inkShape = SIMD4<Float>(0, 60, 150, 1)
+    /// x = smallest step the depth format stores (filled per frame; 0 for float depth)
+    var depthInfo = SIMD4<Float>(0, 0, 0, 0)
 }
 
 /// Thread-safe mailbox between the game (main actor) and the render thread.
@@ -69,11 +71,14 @@ nonisolated struct ColorGradeEffect: PostProcessEffect, @unchecked Sendable {
         uniforms.settings.w = projection.columns.3.z
         // Sizes are authored in points on a ~400 pt tall landscape phone, and scale with the screen.
         let pointsToPixels = Float(source.height) / 400
-        uniforms.ink.x = (Float(context.time) * InkStyle.boilRate).rounded(.down)
+        // Wrapped (like World.metal's boilFrame) so the noise it seeds keeps its float precision.
+        uniforms.ink.x = (Float(context.time) * InkStyle.boilRate).rounded(.down).truncatingRemainder(dividingBy: 1024)
         uniforms.ink.y *= pointsToPixels
         uniforms.ink.z *= pointsToPixels
         uniforms.inkShape.x = 2 / (max(projection.columns.1.y, 0.01) * Float(source.height))
         uniforms.inkShape.w = pointsToPixels
+        // A 16-bit depth buffer can't tell neighbors apart below one step: don't draw that as a crease.
+        uniforms.depthInfo.x = depth.pixelFormat == .depth16Unorm ? 1.5 / 65535 : 0
 
         let pass = MTLRenderPassDescriptor()
         pass.colorAttachments[0].texture = target

@@ -146,7 +146,7 @@ final class EffectsPlayer {
                 return true
             }
             // Delayed effects wait hidden.
-            transient.entity.isEnabled = t >= 0
+            if transient.entity.isEnabled != (t >= 0) { transient.entity.isEnabled = t >= 0 }
             transient.update?(transient.entity, max(0, t))
             return false
         }

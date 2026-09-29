@@ -376,6 +376,9 @@ final class SceneryBatch {
         var chunks: [SIMD2<Int32>: Entity] = [:]
         var bounds: [SIMD2<Int32>: ChunkBounds] = [:]
         for (slot, index) in slots.sorted(by: { ($0.value) < ($1.value) }) {
+            if ArtStyle.isInk, slot.layer == .solid || slot.layer == .foliage {
+                InkWobble.apply(to: &meshes[index].positions)
+            }
             guard let resource = meshes[index].resource(named: name) else { continue }
             let key = SIMD2(slot.x, slot.z)
             let chunk: Entity

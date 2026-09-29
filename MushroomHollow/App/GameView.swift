@@ -139,6 +139,8 @@ private struct UtilityRow: View {
 
     var body: some View {
         let player = session.hud.player
+        // Rendered together (see ActionBar).
+        GlassEffectContainer(spacing: 4) {
         HStack(spacing: 12) {
             ForEach(Array([ItemID.dewPotion, .nectarVial].enumerated()), id: \.element) { index, item in
                 PotionButton(item: item, count: player?.inventory.count(of: item) ?? 0,
@@ -184,6 +186,7 @@ private struct UtilityRow: View {
                 session.perform(.toggleInventory)
             }
             .accessibilityLabel("Bag")
+        }
         }
     }
 }

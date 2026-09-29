@@ -21,6 +21,9 @@ struct ActionBar: View {
         let player = session.hud.player
         let glyphs = session.glyphs
 
+        // One container, so the buttons' glass is rendered together over the live 3D view, not one
+        // backdrop pass each (the small spacing keeps them from melting into each other).
+        GlassEffectContainer(spacing: 4) {
         ZStack {
             if player?.isFlying == true {
                 ClimbButton(symbol: "arrow.up", glyph: glyphs.map { _ in "rt.rectangle.roundedtop" }) { session.setTouchClimb($0 ? 1 : 0) }
@@ -50,6 +53,7 @@ struct ActionBar: View {
             }
         }
         .frame(width: Self.size.width, height: Self.size.height)
+        }
         .padding(.trailing, 30)
         .padding(.bottom, 22)
         .animation(.snappy, value: player?.isFlying)

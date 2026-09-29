@@ -375,6 +375,7 @@ enum WeaponModels {
         let silk = Materials.matte(UIColor(white: 0.95, alpha: 1), roughness: 0.4)
         let string = (0..<2).map { _ in
             let half = ModelEntity(mesh: Meshes.cylinder, materials: [silk])
+            half.name = "bowString" // refit every frame: never merged
             e.addChild(half)
             return half
         }

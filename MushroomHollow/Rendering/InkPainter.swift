@@ -62,6 +62,39 @@ enum InkPainter {
         return try? TextureResource(image: cgImage, options: .init(semantic: .color))
     }
 
+    /// A drifting seed mote, drawn: a pale dot inside a wobbly ink ring, with a fleck of shine.
+    /// The ink style's ambient spores use it instead of soft additive glows, which read as smoke
+    /// over the light, paper-like colors.
+    static func mote() -> TextureResource? {
+        let size = CGSize(width: 64, height: 64)
+        var random = InkRandom(seed: 0x5EED)
+        let ink = UIColor(red: 0.16, green: 0.13, blue: 0.1, alpha: 0.9)
+        let image = render(size) { cg in
+            let center = CGPoint(x: 32, y: 32)
+            let path = CGMutablePath()
+            let steps = 18
+            for i in 0...steps {
+                let a = CGFloat(i) / CGFloat(steps) * 2 * .pi
+                let r = 17 + random.jitter(1.6)
+                let point = CGPoint(x: center.x + cos(a) * r, y: center.y + sin(a) * r)
+                if i == 0 { path.move(to: point) } else { path.addLine(to: point) }
+            }
+            path.closeSubpath()
+            cg.addPath(path)
+            cg.setFillColor(UIColor(red: 1, green: 0.97, blue: 0.82, alpha: 1).cgColor)
+            cg.fillPath()
+            cg.addPath(path)
+            cg.setLineWidth(5)
+            cg.setLineJoin(.round)
+            cg.setStrokeColor(ink.cgColor)
+            cg.strokePath()
+            cg.setFillColor(UIColor.white.cgColor)
+            cg.fillEllipse(in: CGRect(x: 36, y: 21, width: 7, height: 6))
+        }
+        guard let cgImage = image.cgImage else { return nil }
+        return try? TextureResource(image: cgImage, options: .init(semantic: .color))
+    }
+
     /// A stroke that bows slightly and swells in the middle, like a pen line.
     private static func stroke(_ cg: CGContext, from: CGPoint, to: CGPoint, width: CGFloat, color: UIColor, random: inout InkRandom) {
         let mid = CGPoint(x: (from.x + to.x) / 2 + random.jitter(4), y: (from.y + to.y) / 2 + random.jitter(4))

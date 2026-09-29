@@ -20,6 +20,7 @@ final class SwingTrail {
 
     init() {
         mesh = Self.makeMesh()
+        entity.name = "swingTrail" // rebuilt every swing: never merged
         if let mesh, let resource = try? MeshResource(from: mesh) {
             entity.model = ModelComponent(mesh: resource, materials: [Self.makeMaterial()])
         }
