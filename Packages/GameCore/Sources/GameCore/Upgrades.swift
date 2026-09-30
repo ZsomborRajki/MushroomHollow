@@ -1,6 +1,8 @@
-/// Flyff-style gear upgrades, +1 to +10, done at a blacksmith. Every attempt costs Amber Shards
-/// (mob drops only) and caps. Low upgrades are safe; from +4 a failure costs a level, and from +6
-/// it destroys the item unless a Ward Charm is spent. So +5 is a mid-game goal, +10 an endgame one.
+/// Flyff-style gear upgrades, +1 to +10, done at a blacksmith with one Amber Shard (Flyff's Sunstone,
+/// a mob drop) and a few caps per attempt. The odds are v7 Flyff's: +1 and +2 always take, then 70%,
+/// 40%, 20%, 10%, 5%, 2%, 1%, and half a percent for +10. From +3 on a failure shatters the item unless
+/// a Ward Charm (the Scroll of Protection) is spent, which keeps it as it was. So +3 is routine, +5 a
+/// proud mid-game weapon, and +10 a legend.
 public enum Upgrade {
     public static let maxLevel = 10
 
@@ -15,23 +17,16 @@ public enum Upgrade {
 
     /// Chance that an attempt to reach `level` succeeds.
     public static func chance(toReach level: Int) -> Float {
-        let table: [Float] = [1, 0.9, 0.8, 0.65, 0.5, 0.35, 0.25, 0.15, 0.1, 0.05]
+        let table: [Float] = [1, 1, 0.7, 0.4, 0.2, 0.1, 0.05, 0.02, 0.01, 0.005]
         return table[max(1, min(level, maxLevel)) - 1]
     }
 
     public static func risk(toReach level: Int) -> Risk {
-        switch level {
-        case ...3: .none
-        case 4...5: .downgrade
-        default: .destroy
-        }
+        level <= 2 ? .none : .destroy
     }
 
-    /// Amber Shards per attempt.
-    public static func amberCost(toReach level: Int) -> Int {
-        let table = [1, 1, 1, 2, 2, 3, 3, 4, 5, 6]
-        return table[max(1, min(level, maxLevel)) - 1]
-    }
+    /// Amber Shards per attempt: one, as with Flyff's Sunstones.
+    public static func amberCost(toReach level: Int) -> Int { 1 }
 
     /// Caps per attempt: pricier for higher-level gear and higher upgrades.
     public static func capsCost(of item: ItemID, toReach level: Int) -> Int {
@@ -80,15 +75,7 @@ extension GameSimulation {
         guard var data = player.player, player.stats.isAlive else { return .notAvailable }
         guard NPCID.allCases.contains(where: { $0.definition.upgradesGear && isNear($0, player) }) else { return .tooFar }
 
-        let gear: Gear
-        switch location {
-        case let .equipped(slot):
-            guard let worn = data.equipment[slot] else { return .missingItem }
-            gear = worn
-        case let .bag(carried):
-            guard data.inventory.count(of: carried.item, upgrade: carried.upgrade) > 0 else { return .missingItem }
-            gear = carried
-        }
+        guard let gear = Self.gear(at: location, in: data) else { return .missingItem }
         guard gear.definition.isUpgradable else { return .notUsable }
         let target = gear.upgrade + 1
         guard target <= Upgrade.maxLevel else { return .maxUpgrade }
@@ -123,14 +110,8 @@ extension GameSimulation {
         case let .succeeded(level), let .failed(level), let .protected(level), let .downgraded(level): level
         case .destroyed: nil
         }
-        switch location {
-        case let .equipped(slot):
-            data.equipment[slot] = newLevel.map { Gear(gear.item, upgrade: $0) }
-        case .bag:
-            data.inventory.remove(gear.item, count: 1, upgrade: gear.upgrade)
-            // Gear doesn't stack, so the slot just freed takes it back.
-            if let newLevel { data.inventory.add(gear.item, count: 1, upgrade: newLevel) }
-        }
+        // The element stays with the item.
+        replace(gear, at: location, with: newLevel.map { Gear(gear.item, upgrade: $0, element: gear.element) }, in: &data)
         player.player = data
         if case .equipped = location {
             refreshStats(&player)
@@ -139,5 +120,27 @@ extension GameSimulation {
         events.append(.upgradeAttempted(player: player.id, item: gear.item, result: result))
         reportCollectProgress(for: &player)
         return nil
+    }
+}
+
+extension GameSimulation {
+    /// The piece of gear at `location`, if the player really has it.
+    static func gear(at location: GearLocation, in data: PlayerData) -> Gear? {
+        switch location {
+        case let .equipped(slot): data.equipment[slot]
+        case let .bag(carried): data.inventory.count(of: carried) > 0 ? carried : nil
+        }
+    }
+
+    /// Puts `new` where `old` was at the forge (nil: it shattered).
+    func replace(_ old: Gear, at location: GearLocation, with new: Gear?, in data: inout PlayerData) {
+        switch location {
+        case let .equipped(slot):
+            data.equipment[slot] = new
+        case .bag:
+            data.inventory.remove(old, count: 1)
+            // Gear doesn't stack, so the slot just freed takes it back.
+            if let new { data.inventory.add(new, count: 1) }
+        }
     }
 }

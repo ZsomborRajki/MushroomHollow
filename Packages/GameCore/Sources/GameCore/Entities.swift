@@ -23,6 +23,8 @@ public enum MobKind: String, Codable, Sendable, CaseIterable {
     case grumblecap, stagBeetle
     // The Hollow Owl and its summons
     case mouse, owl
+    // The Sunken Warren, levels 28–32, and the king at the bottom of it
+    case delverMole, rootcrawler, moldywarp
 
     public var displayName: String {
         switch self {
@@ -53,6 +55,9 @@ public enum MobKind: String, Codable, Sendable, CaseIterable {
         case .stagBeetle: "Stag Beetle"
         case .mouse: "Field Mouse"
         case .owl: "The Hollow Owl"
+        case .delverMole: "Delver Mole"
+        case .rootcrawler: "Rootcrawler"
+        case .moldywarp: "Moldywarp"
         }
     }
 
@@ -96,6 +101,9 @@ public enum MobKind: String, Codable, Sendable, CaseIterable {
         case .stagBeetle: 1.1
         case .mouse: 0.45
         case .owl: 2.6
+        case .delverMole: 0.8
+        case .rootcrawler: 0.9
+        case .moldywarp: 2.2
         }
     }
 
@@ -129,6 +137,9 @@ public enum MobKind: String, Codable, Sendable, CaseIterable {
         case .stagBeetle: 1.5
         case .mouse: 2
         case .owl: 3.0
+        case .delverMole: 1.2
+        case .rootcrawler: 1.8
+        case .moldywarp: 1.1
         }
     }
 }
@@ -158,6 +169,10 @@ public enum Pose: String, Codable, Sendable {
     case diving
     /// Owl spreading its wings before a gust.
     case spreadingWings
+    /// Moldywarp tunnelling underground: out of reach until it bursts up.
+    case burrowed
+    /// A player sitting down to rest (faster recovery, Flyff style).
+    case sitting
 }
 
 struct CombatState: Codable, Sendable {
@@ -239,11 +254,15 @@ struct BossBrain: Codable, Sendable {
         case swoopWindup(target: Vec2, ticksLeft: Int)
         case swoopDive(from: Vec2, to: Vec2, ticksLeft: Int)
         case gustWindup(direction: Vec2, ticksLeft: Int)
+        /// Moldywarp: dig down, tunnel from `from` to `to`, and burst up there.
+        case burrow(from: Vec2, to: Vec2, ticksLeft: Int)
     }
 
     var action = Action.none
     var swoopTimer = 0
     var gustTimer = 0
+    /// Moldywarp: ticks until it digs down again.
+    var burrowTimer = 0
     var summonsDone = 0
     var enraged = false
     /// Everyone who has hurt the boss this fight shares the rewards.
@@ -266,6 +285,8 @@ public struct WorldEntity: Codable, Sendable {
     var isFlying = false
     /// Players, while flying: -1 (descend) ... 1 (climb).
     var climbIntent: Float = 0
+    /// Players: resting on the ground (see `GameSimulation.sitRegenMultiplier`).
+    var isSitting = false
     var combat = CombatState()
     /// Mobs only.
     var brain: MobBrain?
@@ -280,10 +301,12 @@ public struct WorldEntity: Codable, Sendable {
     public var isMoving: Bool { velocity.xz.length > 0.05 }
 
     public var pose: Pose {
+        if isSitting { return .sitting }
         switch brain?.boss?.action {
         case .swoopWindup: return .soaring
         case .swoopDive: return .diving
         case .gustWindup: return .spreadingWings
+        case .burrow: return .burrowed
         case .some(.none), nil: break
         }
         return switch brain?.state {

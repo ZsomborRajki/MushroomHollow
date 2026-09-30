@@ -17,6 +17,9 @@ struct TargetInfo: Equatable {
     let isFightingYou: Bool
     /// Attacks on sight (most mobs only fight back).
     let isAggressive: Bool
+    /// Mobs: its element, and how your weapon's element fares against it (nil: no weapon element).
+    var element: Element?
+    var matchup: ElementMatchup?
 }
 
 /// The world boss's health bar, shown when you're near it.
@@ -26,6 +29,7 @@ struct BossInfo: Equatable {
     let hp: Int
     let maxHP: Int
     let isFighting: Bool
+    var element: Element?
 }
 
 /// Slow-changing HUD data. The countdowns inside `player` (skill cooldowns, buff and potion
@@ -45,7 +49,7 @@ struct HUDState: Equatable {
             && a.target == b.target && a.isEngaged == b.isEngaged && a.caps == b.caps
             && a.inventory == b.inventory && a.equipment == b.equipment && a.quests == b.quests
             && a.isSlowed == b.isSlowed && a.playerClass == b.playerClass
-            && a.canFly == b.canFly && a.isFlying == b.isFlying && Int(a.altitude) == Int(b.altitude)
+            && a.canFly == b.canFly && a.isFlying == b.isFlying && a.isSitting == b.isSitting && Int(a.altitude) == Int(b.altitude)
             && a.skills.map(\.id) == b.skills.map(\.id)
             && a.skills.map(\.isUnlocked) == b.skills.map(\.isUnlocked)
             && a.skills.map(\.canAfford) == b.skills.map(\.canAfford)
@@ -163,6 +167,11 @@ enum ShopTab: Int, CaseIterable {
     case buyback
 }
 
+/// The blacksmith's two benches: +1…+10 upgrades with amber, and element infusions with element stones.
+enum ForgeTab: Int, CaseIterable {
+    case upgrade, element
+}
+
 /// One row in an NPC panel.
 struct PanelRow: Identifiable, Equatable {
     enum Action: Equatable {
@@ -171,6 +180,9 @@ struct PanelRow: Identifiable, Equatable {
         case sell(Gear, stack: Int)
         case buyBack(Gear)
         case upgrade(GearLocation)
+        case infuseElement(GearLocation, Element)
+        case removeElement(GearLocation)
+        case convertElement(GearLocation, Element)
         case accept(QuestID)
         case turnIn(QuestID)
         case chooseClass(PlayerClass)
@@ -198,11 +210,12 @@ struct InventoryCell: Identifiable, Equatable {
     let item: ItemID?
     let count: Int
     var upgrade = 0
+    var element: ElementUpgrade?
     let slot: EquipSlot?
     /// The pet slot, under the equipment.
     var isPetSlot = false
 
-    var gear: Gear? { item.map { Gear($0, upgrade: upgrade) } }
+    var gear: Gear? { item.map { Gear($0, upgrade: upgrade, element: element) } }
 }
 
 /// Glue between the world host (simulation), input, camera, and renderer.
@@ -227,6 +240,7 @@ final class GameSession {
     private(set) var panel: Panel?
     private(set) var selection = 0
     private(set) var shopTab = ShopTab.buy
+    private(set) var forgeTab = ForgeTab.upgrade
     /// At the blacksmith: spend a Ward Charm on risky upgrades.
     private(set) var protectUpgrades = false
     /// On the character panel: points picked but not yet confirmed.
@@ -322,6 +336,8 @@ final class GameSession {
         case "sell":
             shopTab = .sell
             selection = 1 // the Dew Potions, a stack
+        case "element":
+            forgeTab = .element
         case "buyback":
             // Something to buy back: the demo bag's snail shells.
             shopTab = .buyback
@@ -332,13 +348,14 @@ final class GameSession {
             // Close-up from the front (or `-portrait <degrees>` around), for checking the character model.
             camera.yaw = player.yaw + (debug.value(after: "-portrait").flatMap(Float.init) ?? 0) * .pi / 180
             camera.pitch = 0.12
-            camera.distance = 3
+            camera.distance = debug.value(after: "-portraitDistance").flatMap(Float.init) ?? 3
         }
         if debug.arguments.contains("-owl"), let arena = host.map.bossArena {
             host.summonWorldBoss()
             host.teleportPlayer(to: arena.center + (arena.center - arena.perch).normalizedOrZero * 6)
             camera.yaw = AngleMath.yaw(facing: arena.center - arena.perch) + .pi
         }
+        if debug.arguments.contains("-sit") { host.send(.toggleSit) }
         if debug.arguments.contains("-fly") {
             host.send(.toggleFlight)
             input.touchClimb = 1
@@ -429,6 +446,11 @@ final class GameSession {
         selection = 0
     }
 
+    func setForgeTab(_ tab: ForgeTab) {
+        forgeTab = tab
+        selection = 0
+    }
+
     func setProtectUpgrades(_ protect: Bool) {
         protectUpgrades = protect
         renderer.sounds.playInterface(.uiMove)
@@ -448,6 +470,7 @@ final class GameSession {
         gameCenter.showAccessPoint(newPanel == .inventory)
         selection = newPanel == .inventory ? Self.firstBagCell : 0
         shopTab = .buy
+        forgeTab = .upgrade
         renderer.sounds.playInterface(.uiConfirm)
     }
 
@@ -617,7 +640,10 @@ final class GameSession {
             }
 
         case let .quickItem(index):
-            host.send(.useItem(index == 0 ? .dewPotion : .nectarVial))
+            host.send(.useItem(me.quickPotion(restoresMP: index == 1) ?? (index == 0 ? .dewPotion : .nectarVial)))
+
+        case .toggleSit:
+            host.send(.toggleSit)
 
         case .toggleFlight:
             host.send(.toggleFlight)
@@ -661,7 +687,10 @@ final class GameSession {
                 let tabs = ShopTab.allCases
                 setShopTab(tabs[(shopTab.rawValue + (input == .nextTab ? 1 : tabs.count - 1)) % tabs.count])
             }
-            if npc.definition.upgradesGear { setProtectUpgrades(!protectUpgrades) }
+            if npc.definition.upgradesGear {
+                setForgeTab(forgeTab == .upgrade ? .element : .upgrade)
+                renderer.sounds.playInterface(.uiMove)
+            }
         case .up, .down, .left, .right:
             let before = selection
             moveSelection(input)
@@ -737,8 +766,10 @@ final class GameSession {
             }
             switch item.definition.kind {
             case .consumable: host.send(.useItem(item))
-            case .equipment: host.send(.equip(item, upgrade: cell.upgrade))
+            case .equipment: host.send(.equip(item, upgrade: cell.upgrade, element: cell.element))
             case .material where item == .amberShard || item == .wardCharm: showToast("Bring it to Shiitake to upgrade gear")
+            case .material where Element(stone: item) != nil:
+                showToast("Bring it to Shiitake to infuse a weapon or body armor with \(Element(stone: item)!.displayName)")
             case .material: showToast("Trade materials to Porcini for XP, or sell them to Chanterelle")
             case .glider:
                 closePanel()
@@ -756,9 +787,12 @@ final class GameSession {
             guard row.isEnabled else { return }
             switch row.action {
             case let .buy(item): host.send(.buy(item, from: npc))
-            case let .sell(gear, _): host.send(.sell(gear.item, count: 1, upgrade: gear.upgrade, to: npc))
-            case let .buyBack(gear): host.send(.buyBack(gear.item, upgrade: gear.upgrade, from: npc))
+            case let .sell(gear, _): host.send(.sell(gear.item, count: 1, upgrade: gear.upgrade, element: gear.element, to: npc))
+            case let .buyBack(gear): host.send(.buyBack(gear.item, upgrade: gear.upgrade, element: gear.element, from: npc))
             case let .upgrade(location): host.send(.upgrade(location, protect: protectUpgrades))
+            case let .infuseElement(location, element): host.send(.infuseElement(location, element: element, protect: protectUpgrades))
+            case let .removeElement(location): host.send(.removeElement(location))
+            case let .convertElement(location, element): host.send(.convertElement(location, to: element))
             case let .accept(quest): host.send(.acceptQuest(quest))
             case let .turnIn(quest): host.send(.completeQuest(quest))
             case let .chooseClass(playerClass): host.send(.chooseClass(playerClass))
@@ -779,11 +813,16 @@ final class GameSession {
         }
     }
 
-    /// The second button on a row: "Sell all" for a whole stack.
+    /// The second button on a row: "Sell all" for a whole stack; at the forge, the Ward Charm switch.
     private func activateSecondary() {
-        guard case let .npc(npc) = panel, npcRows.indices.contains(selection) else { return }
+        guard case let .npc(npc) = panel else { return }
+        if npc.definition.upgradesGear {
+            setProtectUpgrades(!protectUpgrades)
+            return
+        }
+        guard npcRows.indices.contains(selection) else { return }
         guard case let .sell(gear, stack) = npcRows[selection].action, stack > 1 else { return }
-        host.send(.sell(gear.item, count: stack, upgrade: gear.upgrade, to: npc))
+        host.send(.sell(gear.item, count: stack, upgrade: gear.upgrade, element: gear.element, to: npc))
     }
 
     // MARK: - Map
@@ -874,6 +913,7 @@ final class GameSession {
             let kinds: [MobKind] = switch quest.objective {
             case let .defeat(kind, _): [kind]
             case let .collect(item, _): MobKind.allCases.filter { $0.canDrop(item) }
+            case let .defeatGiant(minLevel, _): QuestObjective.giantKinds(minLevel: minLevel)
             case .explore: []
             }
             if kinds.contains(.owl), let arena = host.map.bossArena {
@@ -889,13 +929,14 @@ final class GameSession {
     var inventoryCells: [InventoryCell] {
         guard let player = hud.player else { return [] }
         var cells = EquipSlot.allCases.enumerated().map { index, slot in
-            InventoryCell(id: index, item: player.equipment[slot]?.item, count: 1, upgrade: player.equipment[slot]?.upgrade ?? 0, slot: slot)
+            InventoryCell(id: index, item: player.equipment[slot]?.item, count: 1, upgrade: player.equipment[slot]?.upgrade ?? 0,
+                          element: player.equipment[slot]?.element, slot: slot)
         }
         let stacks = player.inventory.stacks
         for index in 0..<Inventory.capacity {
             let stack = index < stacks.count ? stacks[index] : nil
             cells.append(InventoryCell(id: Self.firstBagCell + index, item: stack?.item, count: stack?.count ?? 0,
-                                       upgrade: stack?.upgrade ?? 0, slot: nil))
+                                       upgrade: stack?.upgrade ?? 0, element: stack?.element, slot: nil))
         }
         cells.append(InventoryCell(id: Self.petCell, item: player.pet.slot, count: 1, slot: nil, isPetSlot: true))
         return cells
@@ -908,7 +949,12 @@ final class GameSession {
         if npc.definition.isShopkeeper {
             switch shopTab {
             case .buy:
-                return openQuests + npc.definition.shopStock.map { item in
+                // Class gear for other paths stays off the shelf (and class sets until you've chosen a path).
+                let stock = npc.definition.shopStock.filter { item in
+                    guard let required = item.definition.requiredClass else { return true }
+                    return player.playerClass.map { $0 == required } ?? (item.definition.set == nil)
+                }
+                return openQuests + stock.map { item in
                     let definition = item.definition
                     let price = definition.buyPrice ?? 0
                     return PanelRow(
@@ -943,7 +989,7 @@ final class GameSession {
                 }
             }
         }
-        if npc.definition.upgradesGear { return openQuests + upgradeRows(player) }
+        if npc.definition.upgradesGear { return openQuests + (forgeTab == .upgrade ? upgradeRows(player) : elementRows(player)) }
         let rows = questRows(npc, player)
         if npc.definition.makesPetFood { return rows + petFoodRows(player) }
         if npc.definition.buysMaterials { return rows + materialRows(player) }
@@ -965,7 +1011,15 @@ final class GameSession {
         let quests = player.quests.sorted { priority($0.state) < priority($1.state) }
         var classRows: [PanelRow] = []
         if npc == .elderMorel, player.playerClass == nil {
-            if player.stats.level >= PlayerClass.requiredLevel {
+            let trialDone = player.quests.contains { $0.id == .trialOfThePath && $0.state == .completed }
+            if player.stats.level >= PlayerClass.requiredLevel, !trialDone {
+                classRows = [PanelRow(
+                    id: "class-trial", symbol: "signpost.right.and.left.fill", tint: .gray,
+                    title: "Choose your path", subtitle: "After the Trial of the Path",
+                    trailing: "Trial",
+                    detail: "Elder Morel wants to see you bring down a Giant before you choose a calling. Take the Trial of the Path below.",
+                    isEnabled: false, action: .none)]
+            } else if player.stats.level >= PlayerClass.requiredLevel {
                 classRows = PlayerClass.allCases.map { playerClass in
                     let definition = playerClass.definition
                     let skills = definition.skills.map(\.definition.name).joined(separator: ", ")
@@ -1104,10 +1158,10 @@ final class GameSession {
             case (.downgrade, false): "If it fails, it drops to +\(gear.upgrade - 1)."
             case (.destroy, false): "If it fails, it is destroyed! Turn on the Ward Charm to prevent that."
             }
-            let next = Gear(gear.item, upgrade: target)
+            let next = Gear(gear.item, upgrade: target, element: gear.element)
             let detail = """
                 \(gear.statLine ?? "") → \(next.statLine ?? "")
-                \(stones) Amber Shard\(stones == 1 ? "" : "s") (have \(amber)) · \(caps) caps · \(StatBonus.percent(chance)) chance
+                \(stones) Amber Shard\(stones == 1 ? "" : "s") (have \(amber)) · \(caps) caps · \(chance < 0.01 ? String(format: "%.1f%%", chance * 100) : StatBonus.percent(chance)) chance
                 \(failure)
                 """
             let affordable = amber >= stones && player.caps >= caps && (!protected || charms > 0)
@@ -1116,6 +1170,101 @@ final class GameSession {
                             trailing: StatBonus.percent(chance), detail: detail,
                             isEnabled: affordable, action: .upgrade(location))
         }
+    }
+
+    /// The element bench: every weapon and body armor, worn first, with what can be done to it. Plain gear
+    /// lists one infusion per element you hold stones for; infused gear lists the next level, removal, and
+    /// conversion to each other element.
+    private func elementRows(_ player: PlayerStatus) -> [PanelRow] {
+        let worn: [(GearLocation, Gear, String)] = EquipSlot.allCases.filter(\.takesElement).compactMap { slot in
+            player.equipment[slot].map { (.equipped(slot), $0, "Equipped") }
+        }
+        let carried: [(GearLocation, Gear, String)] = player.inventory.stacks
+            .filter { $0.item.definition.takesElement }
+            .map { (.bag($0.gear), $0.gear, "In bag") }
+        let charms = player.inventory.count(of: .wardCharm)
+        var rows: [PanelRow] = []
+
+        for (index, entry) in (worn + carried).enumerated() {
+            let (location, gear, place) = entry
+            let id = "element-\(index)-\(gear.item.rawValue)-\(gear.upgrade)"
+            let slotName = gear.definition.equipSlot == .weapon ? "weapon" : "armor"
+            let what = gear.definition.equipSlot == .weapon
+                ? "Hits critters it overpowers harder"
+                : "Takes less from critters it overpowers"
+
+            func infuseRow(_ element: Element) -> PanelRow {
+                let current = gear.element?.level ?? 0
+                let target = current + 1
+                guard target <= ElementForge.maxLevel else {
+                    return PanelRow(id: "\(id)-max", symbol: element.symbol, tint: element.color, title: gear.displayName,
+                                    subtitle: "\(place) · \(gear.element?.label ?? "") · fully infused", trailing: "MAX",
+                                    detail: "\(gear.statLine ?? "")\n\nThis \(slotName) can't hold any more \(element.displayName).",
+                                    isEnabled: false, action: .none)
+                }
+                let stones = ElementForge.stoneCost(toReach: target)
+                let have = player.inventory.count(of: element.stone)
+                let caps = ElementForge.capsCost(of: gear.item, toReach: target)
+                let chance = ElementForge.chance(toReach: target)
+                let risky = ElementForge.risk(toReach: target) != .none
+                let protected = protectUpgrades && risky
+                let failure = switch (risky, protected) {
+                case (false, _): "If it fizzles, only the materials are lost."
+                case (true, true): "If it fizzles, the Ward Charm keeps it at +\(current) (uses 1 of \(charms))."
+                case (true, false): "If it fizzles, it drops to +\(current - 1). Turn on the Ward Charm to prevent that."
+                }
+                let upgrade = ElementUpgrade(element, level: target)
+                let strong = element.strongAgainst.displayName, weak = element.weakAgainst.displayName
+                let effect = gear.definition.equipSlot == .weapon
+                    ? "+\(StatBonus.percent(ElementForge.attackMultiplier(upgrade, against: element.strongAgainst) - 1)) damage to \(strong) critters, less to \(weak) ones."
+                    : "\(StatBonus.percent(1 - ElementForge.defenseMultiplier(upgrade, against: element.strongAgainst))) less damage from \(strong) critters, more from \(weak) ones."
+                let visible = target >= ElementForge.visibleLevel && gear.definition.equipSlot == .weapon
+                    ? "\nThe blade shows its \(element.displayName.lowercased()) from +\(ElementForge.visibleLevel), fiercer every level." : ""
+                let detail = """
+                    \(what): \(upgrade.label). \(effect)\(visible)
+                    \(stones) \(element.stone.definition.name)\(stones == 1 ? "" : "s") (have \(have)) · \(caps) caps · \(StatBonus.percent(chance)) chance
+                    \(failure)
+                    """
+                let affordable = have >= stones && player.caps >= caps && (!protected || charms > 0)
+                return PanelRow(id: "\(id)-infuse-\(element.rawValue)", symbol: element.symbol, tint: element.color,
+                                title: "\(gear.displayName) · \(element.displayName) +\(target)",
+                                subtitle: "\(place) · \(stones) stone\(stones == 1 ? "" : "s"), \(caps) caps",
+                                trailing: StatBonus.percent(chance), detail: detail,
+                                isEnabled: affordable, action: .infuseElement(location, element))
+            }
+
+            guard let current = gear.element else {
+                let owned = Element.allCases.filter { player.inventory.count(of: $0.stone) > 0 }
+                if owned.isEmpty {
+                    rows.append(PanelRow(
+                        id: "\(id)-none", symbol: "circle.dashed", tint: .gray, title: gear.displayName,
+                        subtitle: "\(place) · no element stones", trailing: "",
+                        detail: "Every critter belongs to an element and drops its stone now and then. Bring me one and I'll infuse this \(slotName) with it.",
+                        isEnabled: false, action: .none))
+                } else {
+                    rows += owned.map(infuseRow)
+                }
+                continue
+            }
+            rows.append(infuseRow(current.element))
+            let removal = ElementForge.removalCost(of: gear.item)
+            rows.append(PanelRow(
+                id: "\(id)-remove", symbol: "xmark.circle", tint: .secondary, title: "\(gear.displayName) · remove \(current.label)",
+                subtitle: "\(place) · \(removal) caps", trailing: "\(removal)",
+                detail: "Strips the \(current.element.displayName.lowercased()) out, back to plain metal. The stones that went in are lost.",
+                isEnabled: player.caps >= removal, action: .removeElement(location)))
+            let needCharms = ElementForge.conversionCharms(level: current.level)
+            let conversion = ElementForge.conversionCaps(of: gear.item, level: current.level)
+            for element in Element.allCases where element != current.element {
+                rows.append(PanelRow(
+                    id: "\(id)-convert-\(element.rawValue)", symbol: element.symbol, tint: element.color,
+                    title: "\(gear.displayName) · \(current.label) → \(element.displayName) +\(current.level)",
+                    subtitle: "\(place) · \(needCharms) Ward Charms, \(conversion) caps", trailing: "Convert",
+                    detail: "Turns the \(current.element.displayName.lowercased()) into \(element.displayName.lowercased()), keeping every level. Never fails, but it takes \(needCharms) Ward Charms (have \(charms)) and \(conversion) caps.",
+                    isEnabled: charms >= needCharms && player.caps >= conversion, action: .convertElement(location, element)))
+            }
+        }
+        return rows
     }
 
     /// Active quests for the HUD tracker.
@@ -1131,32 +1280,38 @@ final class GameSession {
 
     // MARK: - Events → presentation
 
+    /// The sound and shot of one auto-attack, hit or miss.
+    private func presentSwing(source: EntityID, target: EntityID) {
+        let attack = renderer.attackStyle(of: source)
+        if attack.ranged, let head = renderer.headPosition(of: source), let to = renderer.headPosition(of: target) {
+            // Read the muzzle before the shot animation moves it.
+            let from = renderer.muzzle(of: source) ?? head - [0, 0.6, 0]
+            let aim = to - [0, 0.4, 0]
+            switch attack.weapon {
+            case .bow: renderer.effects.arrow(from: from, to: aim, time: elapsed)
+            case .wand: renderer.effects.projectile(from: from, to: aim, color: UIColor(red: 0.8, green: 0.5, blue: 1, alpha: 1), time: elapsed)
+            case .staff: renderer.effects.projectile(from: from, to: aim, color: UIColor(red: 0.55, green: 0.9, blue: 1, alpha: 1), size: 0.12, time: elapsed)
+            default:
+                let color = renderer.playerClass(of: source) == .thornshot ? Palette.leaf : Palette.sporeGlow
+                renderer.effects.projectile(from: from, to: aim, color: color, time: elapsed)
+            }
+            renderer.sounds.play(.shoot, from: renderer.entity(for: source), gain: -6)
+        } else {
+            renderer.sounds.play(.swing, from: renderer.entity(for: source), gain: attack.weapon == .maul ? -4 : -8)
+            if attack.weapon == .maul, let position = renderer.renderedPosition(of: target) {
+                // The head lands a beat after the swing starts: dust rings out from the impact.
+                renderer.effects.shockwave(at: position, radius: 1.3, color: UIColor(red: 0.85, green: 0.75, blue: 0.55, alpha: 1),
+                                           duration: 0.35, delay: 0.26, time: elapsed)
+            }
+        }
+    }
+
+
     private func handle(_ event: WorldEvent) {
         let me = host.localPlayerID
         switch event {
         case let .damage(source, target, amount, isCritical, skill):
-            let attack = renderer.attackStyle(of: source)
-            if skill == nil, attack.ranged, let head = renderer.headPosition(of: source), let to = renderer.headPosition(of: target) {
-                // Read the muzzle before the shot animation moves it.
-                let from = renderer.muzzle(of: source) ?? head - [0, 0.6, 0]
-                let aim = to - [0, 0.4, 0]
-                switch attack.weapon {
-                case .bow: renderer.effects.arrow(from: from, to: aim, time: elapsed)
-                case .wand: renderer.effects.projectile(from: from, to: aim, color: UIColor(red: 0.8, green: 0.5, blue: 1, alpha: 1), time: elapsed)
-                case .staff: renderer.effects.projectile(from: from, to: aim, color: UIColor(red: 0.55, green: 0.9, blue: 1, alpha: 1), size: 0.12, time: elapsed)
-                default:
-                    let color = renderer.playerClass(of: source) == .thornshot ? Palette.leaf : Palette.sporeGlow
-                    renderer.effects.projectile(from: from, to: aim, color: color, time: elapsed)
-                }
-                renderer.sounds.play(.shoot, from: renderer.entity(for: source), gain: -6)
-            } else if skill == nil {
-                renderer.sounds.play(.swing, from: renderer.entity(for: source), gain: attack.weapon == .maul ? -4 : -8)
-                if attack.weapon == .maul, let position = renderer.renderedPosition(of: target) {
-                    // The head lands a beat after the swing starts: dust rings out from the impact.
-                    renderer.effects.shockwave(at: position, radius: 1.3, color: UIColor(red: 0.85, green: 0.75, blue: 0.55, alpha: 1),
-                                               duration: 0.35, delay: 0.26, time: elapsed)
-                }
-            }
+            if skill == nil { presentSwing(source: source, target: target) }
             renderer.playAttack(source: source, target: target, time: elapsed)
             renderer.sounds.play(isCritical ? .crit : (target == me ? .hurt : .hit), from: renderer.entity(for: target), gain: -2)
             if target == me { rumble.play(.light) }
@@ -1164,8 +1319,15 @@ final class GameSession {
             let style: FloatingText.Style = target == me ? .taken : (isCritical ? .critical : .dealt)
             float(isCritical ? "\(amount)!" : "\(amount)", style: style, above: target)
             if let hit = renderer.headPosition(of: target) {
-                let color = skill?.effectColor ?? (isCritical ? UIColor.systemYellow : UIColor(white: 1, alpha: 1))
-                renderer.effects.burst(at: hit - [0, 0.5, 0], color: color, count: isCritical ? 26 : 12,
+                // An infused weapon's hits spark in its element's color, and burst when the element overpowers the target's.
+                let snapshot = host.currentSnapshot
+                let element = snapshot.entity(source)?.weaponElement?.element
+                var strong = false
+                if let element, case let .mob(kind)? = snapshot.entity(target)?.kind {
+                    strong = ElementMatchup(element, against: kind.element) == .strong
+                }
+                let color = skill?.effectColor ?? (isCritical ? UIColor.systemYellow : element?.tint ?? UIColor(white: 1, alpha: 1))
+                renderer.effects.burst(at: hit - [0, 0.5, 0], color: color, count: isCritical || strong ? 26 : 12,
                                        speed: isCritical ? 2.4 : 1.6, size: 0.05, lifetime: 0.45, time: elapsed)
             }
             if target == me { feedback.hitsTaken += 1 }
@@ -1191,7 +1353,8 @@ final class GameSession {
         case let .mobAbility(entity, ability):
             switch ability {
             case .hide:
-                float("Hides!", style: .info, above: entity)
+                let digs = host.currentSnapshot.entity(entity)?.kind == .mob(.delverMole)
+                float(digs ? "Digs in!" : "Hides!", style: .info, above: entity)
             case .charge:
                 renderer.sounds.play(.windup, from: renderer.entity(for: entity))
                 if host.currentSnapshot.entity(entity)?.target == me {
@@ -1227,12 +1390,37 @@ final class GameSession {
                 }
             case .gust:
                 renderer.sounds.play(.whoosh, from: renderer.entity(for: entity), gain: 2)
+            case .burrow:
+                renderer.sounds.play(.windup, from: renderer.entity(for: entity), gain: 2)
+                if let position = renderer.renderedPosition(of: entity) {
+                    renderer.effects.burst(at: position + [0, 0.4, 0], color: Palette.warrenEarth, count: 50, speed: 2.4,
+                                           size: 0.14, lifetime: 0.9, rise: 0.4, spread: 1.6, time: elapsed)
+                }
+                if host.currentSnapshot.telegraphs.contains(where: { telegraph in
+                    guard let me = host.currentSnapshot.entity(me) else { return false }
+                    return telegraph.position.distance(to: me.position.xz) < GameSimulation.burrowRadius + 1
+                }) {
+                    showToast("The ground trembles under you. Move!")
+                    feedback.danger += 1
+                    rumble.play(.danger)
+                }
+            case .erupt:
+                renderer.sounds.play(.slam, from: renderer.entity(for: entity), gain: 4)
+                if let position = renderer.renderedPosition(of: entity) {
+                    renderer.effects.shockwave(at: position, radius: GameSimulation.burrowRadius + 1, color: Palette.warrenEarth,
+                                               duration: 0.5, time: elapsed)
+                    renderer.effects.burst(at: position + [0, 0.5, 0], color: Palette.warrenEarth, count: 90, speed: 4,
+                                           size: 0.18, lifetime: 1.1, rise: 1, spread: 1.8, time: elapsed)
+                    shake(0.4)
+                }
             case .summon:
-                renderer.sounds.play(.hoot, from: renderer.entity(for: entity), gain: 2)
-                showToast("The owl calls for help!")
+                let king = host.currentSnapshot.entity(entity)?.kind == .mob(.moldywarp)
+                renderer.sounds.play(king ? .slam : .hoot, from: renderer.entity(for: entity), gain: 2)
+                showToast(king ? "Moldywarp calls up its moles!" : "The owl calls for help!")
             case .enrage:
                 renderer.sounds.play(.screech, from: renderer.entity(for: entity), gain: 4)
-                showBanner(Banner(title: "The Hollow Owl is enraged!", subtitle: "Its attacks come faster"))
+                let name = host.currentSnapshot.entity(entity)?.kind.bossTitle ?? "The boss"
+                showBanner(Banner(title: "\(name) is enraged!", subtitle: "Its attacks come faster"))
                 if let position = renderer.renderedPosition(of: entity) {
                     renderer.effects.burst(at: position + [0, 4, 0], color: .systemRed, count: 80, speed: 3,
                                            size: 0.12, lifetime: 1.2, spread: 2, time: elapsed)
@@ -1326,6 +1514,27 @@ final class GameSession {
                 rumble.play(result == .destroyed ? .heavy : .light)
             }
 
+        case let .elementForged(player, item, result):
+            guard player == me else { return }
+            showToast(result.message(for: item))
+            requestSave()
+            if result.succeeded {
+                renderer.sounds.playInterface(.questDone, gain: -2)
+                rumble.play(.light)
+                let element: Element? = switch result {
+                case let .succeeded(upgrade), let .converted(upgrade): upgrade.element
+                default: nil
+                }
+                if let element, let position = renderer.renderedPosition(of: player) {
+                    renderer.effects.burst(at: position + [0, 0.6, 0], color: element.tint, count: 40, speed: 1.4,
+                                           size: 0.05, lifetime: 0.9, rise: 1.5, spread: 0.3, time: elapsed)
+                }
+            } else {
+                feedback.failures += 1
+                renderer.sounds.playInterface(.error)
+                rumble.play(.light)
+            }
+
         case let .questAccepted(player, quest):
             guard player == me else { return }
             showBanner(Banner(title: "New Quest", subtitle: quest.definition.title))
@@ -1413,6 +1622,26 @@ final class GameSession {
                 renderer.effects.shockwave(at: position, radius: 8, color: gold, duration: 1.2, time: elapsed)
             }
             requestSave()
+
+        case let .fieldBossDefeated(entity, kind, participants):
+            showBanner(Banner(title: "\(EntityKind.mob(kind).bossTitle) is defeated!",
+                              subtitle: participants.count > 1 ? "\(participants.count) heroes share the hoard" : "The Warren falls quiet, for now"))
+            addFeed(symbol: "crown.fill", text: "\(kind.displayName) returns in ten minutes", tint: .yellow)
+            renderer.sounds.playInterface(.questDone, gain: 2)
+            rumble.play(.celebrate)
+            if let position = renderer.renderedPosition(of: entity) {
+                let gold = UIColor(red: 1, green: 0.85, blue: 0.4, alpha: 1)
+                renderer.effects.burst(at: position + [0, 2, 0], color: gold, count: 160, speed: 3.5,
+                                       size: 0.12, lifetime: 2, rise: 1.5, spread: 2, time: elapsed)
+                renderer.effects.shockwave(at: position, radius: 6, color: gold, duration: 1, time: elapsed)
+            }
+            requestSave()
+
+        case let .missed(source, target):
+            // Flyff's "Miss": the swing goes out, nothing lands.
+            presentSwing(source: source, target: target)
+            renderer.playAttack(source: source, target: target, time: elapsed)
+            float("Miss", style: .info, above: target)
 
         case let .blocked(source, target):
             renderer.playBlock(source: source, target: target, time: elapsed)
@@ -1588,11 +1817,19 @@ final class GameSession {
                 hp: target.hp, maxHP: target.maxHP,
                 levelDelta: target.level - viewer.stats.level,
                 isFightingYou: target.target == viewer.id, isAggressive: target.isAggressive)
+            if case let .mob(kind) = target.kind {
+                state.target?.element = kind.element
+                state.target?.matchup = viewer.equipment[.weapon]?.element.map { ElementMatchup($0.element, against: kind.element) }
+            }
         }
-        if let bossID = host.simulation.worldBoss, let boss = snapshot.entity(bossID), boss.isAlive,
-           let me = snapshot.entity(host.localPlayerID), boss.position.xz.distance(to: me.position.xz) < 45 {
-            state.boss = BossInfo(id: bossID, name: boss.kind.displayName, hp: boss.hp, maxHP: boss.maxHP,
+        // The nearest boss close by: the night's owl, or a field boss in its lair.
+        if let me = snapshot.entity(host.localPlayerID),
+           let boss = host.simulation.bosses.compactMap({ snapshot.entity($0) })
+               .filter({ $0.isAlive && $0.position.xz.distance(to: me.position.xz) < 45 })
+               .min(by: { $0.position.xz.distance(to: me.position.xz) < $1.position.xz.distance(to: me.position.xz) }) {
+            state.boss = BossInfo(id: boss.id, name: boss.kind.bossTitle, hp: boss.hp, maxHP: boss.maxHP,
                                   isFighting: boss.target != nil)
+            if case let .mob(kind) = boss.kind { state.boss?.element = kind.element }
         }
         if !state.matchesIgnoringCountdowns(hud) { hud = state }
         if state.isFainted != isFainted { isFainted = state.isFainted }
@@ -1686,7 +1923,7 @@ private struct DebugLaunch {
 
     var resetSave: Bool { arguments.contains("-resetSave") }
     var isThrowaway: Bool {
-        ["-autofight", "-demo", "-spawn", "-panel", "-time", "-level", "-class", "-weapon", "-fly", "-owl", "-pet"].contains { arguments.contains($0) }
+        ["-autofight", "-demo", "-spawn", "-panel", "-time", "-level", "-class", "-weapon", "-fly", "-owl", "-pet", "-element"].contains { arguments.contains($0) }
     }
 
     var timeOfDay: Float? { value(after: "-time").flatMap(Float.init) }
@@ -1701,7 +1938,7 @@ private struct DebugLaunch {
         let playerClass = value(after: "-class").flatMap(PlayerClass.init(rawValue:)) ?? weapon?.playerClass
         let level = value(after: "-level").flatMap(Int.init) ?? (playerClass != nil ? 18 : 10)
         guard arguments.contains("-demo") || playerClass != nil || weapon != nil || arguments.contains("-level") || arguments.contains("-fly")
-                || arguments.contains("-pet")
+                || arguments.contains("-pet") || arguments.contains("-element")
         else { return nil }
         var bag = Inventory()
         bag.add(.dandelionSeed, count: 1)
@@ -1718,6 +1955,7 @@ private struct DebugLaunch {
         bag.add(.wardCharm, count: 2)
         bag.add(.dewleafGloves, count: 1)
         bag.add(.dewleafVest, count: 1)
+        for element in Element.allCases { bag.add(element.stone, count: 6) }
         var equipment: [EquipSlot: Gear] = [.weapon: Gear(.twigSword, upgrade: 2), .hat: Gear(.dewleafCap), .body: Gear(.leafTunic),
                                             .gloves: Gear(.grassMitts), .boots: Gear(.dewleafSlippers, upgrade: 1)]
         // The best weapon of the asked-for family (or the class's own) that this level can wield.
@@ -1725,6 +1963,10 @@ private struct DebugLaunch {
            let pick = ItemID.allCases.last(where: { $0.definition.weaponType == family && $0.definition.requiredLevel <= level }) {
             equipment[.weapon] = Gear(pick)
             if !family.isTwoHanded { equipment[.shield] = Gear(.barkBuckler) }
+        }
+        // `-element fire:7`: the weapon comes infused.
+        if let spec = value(after: "-element")?.split(separator: ":"), let element = Element(rawValue: String(spec[0])) {
+            equipment[.weapon]?.element = ElementUpgrade(element, level: spec.count > 1 ? Int(spec[1]) ?? 5 : 5)
         }
         // `-pet [hungry]`: Pip out and following (optionally about to slow down), with Kibble to spare.
         var pet: PetProfile?
@@ -1753,7 +1995,7 @@ private struct DebugLaunch {
         case "bag": .inventory
         case "morel": .npc(.elderMorel)
         case "shop", "sell", "buyback": .npc(.chanterelle)
-        case "smith": .npc(.shiitake)
+        case "smith", "element": .npc(.shiitake)
         case "truffle": .npc(.truffle)
         case "porcini": .npc(.porcini)
         case "weapons": .npc(.oyster)
@@ -1781,12 +2023,21 @@ private struct DebugLaunch {
         case "rise": .hedgehog
         case "briars": .mantis
         case "grove": .stagBeetle
+        // Or any mob by name: `-spawn delverMole`, `-spawn moldywarp`.
+        case let name?: MobKind(rawValue: name)
         default: nil
         }
         if value(after: "-spawn") == "village" { return map.playerSpawn }
         // `-spawn cattailShore`, `-spawn windwhistlePeak`...: beside a landmark.
         if let place = value(after: "-spawn").flatMap(LandmarkID.init(rawValue:)), let landmark = map.landmark(place) {
             return landmark.position + (-landmark.position).normalizedOrZero * (landmark.radius + 3)
+        }
+        // `-spawn warren`: at the top of the Sunken Warren's ramp, looking down; `-spawn ford`: beside the brook's ford.
+        if value(after: "-spawn") == "warren", let warren = map.terrain.plateaus.first(where: \.isBasin), let ramp = warren.ramps.first {
+            return warren.center + AngleMath.direction(forYaw: ramp.yaw) * (warren.radius + ramp.length + 3)
+        }
+        if value(after: "-spawn") == "ford", let ford = map.terrain.lakes.first?.fords.first {
+            return ford + Vec2(ford.y, -ford.x).normalizedOrZero * 8
         }
         if value(after: "-spawn") == "lake", let lake = map.terrain.lakes.first {
             return lake.discs[0].center + Vec2(lake.discs[0].radius + 4, 0)

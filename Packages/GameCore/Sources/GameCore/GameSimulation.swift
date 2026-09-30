@@ -95,7 +95,8 @@ public struct GameSimulation: Sendable {
                     gear: EquipSlot.allCases.compactMap { e.player?.equipment[$0]?.item },
                     playerClass: e.player?.playerClass, isFlying: e.isFlying,
                     isAggressive: e.brain?.aggressive ?? false,
-                    isGiant: e.brain?.isGiant ?? false)
+                    isGiant: e.brain?.isGiant ?? false,
+                    weaponElement: e.player?.equipment[.weapon]?.element)
             },
             hazards: hazardSnapshots,
             drops: drops.filter { viewer == nil || $0.owner == viewer }.map {
@@ -138,6 +139,7 @@ public struct GameSimulation: Sendable {
             },
             canFly: data.inventory.count(of: .dandelionSeed) > 0 && e.stats.level >= ItemID.dandelionSeed.definition.requiredLevel,
             isFlying: e.isFlying,
+            isSitting: e.isSitting,
             altitude: e.position.y,
             pet: petStatus(data.pet),
             attributes: data.attributes,
@@ -208,10 +210,12 @@ public struct GameSimulation: Sendable {
 
     /// How far a hunting-ground mob chases from its own spot before giving up (plus `leashSlack`).
     static let mobLeashRadius: Float = 12
+    /// A field boss roams (and tunnels) this far round its lair.
+    static let fieldBossLeashRadius: Float = 16
     /// How far it strolls from its spot when nobody's around.
     static let mobWanderRadius: Float = 5
     /// Roughly one mob in this many comes after players on its own; the rest only fight back.
-    static let aggressiveShare = 5
+    public static let aggressiveShare = 5
 
     /// Spawns a mob somewhere in its area, as far from everyone else as a few tries can find,
     /// so hunting grounds stay spread out and fights are usually one on one.
@@ -229,7 +233,7 @@ public struct GameSimulation: Sendable {
         }
         let spot = map.resolve(best?.spot ?? area.center, radius: radius)
         // Each pack keeps its quota of aggressive mobs: when one dies, the next to respawn takes its place.
-        let quota = kind.stats.aggroRadius > 0 && !giant ? max(1, area.count / Self.aggressiveShare) : 0
+        let quota = kind.stats.aggroRadius > 0 && !giant ? max(1, area.count / max(1, area.aggressiveShare)) : 0
         let aggressiveNow = order.count { id in
             guard let e = entities[id], e.stats.isAlive, let brain = e.brain else { return false }
             return brain.spawnArea == areaIndex && brain.aggressive
@@ -244,14 +248,21 @@ public struct GameSimulation: Sendable {
             stats: giant ? Giant.stats(for: kind) : kind.stats.combatStats,
             brain: MobBrain(
                 home: spot,
-                leashRadius: Self.mobLeashRadius,
+                // A field boss keeps to its lair.
+                leashRadius: kind.isFieldBoss ? Self.fieldBossLeashRadius : Self.mobLeashRadius,
                 wanderRadius: Self.mobWanderRadius,
                 spawnArea: areaIndex,
                 state: .idle(ticksLeft: random.int(in: 0...(Self.tickRate * 4))),
                 aggressive: aggressiveNow < quota,
+                boss: kind.isFieldBoss ? BossBrain(burrowTimer: Self.ticks(Self.burrowFirstDelay)) : nil,
                 isGiant: giant
             )
         ))
+    }
+
+    /// Every boss out in the world right now: the night's owl and any field boss in its lair.
+    public var bosses: [EntityID] {
+        order.filter { entities[$0]?.brain?.boss != nil && entities[$0]?.stats.isAlive == true }
     }
 
     /// Distance to the closest living mob or player.
@@ -298,8 +309,8 @@ public struct GameSimulation: Sendable {
 
     /// Mobs shouldn't stack on top of each other: push overlapping pairs apart.
     private mutating func separateMobs() {
-        // The owl is too big to shove around.
-        let mobs = order.filter { entities[$0].map { $0.kind.isMob && $0.stats.isAlive && $0.kind != .mob(.owl) } ?? false }
+        // Bosses are too big to shove around.
+        let mobs = order.filter { entities[$0].map { $0.kind.isMob && $0.stats.isAlive && $0.brain?.boss == nil } ?? false }
         guard mobs.count > 1 else { return }
         var positions = mobs.map { entities[$0]!.position.xz }
         let radii = mobs.map { entities[$0]!.radius }

@@ -38,11 +38,11 @@ public struct PlayerProfile: Codable, Sendable, Equatable {
         self.attributes = attributes
     }
 
-    /// A brand-new sprout: a little pocket money and a few potions.
+    /// A brand-new sprout, as in Flyff: a wooden (twig) sword in hand, a little pocket money, and a few potions.
     public static var newCharacter: PlayerProfile {
         var inventory = Inventory()
         inventory.add(.dewPotion, count: 3)
-        return PlayerProfile(caps: 20, inventory: inventory)
+        return PlayerProfile(caps: 20, inventory: inventory, equipment: [.weapon: Gear(.twigSword)])
     }
 }
 
@@ -110,6 +110,7 @@ extension GameSimulation {
     /// Full-health stats for a player's level, class, and gear.
     static func playerStats(level: Int, data: PlayerData) -> CombatStats {
         Progression.playerStats(level: level, bonus: equipmentBonus(data.equipment), playerClass: data.playerClass,
-                                weapon: data.equipment[.weapon]?.definition.weaponType, attributes: data.attributes)
+                                weapon: data.equipment[.weapon]?.definition.weaponType,
+                                weaponAttack: data.equipment[.weapon]?.bonus.attack ?? 0, attributes: data.attributes)
     }
 }

@@ -68,6 +68,14 @@ public struct Boulder: Codable, Sendable {
     public let yaw: Float
     public let variant: UInt32
 
+    public init(position: Vec2, radius: Float, height: Float, yaw: Float, variant: UInt32) {
+        self.position = position
+        self.radius = radius
+        self.height = height
+        self.yaw = yaw
+        self.variant = variant
+    }
+
     var collider: Collider { .circle(center: position, radius: radius * 0.9) }
 }
 

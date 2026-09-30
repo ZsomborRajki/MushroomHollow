@@ -1,11 +1,27 @@
 extension GameSimulation {
-    static let criticalMultiplier: Float = 1.6
+    static let criticalMultiplier: Float = 1.8
 
     /// Rolls and applies one hit. Handles aggro, death, and XP for the attacker.
-    /// Only `blockable` hits (plain mob attacks, not charges or boss moves) can land on a shield.
+    /// Only `blockable` hits (plain mob attacks, not charges or boss moves) can land on a shield, and only
+    /// auto-attacks (`canMiss`: a player's swings and a mob's plain bites) can miss; skills always land.
     mutating func dealDamage(from attacker: inout WorldEntity, to targetID: EntityID, multiplier: Float, skill: SkillID?,
-                             blockable: Bool = false) {
+                             blockable: Bool = false, canMiss: Bool = false) {
         guard var target = entities[targetID], target.stats.isAlive else { return }
+        // Tunnelling underground: out of reach until it bursts up.
+        if target.pose == .burrowed { return }
+        // Anyone who gets swung at is back on their feet.
+        target.isSitting = false
+
+        if canMiss, random.unit() >= CombatStats.hitChance(attacker: attacker.stats, defender: target.stats) {
+            attacker.combat.lastCombatTick = tick
+            target.combat.lastCombatTick = tick
+            if attacker.kind == .player { target.brain?.boss?.damagers.insert(attacker.id) }
+            // A whiff still starts the fight.
+            provoke(&target, by: attacker.id)
+            entities[targetID] = target
+            events.append(.missed(source: attacker.id, target: targetID))
+            return
+        }
 
         if blockable, target.stats.blockChance > 0, random.unit() < target.stats.blockChance {
             attacker.combat.lastCombatTick = tick
@@ -19,9 +35,12 @@ extension GameSimulation {
         var defense = Float(target.pose == .hiding ? target.stats.defense * 4 + 6 : target.stats.defense)
         defense *= Self.buffMultiplier(target) { if case let .defense(m) = $0 { m } else { nil } }
         let attack = Float(attacker.stats.attack) * Self.buffMultiplier(attacker) { if case let .attack(m) = $0 { m } else { nil } }
-        var raw = attack * multiplier * random.float(in: 0.85...1.15) - defense * 0.6
+        let spread = min(0.9, max(0, attacker.stats.attackSpread))
+        var raw = attack * multiplier * random.float(in: (1 - spread)...(1 + spread)) - defense * 0.6
         let isCritical = random.unit() < attacker.stats.critChance
         if isCritical { raw *= Self.criticalMultiplier }
+        // The element wheel: a water blade bites deep into a fire critter; water armor shrugs off its bites.
+        raw *= Self.elementMultiplier(attacker: attacker, target: target)
         let amount = max(1, Int(raw.rounded()))
 
         target.stats.hp = max(0, target.stats.hp - amount)
@@ -38,7 +57,7 @@ extension GameSimulation {
                 if attacker.kind == .player {
                     let giant = target.brain?.isGiant == true
                     awardXP(to: &attacker, for: kind, giant: giant)
-                    recordKill(of: kind, by: &attacker)
+                    recordKill(of: kind, giant: giant, by: &attacker)
                     rollLoot(for: kind, giant: giant, ownedBy: attacker, at: target.position.xz)
                     if target.brain?.boss != nil { rewardBossParticipants(target, killer: &attacker) }
                 }
@@ -73,6 +92,7 @@ extension GameSimulation {
         entity.stats.hp = 0
         entity.position.y = 0
         entity.isFlying = false
+        entity.isSitting = false
         entity.player?.buffs = []
         entity.velocity = .zero
         entity.moveIntent = .zero

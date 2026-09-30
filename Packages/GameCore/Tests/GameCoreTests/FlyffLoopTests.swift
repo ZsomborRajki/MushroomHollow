@@ -135,7 +135,7 @@ import Testing
 
     @Test func everyFieldHasARepeatableRequest() {
         let hunted = Set(QuestID.huntingRequests.compactMap(\.huntTarget))
-        for area in WorldMap.mushroomHollow.mobSpawns {
+        for area in WorldMap.mushroomHollow.mobSpawns where !area.kind.isFieldBoss {
             #expect(hunted.contains(area.kind), "a request for \(area.kind)")
         }
         for quest in QuestID.huntingRequests {

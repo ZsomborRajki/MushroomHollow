@@ -109,9 +109,9 @@ enum PartMerger {
         var bucket = fingerprint
         var uv: SIMD2<Float>?
         var bucketMaterial = material
-        if let toon = InkMaterials.toonColor(fingerprint: fingerprint), let texel = PartAtlas.shared.uv(for: toon.color),
-           let atlas = PartAtlas.shared.material(shine: toon.shine) {
-            bucket = "atlas-\(toon.shine)"
+        if let color = InkMaterials.toonColor(fingerprint: fingerprint), let texel = PartAtlas.shared.uv(for: color),
+           let atlas = PartAtlas.shared.material {
+            bucket = "atlas"
             uv = texel
             bucketMaterial = atlas
         }
@@ -210,7 +210,7 @@ enum PartMerger {
     private static var geometry: [ObjectIdentifier: (mesh: MeshResource, data: MeshData?)] = [:]
 
     /// A mesh's triangles as plain arrays (every instance and part, in the mesh's own space).
-    private static func meshData(_ mesh: MeshResource) -> MeshData? {
+    static func meshData(_ mesh: MeshResource) -> MeshData? {
         let id = ObjectIdentifier(mesh)
         if let hit = geometry[id] { return hit.data }
         var data = MeshData()
@@ -285,7 +285,7 @@ final class PartAtlas {
     private let glow: TextureResource?
     private let queue: (any MTLCommandQueue)?
     private let staging: (any MTLBuffer)?
-    private var materials: [Bool: any RealityKit.Material] = [:]
+    private var cachedMaterial: (any RealityKit.Material)?
 
     private init() {
         let device = MTLCreateSystemDefaultDevice()
@@ -318,12 +318,12 @@ final class PartAtlas {
         return [(Float(index) + 0.5) / Float(Self.width), 0.5]
     }
 
-    func material(shine: Bool) -> (any RealityKit.Material)? {
-        if let cached = materials[shine] { return cached }
-        guard let base, let glow, let material = InkMaterials.atlas(base: base, glow: glow, doubleSided: false, shine: shine) else {
+    var material: (any RealityKit.Material)? {
+        if let cachedMaterial { return cachedMaterial }
+        guard let base, let glow, let material = InkMaterials.atlas(base: base, glow: glow, doubleSided: false) else {
             return nil
         }
-        materials[shine] = material
+        cachedMaterial = material
         return material
     }
 

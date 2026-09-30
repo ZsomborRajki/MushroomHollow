@@ -74,6 +74,8 @@ import Testing
                 #expect(droppers.contains { spawned.contains($0) }, "\(quest) collects something that drops")
             case let .explore(places):
                 #expect(places.allSatisfy { WorldMap.mushroomHollow.landmark($0) != nil }, "\(quest) visits places on the map")
+            case let .defeatGiant(minLevel, _):
+                #expect(QuestObjective.giantKinds(minLevel: minLevel).contains { spawned.contains($0) }, "\(quest) has Giants to fight")
             }
         }
         #expect(QuestObjective.defeat(.mantis, count: 8).summary == "Defeat 8 Orchid Mantises")

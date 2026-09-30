@@ -46,7 +46,7 @@ extension NPCID {
         case .shiitake:
             NPCDefinition(
                 id: self, name: "Shiitake", title: "Blacksmith",
-                greeting: "Bring me amber from the wilds and I'll make that gear sing. Past +5 it gets dicey, mind.",
+                greeting: "One amber shard a try and I'll make that gear sing. Past +2 the metal can shatter, mind: bring a Ward Charm if you love it. Got element stones? I'll put fire, water, wind, earth, or lightning into a blade or a coat.",
                 shopStock: [], upgradesGear: true)
         case .truffle:
             NPCDefinition(
@@ -69,10 +69,12 @@ extension NPCID {
         case .enoki:
             NPCDefinition(
                 id: self, name: "Enoki", title: "Armor Shop",
-                greeting: "Hats, coats, gloves, boots, shields. Dress for the field you're walking into, not the one you left.",
+                greeting: "Hats, coats, gloves, boots, shields, and every path's own set for sprouts who've chosen one. Dress for the field you're walking into, not the one you left.",
                 shopStock: [.acornCap, .beetleHelm, .honeycombHelm, .leafTunic, .barkMail, .turtleshellMail,
                             .grassMitts, .chitinGauntlets, .silkweaveGloves, .mossBoots, .barkTreads, .frogHoppers,
-                            .barkBuckler, .shellShield, .beetleAegis, .lilypadTarge, .mossbackShield])
+                            .barkBuckler, .shellShield, .beetleAegis, .lilypadTarge, .mossbackShield]
+                    // The class sets, as in Flarine's armor shop.
+                    + [ItemSet.heartwood, .briar, .mycelium, .rainpetal].flatMap(\.definition.pieces))
         case .maitake:
             NPCDefinition(
                 id: self, name: "Maitake", title: "Request Board",

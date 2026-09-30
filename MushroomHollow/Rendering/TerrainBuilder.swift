@@ -24,10 +24,11 @@ enum TerrainBuilder {
             material.baseColor = .init(tint: Palette.moss)
         }
         var groundMaterial: any RealityKit.Material = material
-        if ArtStyle.isInk, let cgImage = painting.cgImage, let mask = GroundPainter.paintShadowMask(map, size: 1024).cgImage,
+        if ArtStyle.isInk, let cgImage = painting.cgImage, let mask = GroundPainter.paintSurfaceMask(map, size: 1024).cgImage,
            let texture = try? TextureResource(image: cgImage, options: .init(semantic: .color)),
-           let shadows = try? TextureResource(image: mask, options: .init(semantic: .raw)),
-           let ink = InkMaterials.ground(texture, shadows: shadows) {
+           let surfaces = try? TextureResource(image: mask, options: .init(semantic: .raw)),
+           let detail = InkPainter.groundDetail(),
+           let ink = InkMaterials.ground(texture, surfaces: surfaces, detail: detail) {
             groundMaterial = ink
         }
 
@@ -116,7 +117,8 @@ enum TerrainBuilder {
     static func addWater(_ map: WorldMap, to world: Entity) {
         for lake in map.terrain.lakes {
             let bounds = lake.bounds
-            let step: Float = 1.5
+            // A finer grid where a narrow brook runs, or its edge comes out saw-toothed.
+            let step: Float = lake.discs.contains { $0.radius < 5 } ? 0.75 : 1.5
             let n = Int((2 * (bounds.radius + 2) / step).rounded(.up)) + 1
             let origin = bounds.center - Vec2(repeating: bounds.radius + 2)
             var mesh = MeshData()
@@ -127,8 +129,11 @@ enum TerrainBuilder {
                     let depth = lake.waterLevel - map.groundHeight(at: p)
                     // Only inside the shoreline: low ground elsewhere is dry hollow, not lake.
                     // (A quad is kept if any corner is wet, so the water still reaches the shore.)
-                    wet[row * n + column] = depth > 0.05 && lake.signedDistance(to: p) < 0.5
-                    mesh.positions.append([p.x, lake.waterLevel, p.y])
+                    let isWet = depth > 0.05 && lake.signedDistance(to: p) < 0.5
+                    wet[row * n + column] = isWet
+                    // Dry corners dip under the bank, so the ground cuts the water along its own smooth
+                    // line instead of the grid's staircase.
+                    mesh.positions.append([p.x, lake.waterLevel - (isWet ? 0 : 0.4), p.y])
                     mesh.normals.append([0, 1, 0])
                     // The shader reads the depth here: 0 at the shore, 1 in the deeps.
                     mesh.uvs.append([max(0, min(1, depth / lake.depth)), 0])
@@ -146,6 +151,99 @@ enum TerrainBuilder {
             water.name = lake.name
             water.components.set(DynamicLightShadowComponent(castsShadow: false))
             world.addChild(water)
+        }
+    }
+
+    // MARK: - Cliffs
+
+    /// Rock faces over every mesa's and basin's cliffs. The 2 m ground grid can only draw a cliff as a
+    /// smeared slope, so a finer, lumpy wall of rock is laid over it (lifted along the ground's normal
+    /// so the coarse ground never pokes through), leaving the ramps as bare earth.
+    static func addCliffs(_ map: WorldMap, to world: Entity, into batch: SceneryBatch) {
+        let rows: [Float] = [-0.15, 0, 0.12, 0.25, 0.38, 0.5, 0.62, 0.75, 0.88, 1, 1.15]
+        for plateau in map.terrain.plateaus {
+            var mesh = MeshData()
+            let columns = max(24, Int(2 * .pi * (plateau.radius + plateau.cliffWidth) / 1.1))
+            var ramp = [Float](repeating: 0, count: (columns + 1) * rows.count)
+            var up = [SIMD3<Float>](repeating: [0, 1, 0], count: (columns + 1) * rows.count)
+            for column in 0...columns {
+                let yaw = Float(column % columns) / Float(columns) * 2 * .pi
+                let direction = AngleMath.direction(forYaw: yaw)
+                let rim = plateau.rimRadius(atYaw: yaw)
+                for (row, t) in rows.enumerated() {
+                    let p = plateau.center + direction * (rim + t * plateau.cliffWidth)
+                    let normal = map.terrain.normal(at: p, step: 0.6)
+                    let weight = plateau.rampWeight(at: p)
+                    // Lumpy strata: bulging most mid-face, tucked under the ground at the top and foot.
+                    let inside = t >= 0 && t <= 1
+                    let lump = 0.55 + 0.25 * sin(yaw * 23 + t * 4) + 0.2 * sin(yaw * 57 - t * 9 + plateau.center.x)
+                    let lift = inside ? lump * (0.35 + sin(t * .pi)) * (1 - weight) : -0.4
+                    let ground = SIMD3<Float>(p.x, map.groundHeight(at: p), p.y)
+                    mesh.positions.append(ground + normal * lift)
+                    mesh.normals.append(normal)
+                    mesh.uvs.append([Float(column) / Float(columns), t])
+                    ramp[column * rows.count + row] = weight
+                    up[column * rows.count + row] = normal
+                }
+            }
+            let stride = rows.count
+            for column in 0..<columns {
+                for row in 0..<(stride - 1) {
+                    let a = column * stride + row, b = a + 1, c = a + stride, d = c + 1
+                    guard min(ramp[a], ramp[b], ramp[c], ramp[d]) < 0.8 else { continue }
+                    // Wind each quad to face out of the rock (the way the ground's normal points).
+                    let face = simd_cross(mesh.positions[c] - mesh.positions[a], mesh.positions[b] - mesh.positions[a])
+                    let outward = simd_dot(face, up[a] + up[d]) > 0
+                    let quad: [Int] = outward ? [a, c, b, b, c, d] : [a, b, c, b, d, c]
+                    mesh.indices += quad.map(UInt32.init)
+                }
+            }
+            // Smooth normals from the faces, so the ink shading reads the lumps.
+            var smoothed = [SIMD3<Float>](repeating: .zero, count: mesh.positions.count)
+            for i in Swift.stride(from: 0, to: mesh.indices.count, by: 3) {
+                let a = Int(mesh.indices[i]), b = Int(mesh.indices[i + 1]), c = Int(mesh.indices[i + 2])
+                let n = simd_cross(mesh.positions[b] - mesh.positions[a], mesh.positions[c] - mesh.positions[a])
+                for v in [a, b, c] { smoothed[v] += n }
+            }
+            mesh.normals = zip(smoothed, mesh.normals).map { simd_length($0) > 1e-6 ? simd_normalize($0) : $1 }
+            guard let resource = mesh.resource(named: "cliff") else { continue }
+            let cliff = ModelEntity(mesh: resource, materials: [Materials.matte(Palette.cliffRock, roughness: 1)])
+            cliff.name = plateau.name
+            world.addChild(cliff)
+
+            // Rubble at the foot of the cliff (not on the ramps).
+            var random = SeededRandom(seed: UInt64(bitPattern: Int64(plateau.center.x * 100 + plateau.center.y)))
+            for i in 0..<Int(Float(columns) / 3) {
+                let yaw = (Float(i) + random.float(in: 0...0.8)) / Float(columns / 3) * 2 * .pi
+                let distance = plateau.rimRadius(atYaw: yaw) + plateau.cliffWidth * (plateau.isBasin ? 0.05 : 0.95)
+                let spot = plateau.center + AngleMath.direction(forYaw: yaw) * distance
+                guard plateau.rampWeight(at: spot) < 0.3, random.unit() < 0.7 else { continue }
+                let radius = random.float(in: 0.5...1.3)
+                FloraBuilder.build(Boulder(position: spot, radius: radius, height: radius * random.float(in: 0.8...1.4),
+                                           yaw: random.float(in: 0...(2 * .pi)), variant: UInt32(truncatingIfNeeded: random.next())),
+                                   map: map, into: batch)
+            }
+        }
+    }
+
+    /// Flat stepping stones across each ford, along the road.
+    static func addFords(_ map: WorldMap, to world: Entity) {
+        let stone = Materials.matte(Palette.pebble, roughness: 0.9)
+        for lake in map.terrain.lakes {
+            for ford in lake.fords {
+                let along = Vec2(ford.y, -ford.x).normalizedOrZero
+                let across = ford.normalizedOrZero
+                for i in -3...3 {
+                    let p = ford + along * (Float(i) * 1.5) + across * (i % 2 == 0 ? 0.35 : -0.35)
+                    guard lake.signedDistance(to: p) < 0.3 else { continue }
+                    let size = 0.55 + Float((i + 3) % 3) * 0.1
+                    let entity = ModelEntity(mesh: Meshes.sphere, materials: [stone])
+                    entity.position = [p.x, lake.waterLevel - 0.03, p.y]
+                    entity.scale = [size, 0.13, size * 0.8]
+                    entity.orientation = simd_quatf(angle: Float(i) * 0.7, axis: [0, 1, 0])
+                    world.addChild(entity)
+                }
+            }
         }
     }
 

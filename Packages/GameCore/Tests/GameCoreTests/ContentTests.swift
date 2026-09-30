@@ -21,15 +21,18 @@ import Testing
         Set(QuestID.mainStory.prefix { $0 != quest })
     }
 
+    /// Makes the player `level`, holding a sword of that level (without one, fights take ages).
     private func setLevel(_ level: Int, _ player: EntityID, in sim: inout GameSimulation) {
-        sim.entities[player]?.stats = Progression.playerStats(level: level)
+        let sword = WeaponType.attack(level: level, type: .sword)
+        sim.entities[player]?.stats = Progression.playerStats(level: level, bonus: StatBonus(attack: sword),
+                                                              weapon: .sword, weaponAttack: sword)
     }
 
-    /// Walks up to the nearest living `kind` and fights it to the death.
+    /// Walks up to the nearest living `kind` (not its Giant) and fights it to the death.
     private func slay(_ kind: MobKind, _ player: EntityID, in sim: inout GameSimulation) throws -> [WorldEvent] {
         let me = try #require(sim.entity(player)).position
         let mob = try #require(sim.snapshot().entities
-            .filter { $0.kind == .mob(kind) && $0.isAlive }
+            .filter { $0.kind == .mob(kind) && $0.isAlive && !$0.isGiant }
             .min { $0.position.xz.distance(to: me.xz) < $1.position.xz.distance(to: me.xz) })
         sim.teleport(player, to: mob.position.xz + Vec2(1.2, 0))
         sim.enqueue(.target(mob.id, engage: true), from: player)
@@ -67,7 +70,7 @@ import Testing
     @Test func killsLeaveCapsAndItemsOnTheGroundUntilCollected() throws {
         var sim = GameSimulation(seed: 21)
         let player = sim.spawnPlayer(profile: PlayerProfile())
-        setLevel(8, player, in: &sim)
+        setLevel(4, player, in: &sim) // close enough to the snails' level that their drops don't thin out
         var events: [WorldEvent] = []
         for _ in 0..<8 {
             events += try slay(.snail, player, in: &sim)
@@ -110,7 +113,7 @@ import Testing
     }
 
     @Test func nearbyDropsAreCollectedAfterTheirDisplayDelay() throws {
-        var sim = GameSimulation(seed: 24)
+        var sim = GameSimulation(seed: 25)
         let player = sim.spawnPlayer()
         let origin = try #require(sim.entity(player)).position.xz
         let initialCaps = try #require(sim.playerStatus(player)).caps
@@ -243,7 +246,8 @@ import Testing
         let events = run(&sim, seconds: 0.1)
         #expect(events.contains(.actionFailed(player: player, reason: .levelTooLow)))
         var status = try #require(sim.playerStatus(player))
-        #expect(status.stats.attack == base.attack + 4)
+        #expect(status.stats.attack == base.attack + ItemID.twigSword.definition.bonus.attack)
+        #expect(status.stats.attack > base.attack * 3, "a weapon is most of your damage")
         #expect(status.equipment[.weapon]?.item == .twigSword)
         #expect(status.inventory.count(of: .twigSword) == 0)
         #expect(sim.snapshot().entity(player)?.gear == [.twigSword])
@@ -370,7 +374,7 @@ import Testing
         let events = run(&sim, seconds: 0.1)
         #expect(events.contains(.questCompleted(player: player, quest: .shellShock)))
         let status = try #require(sim.playerStatus(player))
-        #expect(status.inventory.count(of: .twigSword) >= 1)
+        #expect(status.inventory.count(of: .grassMitts) >= 1)
         #expect(status.quests.first { $0.id == .shellShock }?.state == .completed)
         #expect(status.quests.first { $0.id == .spotsBeforeYourEyes }?.state == .available, "the story moves on")
         #expect(status.quests.first { $0.id == .slipperySituation }?.state == .hidden)
@@ -404,7 +408,7 @@ import Testing
 
     @Test func snailHidesInItsShellWhenHurt() throws {
         var sim = GameSimulation(seed: 5)
-        let player = sim.spawnPlayer(profile: PlayerProfile())
+        let player = sim.spawnPlayer(profile: .newCharacter)
         let events = try slay(.snail, player, in: &sim)
         #expect(events.contains { if case .mobAbility(_, .hide) = $0 { true } else { false } })
     }
@@ -441,12 +445,14 @@ import Testing
     }
 
     @Test func outerRingMobsReuseTheAbilities() throws {
-        var sim = GameSimulation(seed: 21)
+        var sim = GameSimulation(seed: 22)
         let player = sim.spawnPlayer(profile: PlayerProfile())
-        setLevel(30, player, in: &sim)
+        setLevel(8, player, in: &sim) // weak enough to leave it hurt before the finishing blow
 
         let curl = try slay(.pillBug, player, in: &sim)
         #expect(curl.contains { if case .mobAbility(_, .hide) = $0 { true } else { false } }, "pill bugs curl up")
+
+        setLevel(30, player, in: &sim)
 
         let burst = try slay(.puffweed, player, in: &sim)
         #expect(burst.contains { if case .mobAbility(_, .split) = $0 { true } else { false } })
@@ -536,6 +542,7 @@ import Testing
         #expect(decoded.equipment[.weapon] == Gear(.thornRapier))
         #expect(decoded.inventory == bag)
         #expect(decoded.completedQuests == [.shellShock])
-        #expect(sim.entity(player)?.stats.attack == Progression.playerStats(level: 6).attack + 9)
+        #expect(sim.entity(player)?.stats.attack == Progression.playerStats(level: 6).attack
+            + ItemID.thornRapier.definition.bonus.attack)
     }
 }

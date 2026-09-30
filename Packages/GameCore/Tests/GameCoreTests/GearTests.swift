@@ -40,20 +40,25 @@ import Testing
                 previous = bonus
             }
         }
-        #expect(Gear(.twigSword).bonus.attack == 4)
-        #expect(Gear(.moonTalon, upgrade: 10).bonus.attack == 26 * 3, "+10 triples a weapon's attack")
+        #expect(Gear(.twigSword).bonus.attack == WeaponType.attack(level: 1, type: .sword))
+        let talon = Gear(.moonTalon).bonus.attack
+        #expect(Gear(.moonTalon, upgrade: 10).bonus.attack == talon * 3, "+10 triples a weapon's attack")
     }
 
     @Test func upgradesGetRiskierAndPricier() {
         for level in 2...Upgrade.maxLevel {
-            #expect(Upgrade.chance(toReach: level) < Upgrade.chance(toReach: level - 1))
+            #expect(Upgrade.chance(toReach: level) <= Upgrade.chance(toReach: level - 1))
+            if level >= 3 { #expect(Upgrade.chance(toReach: level) < Upgrade.chance(toReach: level - 1)) }
             #expect(Upgrade.amberCost(toReach: level) >= Upgrade.amberCost(toReach: level - 1))
             #expect(Upgrade.capsCost(of: .twigSword, toReach: level) > Upgrade.capsCost(of: .twigSword, toReach: level - 1))
         }
+        // v7 Flyff: +1 and +2 always take; from +3 a failure shatters the item.
         #expect(Upgrade.chance(toReach: 1) == 1)
-        #expect(Upgrade.risk(toReach: 3) == .none)
-        #expect(Upgrade.risk(toReach: 5) == .downgrade)
-        #expect(Upgrade.risk(toReach: 6) == .destroy)
+        #expect(Upgrade.chance(toReach: 2) == 1)
+        #expect(Upgrade.chance(toReach: 10) == 0.005)
+        #expect(Upgrade.risk(toReach: 2) == .none)
+        #expect(Upgrade.risk(toReach: 3) == .destroy)
+        #expect(Upgrade.risk(toReach: 10) == .destroy)
     }
 
     // MARK: - The blacksmith
@@ -126,22 +131,24 @@ import Testing
         let destroyed = outcomes.count { $0 == .destroyed }
         let succeeded = outcomes.count { $0 == .succeeded(level: 6) }
         #expect(destroyed + succeeded == 10)
-        #expect(destroyed > 0, "a 35% shot fails most of the time")
+        #expect(destroyed > 0, "a 10% shot fails most of the time")
         let status = try #require(sim.playerStatus(player))
         #expect(status.inventory.count(of: .twigSword) == succeeded)
         #expect(status.inventory.count(of: .twigSword, upgrade: 6) == succeeded)
     }
 
-    @Test func failuresAtPlusFourAndFiveCostALevel() throws {
+    @Test func failuresFromPlusThreeShatterTheItem() throws {
         var bag = Inventory()
-        for _ in 0..<10 { bag.add(.acornCap, count: 1, upgrade: 4) }
+        for _ in 0..<10 { bag.add(.acornCap, count: 1, upgrade: 3) }
         bag.add(.amberShard, count: 99)
         var (sim, player) = try atTheForge(PlayerProfile(caps: 100_000, inventory: bag))
-        for _ in 0..<10 { sim.enqueue(.upgrade(.bag(Gear(.acornCap, upgrade: 4)), protect: false), from: player) }
+        for _ in 0..<10 { sim.enqueue(.upgrade(.bag(Gear(.acornCap, upgrade: 3)), protect: false), from: player) }
         let outcomes = results(run(&sim))
-        #expect(outcomes.allSatisfy { $0 == .succeeded(level: 5) || $0 == .downgraded(level: 3) })
-        #expect(outcomes.contains(.downgraded(level: 3)))
-        #expect(sim.playerStatus(player)?.inventory.count(of: .acornCap) == 10, "nothing destroyed")
+        #expect(outcomes.allSatisfy { $0 == .succeeded(level: 4) || $0 == .destroyed })
+        let destroyed = outcomes.count { $0 == .destroyed }
+        #expect(destroyed > 0, "+4 takes only four times in ten")
+        #expect(sim.playerStatus(player)?.inventory.count(of: .acornCap) == 10 - destroyed)
+        #expect(sim.playerStatus(player)?.inventory.count(of: .amberShard) == 89, "one shard a try")
     }
 
     @Test func aWardCharmSavesTheItem() throws {
@@ -201,8 +208,10 @@ import Testing
             gearOnly = gearOnly + piece.definition.bonus
             let stats = try #require(sim.entity(player)).stats
             let setBonus = ItemSet.dewleaf.definition.bonus(worn: index + 1)
-            #expect(stats.maxHP == bare.maxHP + gearOnly.maxHP + setBonus.maxHP)
-            #expect(stats.attack == bare.attack + gearOnly.attack + setBonus.attack)
+            let expected = Progression.playerStats(level: 8, bonus: gearOnly + setBonus)
+            #expect(stats.maxHP == expected.maxHP)
+            #expect(stats.attack == expected.attack)
+            #expect(stats.defense == expected.defense)
             #expect(stats.maxHP + stats.attack + stats.defense > previousTotal)
             previousTotal = stats.maxHP + stats.attack + stats.defense
         }
@@ -236,7 +245,11 @@ import Testing
             let pieces = set.definition.pieces
             #expect(pieces.count == 4)
             #expect(Set(pieces.compactMap(\.definition.equipSlot)) == [.hat, .body, .gloves, .boots])
-            #expect(pieces.allSatisfy { $0.definition.set == set && $0.definition.rarity == .set && $0.definition.buyPrice == nil })
+            #expect(pieces.allSatisfy { $0.definition.set == set && $0.definition.rarity == .set })
+            // As in Flyff, the class sets are sold at the armor shop; the others only drop.
+            let sold = set.definition.playerClass != nil
+            #expect(pieces.allSatisfy { ($0.definition.buyPrice != nil) == sold }, "\(set)")
+            #expect(pieces.allSatisfy { NPCID.enoki.definition.shopStock.contains($0) == sold }, "\(set)")
         }
         for job in PlayerClass.allCases {
             #expect(ItemSet.forClass(job) != nil, "\(job) has a set")

@@ -37,7 +37,32 @@ enum MapPainter {
             // Water.
             for lake in map.terrain.lakes {
                 for disc in lake.discs { circle(disc.center, disc.radius, UIColor(red: 0.32, green: 0.55, blue: 0.62, alpha: 1)) }
-                for disc in lake.discs { circle(disc.center, disc.radius - 5, UIColor(red: 0.22, green: 0.44, blue: 0.56, alpha: 1)) }
+                for disc in lake.discs where disc.radius > 5 {
+                    circle(disc.center, disc.radius - 5, UIColor(red: 0.22, green: 0.44, blue: 0.56, alpha: 1))
+                }
+            }
+            // Cliffs: a hatched rim round each mesa and basin, with a gap at each ramp.
+            cg.setLineCap(.round)
+            for plateau in map.terrain.plateaus {
+                cg.setStrokeColor(UIColor(red: 0.3, green: 0.26, blue: 0.22, alpha: 0.95).cgColor)
+                cg.setLineWidth(1.6)
+                let count = 90
+                var drawing = false
+                for i in 0...count {
+                    let yaw = Float(i) / Float(count) * 2 * .pi
+                    let p = plateau.center + AngleMath.direction(forYaw: yaw) * (plateau.rimRadius(atYaw: yaw) + plateau.cliffWidth * 0.3)
+                    let point = CGPoint(x: CGFloat(p.x), y: CGFloat(p.y))
+                    if plateau.rampWeight(at: p) > 0.4 {
+                        if drawing { cg.strokePath() }
+                        drawing = false
+                    } else if drawing {
+                        cg.addLine(to: point)
+                    } else {
+                        cg.move(to: point)
+                        drawing = true
+                    }
+                }
+                if drawing { cg.strokePath() }
             }
 
             // Scenery as little marks.

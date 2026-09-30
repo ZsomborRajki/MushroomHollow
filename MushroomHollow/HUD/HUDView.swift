@@ -58,6 +58,7 @@ struct HUDView: View {
                 .font(.caption2.monospacedDigit())
                 .foregroundStyle(.white.opacity(0.5))
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.leading, 44) // clear of the mute button
             #endif
         }
         }
@@ -88,34 +89,34 @@ private struct PlayerFrame: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 8) {
-                Text("🍄")
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 5) {
                 Text("Sprout")
-                    .font(.headline)
+                    .font(.footnote.weight(.semibold))
                     .lineLimit(1)
                     .fixedSize()
                 Text("Lv \(status.stats.level)")
-                    .font(.caption.weight(.bold))
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 2)
+                    .font(.caption2.weight(.bold))
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 1)
                     .background(.white.opacity(0.18), in: .capsule)
                 if let playerClass = status.playerClass {
                     Image(systemName: playerClass.symbol)
-                        .font(.caption.weight(.bold))
+                        .font(.caption2.weight(.bold))
                         .foregroundStyle(playerClass.tint)
                         .accessibilityLabel(playerClass.definition.name)
                 }
                 Spacer(minLength: 0)
                 Label("\(status.caps)", systemImage: "circle.circle.fill")
-                    .font(.caption.weight(.semibold).monospacedDigit())
+                    .font(.caption2.weight(.semibold).monospacedDigit())
+                    .labelStyle(TightLabelStyle())
                     .foregroundStyle(.yellow)
                     .contentTransition(.numericText())
                     .lineLimit(1)
                     .fixedSize()
             }
-            StatBar(value: status.stats.hp, max: status.stats.maxHP, color: .red, label: "HP")
-            StatBar(value: status.stats.mp, max: status.stats.maxMP, color: .blue, label: "MP")
+            StatBar(value: status.stats.hp, max: status.stats.maxHP, color: .red, label: "HP", height: 11)
+            StatBar(value: status.stats.mp, max: status.stats.maxMP, color: .blue, label: "MP", height: 11)
             if status.pet.isSummoned || status.pet.awaitingFood, let name = status.pet.slot?.definition.name {
                 PetBar(pet: status.pet, name: name)
             }
@@ -123,23 +124,45 @@ private struct PlayerFrame: View {
                 HStack(spacing: 4) {
                     Image(systemName: status.isSlowed ? "tortoise.fill" : "location.fill")
                     Text(zone.name)
+                        .lineLimit(1)
+                        .layoutPriority(1)
                     if let levels = zone.levels {
-                        Text("Lv \(levels.lowerBound)–\(levels.upperBound)")
+                        Text("\(levels.lowerBound)–\(levels.upperBound)")
                             .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .fixedSize()
                     }
                     Spacer(minLength: 0)
-                    Label(status.isFlying ? "\(Int(status.altitude)) m" : clock.label,
-                          systemImage: status.isFlying ? "wind" : clock.symbol)
-                        .foregroundStyle(status.isFlying ? .cyan : .secondary)
+                    if status.isFlying {
+                        Label("\(Int(status.altitude)) m", systemImage: "wind")
+                            .labelStyle(TightLabelStyle())
+                            .foregroundStyle(.cyan)
+                            .fixedSize()
+                    } else {
+                        Image(systemName: clock.symbol)
+                            .foregroundStyle(.secondary)
+                            .accessibilityLabel(clock.label)
+                    }
                 }
                 .font(.caption2.weight(.medium))
                 .foregroundStyle(status.isSlowed ? .yellow : .primary)
             }
         }
-        .frame(width: 240)
-        .padding(12)
-        .glassEffect(.regular, in: .rect(cornerRadius: 20))
+        .frame(width: 170)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .glassEffect(.regular, in: .rect(cornerRadius: 16))
         .animation(.snappy, value: status.caps)
+    }
+}
+
+/// Icon and title with less of a gap than the default label style.
+private struct TightLabelStyle: LabelStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        HStack(spacing: 2) {
+            configuration.icon
+            configuration.title
+        }
     }
 }
 
@@ -182,7 +205,11 @@ private struct BossBar: View {
     var body: some View {
         VStack(spacing: 4) {
             HStack(spacing: 6) {
-                Image(systemName: "moon.stars.fill").foregroundStyle(.indigo)
+                if let element = boss.element {
+                    ElementBadge(element: element, size: 20)
+                } else {
+                    Image(systemName: "moon.stars.fill").foregroundStyle(.indigo)
+                }
                 Text(boss.name).font(.headline)
                 if boss.isFighting {
                     Image(systemName: "flame.fill").foregroundStyle(.red).font(.caption)
@@ -276,6 +303,10 @@ private struct TargetFrame: View {
                         .font(.caption)
                         .accessibilityLabel("Aggressive")
                 }
+                if let element = target.element {
+                    // Flyff's element tile, so you know which stone it drops and what to hit it with.
+                    ElementBadge(element: element, size: 18)
+                }
                 Text(target.name)
                     .font(.headline)
                 Text("Lv \(target.level)")
@@ -283,6 +314,21 @@ private struct TargetFrame: View {
                     .foregroundStyle(levelColor)
             }
             StatBar(value: target.hp, max: target.maxHP, color: .red, label: nil)
+            if let element = target.element {
+                // What your weapon's element does against it (or, bare, what would work).
+                HStack(spacing: 4) {
+                    if let hint = target.matchup?.hint {
+                        Image(systemName: hint.symbol)
+                        Text("\(hint.text) · your weapon")
+                    } else {
+                        Text("Weak to")
+                        ElementBadge(element: element.weakAgainst, size: 12)
+                        Text(element.weakAgainst.displayName)
+                    }
+                }
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(target.matchup?.hint?.color ?? .secondary)
+            }
         }
         .frame(width: 200)
         .padding(.horizontal, 14)
@@ -388,6 +434,7 @@ struct StatBar: View {
     let max: Int
     let color: Color
     let label: String?
+    var height: CGFloat = 16
 
     private var fraction: Double { max > 0 ? Double(value) / Double(max) : 0 }
 
@@ -399,15 +446,17 @@ struct StatBar: View {
                     .fill(color.gradient)
                     .frame(width: geometry.size.width * fraction)
                 HStack {
-                    if let label { Text(label).font(.caption2.weight(.bold)) }
+                    if let label { Text(label).fontWeight(.bold) }
                     Spacer()
-                    Text("\(value) / \(max)").font(.caption2.monospacedDigit())
+                    Text("\(value) / \(max)").monospacedDigit()
                 }
-                .padding(.horizontal, 8)
+                // Thin bars get smaller numbers so they still fit inside.
+                .font(height < 14 ? .system(size: 9, weight: .medium) : .caption2)
+                .padding(.horizontal, height < 14 ? 6 : 8)
                 .shadow(radius: 1)
             }
         }
-        .frame(height: 16)
+        .frame(height: height)
         .animation(.easeOut(duration: 0.25), value: fraction)
     }
 }

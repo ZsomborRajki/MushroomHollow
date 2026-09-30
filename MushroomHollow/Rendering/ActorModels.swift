@@ -38,6 +38,9 @@ enum ActorModels {
         case .mob(.grumblecap): buildGrumblecap(into: model)
         case .mob(.stagBeetle): buildStagBeetle(into: model)
         case .mob(.owl): buildOwl(into: model)
+        case .mob(.delverMole): buildMole(into: model, size: 1, king: false)
+        case .mob(.rootcrawler): buildRootcrawler(into: model)
+        case .mob(.moldywarp): buildMole(into: model, size: 2.7, king: true)
         case let .npc(npc): return npc.makeRig().root
         }
         return model

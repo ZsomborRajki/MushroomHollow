@@ -31,6 +31,8 @@ enum InputAction: Equatable {
     case togglePet
     /// The character panel: stats and stat points.
     case toggleCharacter
+    /// Sit down to rest (faster recovery), or stand up.
+    case toggleSit
     case menu(MenuInput)
 }
 
@@ -175,6 +177,7 @@ final class InputHub {
             button("pad.rb", pad.rightShoulder.isPressed, .cycleTarget(1))
             button("pad.lt", !flying && pad.leftTrigger.isPressed, .clearTarget)
             button("pad.l3", pad.leftThumbstickButton?.isPressed ?? false, .toggleFlight)
+            button("pad.r3", pad.rightThumbstickButton?.isPressed ?? false, .toggleSit)
             button("pad.left", pad.dpad.left.isPressed, .quickItem(0))
             button("pad.right", pad.dpad.right.isPressed, .quickItem(1))
             button("pad.menu", pad.buttonMenu.isPressed, .toggleInventory)
@@ -209,6 +212,7 @@ final class InputHub {
             button("key.g", down(.keyG), .toggleFlight)
             button("key.p", down(.keyP), .togglePet)
             button("key.t", down(.keyT), .toggleCharacter)
+            button("key.z", down(.keyZ), .toggleSit)
             if down(.keyR) { frame.climb += 1 }
             if down(.keyC) { frame.climb -= 1 }
         }

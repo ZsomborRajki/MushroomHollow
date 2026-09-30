@@ -100,8 +100,9 @@ static float inkAmount(float2 p, float2 toDepth, depth2d<float, access::read> de
 
     half gx = lumaAt(source, q + float2(r, 0)) - lumaAt(source, q - float2(r, 0));
     half gy = lumaAt(source, q + float2(0, r)) - lumaAt(source, q - float2(0, r));
-    float colorEdge = smoothstep(0.22, 0.45, float(abs(gx) + abs(gy)));
-    float dryBrush = 0.72 + 0.28 * smoothstep(0.25, 0.55, valueNoise(n * 0.11 + frame * 7.7));
+    float colorEdge = smoothstep(0.2, 0.4, float(abs(gx) + abs(gy)));
+    // A marker, not a dry brush: the line only rarely runs a little thin.
+    float dryBrush = 0.88 + 0.12 * smoothstep(0.25, 0.55, valueNoise(n * 0.11 + frame * 7.7));
 
     int2 limit = int2(depth.get_width(), depth.get_height()) - 1;
     int2 c = int2(q * toDepth);
@@ -109,7 +110,7 @@ static float inkAmount(float2 p, float2 toDepth, depth2d<float, access::read> de
     // Some renderers (the Simulator) hand over an empty depth buffer: then the lines come from
     // color edges alone (materials draw their own contours, actors have hull outlines).
     if (center <= 0.0) {
-        return 0.8 * colorEdge * dryBrush;
+        return colorEdge * dryBrush;
     }
     float wc = center + u.settings.z;        // inverse distance × projection b
     float distance = u.settings.w / max(wc, 1e-9);
@@ -127,9 +128,9 @@ static float inkAmount(float2 p, float2 toDepth, depth2d<float, access::read> de
                          bendAlong(depth, c, int2(0, k), limit, center, axis, quantum)),
                      max(bendAlong(depth, c, int2(k, k), limit, center, diagonal, quantum),
                          bendAlong(depth, c, int2(k, -k), limit, center, diagonal, quantum)));
-    // Silhouettes and creases, plus faint painted detail (spots, stripes, the eyes); kept faint so
-    // shading bands don't all get outlined.
-    float edge = max(smoothstep(1.3, 2.6, bend), 0.55 * colorEdge) * dryBrush;
+    // Silhouettes and creases, plus the borders between flat colors (spots, stripes, the eyes), like
+    // a coloring book. The one soft shadow tone is too close to its lit color to be outlined.
+    float edge = max(smoothstep(1.3, 2.6, bend), 0.8 * colorEdge) * dryBrush;
     return edge * fade;
 }
 
@@ -165,7 +166,7 @@ fragment half4 gradeInkFragment(FullscreenVertex in [[stage_in]],
     color.rgb = mix(color.rgb, half3(u.fog.rgb), half(saturate(haze)));
 
     half3 graded = grade(color.rgb, p / size, u);
-    // Lines go on after the grade, so they stay ink-dark by day and chalk-pale by night.
+    // Lines go on after the grade and the haze, so they stay marker-dark at every hour.
     graded = mix(graded, half3(u.inkColor.rgb), half(saturate(ink)));
     if (u.ink.w > 0.0) graded *= paperGrain(p, u);
     return half4(graded, color.a);

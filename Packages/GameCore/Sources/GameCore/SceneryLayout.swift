@@ -9,6 +9,8 @@ struct SceneryLayout {
         case meadow, creek, thicket, rise, briars, grove
         // The wild fringe's places
         case dell, peak, stones
+        /// The Sunken Warren's floor: dim, rooty, and full of glowcaps.
+        case warren
     }
 
     let boundaryRadius: Float
@@ -75,7 +77,7 @@ struct SceneryLayout {
         forEachCell(cell, &random) { p, random in
             let chance: Float = switch biome(at: p) {
             case .rim: 0.75
-            case .rise, .creek, .peak: 0.6
+            case .rise, .creek, .peak, .warren: 0.6
             case .briars, .bough: 0.45
             case .wild: 0.32
             case .lakeshore: 0.35
@@ -105,7 +107,7 @@ struct SceneryLayout {
     private func placeTwigs(_ result: inout Result, _ placed: inout Footprints, _ random: inout SeededRandom) {
         forEachCell(20, &random) { p, random in
             let chance: Float = switch biome(at: p) {
-            case .barkfall: 0.8
+            case .barkfall, .warren: 0.8
             case .rise, .grove, .stones: 0.55
             case .wild, .maze, .bough, .thicket, .dell: 0.32
             case .rim, .lakeshore, .briars, .creek, .peak: 0.2
@@ -146,6 +148,7 @@ struct SceneryLayout {
         case .dell: (0.26, [(.glowcap, 7), (.toadstool, 2), (.fern, 2), (.bluebell, 1)])
         case .peak: (0.1, [(.clover, 4), (.buttercup, 2), (.sapling, 1), (.dandelionClock, 1)])
         case .stones: (0.14, [(.clover, 5), (.fern, 2), (.foxglove, 1), (.bluebell, 1)])
+        case .warren: (0.2, [(.glowcap, 6), (.toadstool, 3), (.fern, 2)])
         }
     }
 

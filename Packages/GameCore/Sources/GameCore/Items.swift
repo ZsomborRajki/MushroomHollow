@@ -57,15 +57,65 @@ public enum WeaponType: String, Codable, Sendable, CaseIterable {
         }
     }
 
-    /// Seconds between auto-attacks: heavier weapons hit harder but slower.
+    /// Seconds between auto-attacks before Dexterity speeds them up: as in Flyff, swings are slow and
+    /// heavy, and heavier weapons slower still.
     public var attackInterval: Float {
         switch self {
-        case .sword: 0.9
-        case .axe: 1.05
-        case .maul: 1.3
-        case .bow, .staff: 1
-        case .wand: 1.1
+        case .sword: 2
+        case .axe: 2.4
+        case .maul: 2.8
+        case .bow: 2.1
+        case .wand: 2.3
+        case .staff: 2.4
         }
+    }
+
+    /// Bare fists swing like a sword.
+    public static let unarmedInterval: Float = 2
+
+    /// How much Dexterity speeds this weapon up (Flyff's per-weapon attack speed): nimble weapons gain
+    /// the most from it.
+    public var dexterityFactor: Float {
+        switch self {
+        case .sword, .bow: 1
+        case .axe: 0.85
+        case .maul: 0.7
+        case .wand, .staff: 0.8
+        }
+    }
+
+    /// The stat that adds to its damage.
+    public var attribute: Attribute {
+        switch self {
+        case .sword, .axe, .maul: .strength
+        case .bow: .dexterity
+        case .wand, .staff: .intelligence
+        }
+    }
+
+    /// Half the gap between its min and max damage, as a fraction of its attack ("Attack 27~33").
+    public var spread: Float {
+        switch self {
+        case .sword, .wand, .staff: 0.1
+        case .bow: 0.12
+        case .maul: 0.2
+        case .axe: 0.25
+        }
+    }
+
+    /// Attack for a common weapon of this type needing `level`. A new weapon is the biggest step up
+    /// there is: a level-appropriate one outhits the wielder's own strength several times over early on.
+    /// Slower weapons hit harder per swing; mauls also make up for giving up the shield.
+    public static func attack(level: Int, type: WeaponType, rarity: Rarity = .common) -> Int {
+        let heft: Float = switch type {
+        case .sword, .bow: 1
+        case .axe: 1.2
+        case .maul: 1.55
+        case .wand: 0.95
+        case .staff: 0.9
+        }
+        let quality: Float = rarity == .unique ? 1.15 : 1
+        return Int(((6 + 3.4 * Float(level)) * heft * quality).rounded())
     }
 
     public var isRanged: Bool { reach > 2 }
@@ -82,9 +132,15 @@ public struct StatBonus: Codable, Sendable, Equatable {
     public var attackSpeed: Float = 0
     /// Extra critical-hit chance (0...1). Set bonuses.
     public var critical: Float = 0
+    /// Flyff-style "STR +3": stat points that come with the gear (sets and uniques), counted like spent ones.
+    public var strength = 0
+    public var stamina = 0
+    public var dexterity = 0
+    public var intelligence = 0
 
     public init(attack: Int = 0, defense: Int = 0, maxHP: Int = 0, maxMP: Int = 0, block: Float = 0,
-                attackSpeed: Float = 0, critical: Float = 0) {
+                attackSpeed: Float = 0, critical: Float = 0,
+                strength: Int = 0, stamina: Int = 0, dexterity: Int = 0, intelligence: Int = 0) {
         self.attack = attack
         self.defense = defense
         self.maxHP = maxHP
@@ -92,12 +148,23 @@ public struct StatBonus: Codable, Sendable, Equatable {
         self.block = block
         self.attackSpeed = attackSpeed
         self.critical = critical
+        self.strength = strength
+        self.stamina = stamina
+        self.dexterity = dexterity
+        self.intelligence = intelligence
+    }
+
+    /// The stat points it grants.
+    public var attributes: Attributes {
+        Attributes(strength: strength, stamina: stamina, dexterity: dexterity, intelligence: intelligence)
     }
 
     public static func + (a: StatBonus, b: StatBonus) -> StatBonus {
         StatBonus(attack: a.attack + b.attack, defense: a.defense + b.defense,
                   maxHP: a.maxHP + b.maxHP, maxMP: a.maxMP + b.maxMP, block: a.block + b.block,
-                  attackSpeed: a.attackSpeed + b.attackSpeed, critical: a.critical + b.critical)
+                  attackSpeed: a.attackSpeed + b.attackSpeed, critical: a.critical + b.critical,
+                  strength: a.strength + b.strength, stamina: a.stamina + b.stamina,
+                  dexterity: a.dexterity + b.dexterity, intelligence: a.intelligence + b.intelligence)
     }
 }
 
@@ -113,8 +180,11 @@ public enum ItemID: String, Codable, Sendable, CaseIterable {
     case honeycombChip, pollenPuff, mossyScute, emberScale, spiderSilk, mothDust
     case hedgehogQuill, pineScale, mantisClaw, roseHip, grumbleSpore, stagMandible
     case honeydewDrop, richLoam, cricketLeg
+    case velvetPelt, crawlerPlate
     // Upgrading (mob drops only): the stone every attempt needs, and the charm that protects the item
     case amberShard, wardCharm
+    // Element stones (see `Element`): each element's critters drop their own, to infuse weapons and body armor
+    case fireStone, windStone, earthStone, electricStone, waterStone
     // Swords
     case twigSword, thornRapier, beetleBlade, stingerBlade, moonTalon, silkfangSaber, mantisEdge
     // Axes
@@ -145,6 +215,8 @@ public enum ItemID: String, Codable, Sendable, CaseIterable {
     case dandelionSeed
     // Pets (see `PetKind`) and their food
     case pip, kibble
+    // Moldywarp's hoard (unique)
+    case delversPick, warrenCrown, tunnelerClaws
 }
 
 public struct ItemDefinition: Sendable {
@@ -267,45 +339,59 @@ extension ItemID {
             item("Grumble Spore", "It mutters if you hold it to your ear.", .material, sell: 26, stack: 50)
         case .stagMandible:
             item("Stag Mandible", "Half of the grove king's crown.", .material, sell: 30, stack: 50)
+        case .velvetPelt:
+            item("Velvet Pelt", "Mole fur, soft as the dark it grew in.", .material, sell: 32, stack: 50)
+        case .crawlerPlate:
+            item("Rootcrawler Plate", "One of a hundred. The rootcrawler won't miss it.", .material, sell: 34, stack: 50)
+        case .delversPick:
+            weapon("Delver's Pick", "Moldywarp's own digging claw on an ironroot haft. Stone parts before it.", .axe,
+                   StatBonus(maxHP: 120, critical: 0.03, strength: 5), level: 28, sell: 600, rarity: .unique)
+        case .warrenCrown:
+            item("Warren King's Crown", "Beaten from grubs' gold. A bit big for you.",
+                 .equipment(.hat, StatBonus(defense: 16, maxHP: 120, maxMP: 40, stamina: 4, intelligence: 3)), level: 28, sell: 600, rarity: .unique)
+        case .tunnelerClaws:
+            item("Tunneler's Claws", "Dig in and keep swinging.",
+                 .equipment(.gloves, StatBonus(attack: 10, defense: 10, maxHP: 60, attackSpeed: 0.06, dexterity: 4)), level: 28,
+                 sell: 600, rarity: .unique)
         case .twigSword:
-            weapon("Twig Sword", "Every hero starts somewhere.", .sword, StatBonus(attack: 4),
+            weapon("Twig Sword", "Every hero starts somewhere.", .sword,
                    level: 1, buy: 40, sell: 10)
         case .thornRapier:
-            weapon("Thorn Rapier", "A bramble thorn with a leather grip.", .sword, StatBonus(attack: 9),
+            weapon("Thorn Rapier", "A bramble thorn with a leather grip.", .sword,
                    level: 5, buy: 180, sell: 45)
         case .beetleBlade:
-            weapon("Beetle-Horn Blade", "Glossy, sharp, and smug about it.", .sword, StatBonus(attack: 16, maxMP: 10),
+            weapon("Beetle-Horn Blade", "Glossy, sharp, and smug about it.", .sword, StatBonus(maxMP: 10),
                    level: 9, buy: 480, sell: 120)
         case .stingerBlade:
             weapon("Stinger Blade", "A fuzzbee's stinger on a honeycomb grip. Still buzzing.", .sword,
-                   StatBonus(attack: 22, maxMP: 15), level: 14, buy: 800, sell: 170)
+                   StatBonus(maxMP: 15), level: 14, buy: 800, sell: 170)
         case .silkfangSaber:
             weapon("Silkfang Saber", "A spider's fang, bound in its own silk.", .sword,
-                   StatBonus(attack: 32, maxMP: 25), level: 20, buy: 1_300, sell: 260)
+                   StatBonus(maxMP: 25), level: 20, buy: 1_300, sell: 260)
         case .mantisEdge:
             weapon("Mantis Edge", "Curved, pink, and terribly quick.", .sword,
-                   StatBonus(attack: 44, maxMP: 35, critical: 0.03), level: 26, sell: 380)
+                   StatBonus(maxMP: 35, critical: 0.03), level: 26, sell: 380)
         case .moonTalon:
-            weapon("Moonlit Talon", "Still cold from the night sky.", .sword, StatBonus(attack: 26, maxMP: 20),
+            weapon("Moonlit Talon", "Still cold from the night sky.", .sword, StatBonus(maxMP: 20, dexterity: 3),
                    level: 15, sell: 400, rarity: .unique)
         case .pebbleHatchet:
-            weapon("Pebble Hatchet", "A river stone lashed to a stick. Slow, but it thunks.", .axe, StatBonus(attack: 6),
+            weapon("Pebble Hatchet", "A river stone lashed to a stick. Slow, but it thunks.", .axe,
                    level: 2, buy: 70, sell: 17)
         case .hornCleaver:
-            weapon("Horn Cleaver", "A beetle horn ground into a wicked edge.", .axe, StatBonus(attack: 14, maxHP: 15),
+            weapon("Horn Cleaver", "A beetle horn ground into a wicked edge.", .axe, StatBonus(maxHP: 15),
                    level: 7, buy: 380, sell: 95)
         case .toadstoolChopper:
-            weapon("Toadstool Chopper", "Heavy, spotted, and faintly glowing.", .axe, StatBonus(attack: 22, maxHP: 30),
+            weapon("Toadstool Chopper", "Heavy, spotted, and faintly glowing.", .axe, StatBonus(maxHP: 30),
                    level: 11, buy: 640, sell: 160)
         case .mossbackCleaver:
             weapon("Mossback Cleaver", "A turtle scute ground to an edge. Moss included.", .axe,
-                   StatBonus(attack: 30, maxHP: 45), level: 17, buy: 1_000, sell: 230)
+                   StatBonus(maxHP: 45), level: 17, buy: 1_000, sell: 230)
         case .quillsplitter:
             weapon("Quillsplitter", "Bristling with hedgehog quills. Mind your fingers.", .axe,
-                   StatBonus(attack: 42, maxHP: 70), level: 23, sell: 330)
+                   StatBonus(maxHP: 70), level: 23, sell: 330)
         case .stagjawAxe:
             weapon("Stagjaw Axe", "A stag beetle's mandible on an oak haft. Heavy as a verdict.", .axe,
-                   StatBonus(attack: 56, maxHP: 100), level: 29, sell: 450)
+                   StatBonus(maxHP: 100), level: 29, sell: 450)
         case .barkBuckler:
             item("Bark Buckler", "A round of oak bark. Knocks the odd bite aside.",
                  .equipment(.shield, StatBonus(defense: 2, block: 0.05)), level: 2, buy: 60, sell: 15)
@@ -326,54 +412,54 @@ extension ItemID {
                  .equipment(.shield, StatBonus(defense: 17, maxHP: 90, block: 0.14)), level: 25, sell: 360)
         case .emberstoneMaul:
             weapon("Emberstone Maul", "A glowing creek stone on a charred handle. Guards only.", .maul,
-                   StatBonus(attack: 66, maxHP: 60), level: 20, buy: 2_400, sell: 420)
+                   StatBonus(maxHP: 60), level: 20, buy: 2_400, sell: 420)
         case .stagCrusher:
             weapon("Stag Crusher", "Both mandibles of a stag beetle, bolted to a log.", .maul,
-                   StatBonus(attack: 100, maxHP: 130), level: 28, sell: 650)
+                   StatBonus(maxHP: 130), level: 28, sell: 650)
         case .silkstringBow:
             weapon("Silkstring Bow", "Weaver silk makes a string that sings. Thornshots only.", .bow,
-                   StatBonus(attack: 40, maxMP: 15), level: 20, buy: 2_400, sell: 420)
+                   StatBonus(maxMP: 15), level: 20, buy: 2_400, sell: 420)
         case .mantisLongbow:
             weapon("Mantis Longbow", "Two mantis claws, bent into one terrible curve.", .bow,
-                   StatBonus(attack: 60, maxMP: 30, critical: 0.03), level: 27, sell: 650)
+                   StatBonus(maxMP: 30, critical: 0.03), level: 27, sell: 650)
         case .mothwingWand:
             weapon("Mothwing Wand", "Leaves a trail of glittering dust. Sporecasters only.", .wand,
-                   StatBonus(attack: 32, maxMP: 60), level: 21, buy: 2_400, sell: 420)
+                   StatBonus(maxMP: 60), level: 21, buy: 2_400, sell: 420)
         case .grumblecapScepter:
             weapon("Grumblecap Scepter", "A tiny grumblecap on a stick. It complains when you cast.", .wand,
-                   StatBonus(attack: 50, maxMP: 110), level: 28, sell: 650)
+                   StatBonus(maxMP: 110), level: 28, sell: 650)
         case .buttercupStaff:
             weapon("Buttercup Staff", "Hold it under your chin: you like healing. Dewkeepers only.", .staff,
-                   StatBonus(attack: 27, maxHP: 45, maxMP: 55), level: 19, buy: 2_400, sell: 420)
+                   StatBonus(maxHP: 45, maxMP: 55), level: 19, buy: 2_400, sell: 420)
         case .thornroseStaff:
             weapon("Thornrose Staff", "A rose that heals the hand that holds it, and no other.", .staff,
-                   StatBonus(attack: 42, maxHP: 90, maxMP: 100), level: 28, sell: 650)
+                   StatBonus(maxHP: 90, maxMP: 100), level: 28, sell: 650)
         case .toadstoolMaul:
-            weapon("Toadstool Maul", "A whole toadstool on a pole. Guards only.", .maul, StatBonus(attack: 52, maxHP: 40),
+            weapon("Toadstool Maul", "A whole toadstool on a pole. Guards only.", .maul, StatBonus(maxHP: 40),
                    level: 15, buy: 1_100, sell: 275)
         case .boughHammer:
-            weapon("Great Bough Hammer", "Knotwood from the Great Bough itself.", .maul, StatBonus(attack: 80, maxHP: 90),
+            weapon("Great Bough Hammer", "Knotwood from the Great Bough itself.", .maul, StatBonus(maxHP: 90, stamina: 4),
                    level: 22, sell: 700, rarity: .unique)
         case .reedBow:
-            weapon("Reed Bow", "Springy fen reed and a spider-silk string. Thornshots only.", .bow, StatBonus(attack: 30),
+            weapon("Reed Bow", "Springy fen reed and a spider-silk string. Thornshots only.", .bow,
                    level: 15, buy: 1_100, sell: 275)
         case .owlboneBow:
-            weapon("Owlbone Longbow", "Strung with a single owl whisker.", .bow, StatBonus(attack: 48, maxMP: 20),
+            weapon("Owlbone Longbow", "Strung with a single owl whisker.", .bow, StatBonus(maxMP: 20, dexterity: 4),
                    level: 22, sell: 700, rarity: .unique)
         case .puffballWand:
-            weapon("Puffball Wand", "Tap gently. Sporecasters only.", .wand, StatBonus(attack: 24, maxMP: 40),
+            weapon("Puffball Wand", "Tap gently. Sporecasters only.", .wand, StatBonus(maxMP: 40),
                    level: 15, buy: 1_100, sell: 275)
         case .glowcapScepter:
-            weapon("Glowcap Scepter", "Hums in the dark.", .wand, StatBonus(attack: 38, maxMP: 80),
+            weapon("Glowcap Scepter", "Hums in the dark.", .wand, StatBonus(maxMP: 80, intelligence: 4),
                    level: 22, sell: 700, rarity: .unique)
         case .dewdropStaff:
             weapon("Dewdrop Staff", "A single perfect droplet, held in a twist of vine. Dewkeepers only.", .staff,
-                   StatBonus(attack: 20, maxHP: 30, maxMP: 40), level: 15, buy: 1_100, sell: 275)
+                   StatBonus(maxHP: 30, maxMP: 40), level: 15, buy: 1_100, sell: 275)
         case .raincallerStaff:
-            weapon("Raincaller Staff", "The air smells of rain around it.", .staff, StatBonus(attack: 32, maxHP: 60, maxMP: 70),
+            weapon("Raincaller Staff", "The air smells of rain around it.", .staff, StatBonus(maxHP: 60, maxMP: 70, stamina: 2, intelligence: 3),
                    level: 22, sell: 700, rarity: .unique)
         case .featherCloak:
-            item("Feathered Cloak", "Woven from the Hollow Owl's down.", .equipment(.body, StatBonus(defense: 12, maxHP: 80)),
+            item("Feathered Cloak", "Woven from the Hollow Owl's down.", .equipment(.body, StatBonus(defense: 12, maxHP: 80, stamina: 3)),
                  level: 15, sell: 400, rarity: .unique)
         case .acornCap:
             item("Acorn Cap", "Fits snugly over a mushroom hat.", .equipment(.hat, StatBonus(defense: 2, maxHP: 10)),
@@ -429,6 +515,21 @@ extension ItemID {
         case .wardCharm:
             item("Ward Charm", "Keeps gear safe if an upgrade fails. Used up on any risky attempt.", .material,
                  sell: 150, stack: 20)
+        case .fireStone:
+            item("Fire Stone", "Warm as a coal and never cools. Shiitake can infuse a weapon or body armor with Fire.",
+                 .material, sell: 30, stack: 99)
+        case .windStone:
+            item("Wind Stone", "Light as a breath; it tugs toward the breeze. Shiitake can infuse a weapon or body armor with Wind.",
+                 .material, sell: 30, stack: 99)
+        case .earthStone:
+            item("Earth Stone", "Heavy, cool, and smells of rain on soil. Shiitake can infuse a weapon or body armor with Earth.",
+                 .material, sell: 30, stack: 99)
+        case .electricStone:
+            item("Electric Stone", "Your hair stands up when you hold it. Shiitake can infuse a weapon or body armor with Electric.",
+                 .material, sell: 30, stack: 99)
+        case .waterStone:
+            item("Water Stone", "Always a little damp, however long you dry it. Shiitake can infuse a weapon or body armor with Water.",
+                 .material, sell: 30, stack: 99)
 
         // Dewleaf set (level 5, anyone): each piece drops from a different zone.
         case .dewleafCap:
@@ -456,51 +557,51 @@ extension ItemID {
 
         // Guard set: Heartwood.
         case .heartwoodHelm:
-            setPiece("Heartwood Helm", "Carved from the Great Tree's core.", .hat, StatBonus(defense: 8, maxHP: 50), level: 15, sell: 350)
+            setPiece("Heartwood Helm", "Carved from the Great Tree's core.", .hat, StatBonus(defense: 8, maxHP: 50), level: 15, buy: 900, sell: 225)
         case .heartwoodPlate:
             setPiece("Heartwood Plate", "Rings of a thousand years, strapped on.", .body, StatBonus(defense: 14, maxHP: 90),
-                     level: 15, sell: 350)
+                     level: 15, buy: 900, sell: 225)
         case .heartwoodGauntlets:
             setPiece("Heartwood Gauntlets", "Knuckles like knots.", .gloves, StatBonus(attack: 4, defense: 6, maxHP: 30),
-                     level: 15, sell: 350)
+                     level: 15, buy: 900, sell: 225)
         case .heartwoodGreaves:
-            setPiece("Heartwood Greaves", "Rooted. Immovable.", .boots, StatBonus(defense: 6, maxHP: 40), level: 15, sell: 350)
+            setPiece("Heartwood Greaves", "Rooted. Immovable.", .boots, StatBonus(defense: 6, maxHP: 40), level: 15, buy: 900, sell: 225)
 
         // Thornshot set: Briar.
         case .briarHood:
-            setPiece("Briar Hood", "Hides you in the brambles.", .hat, StatBonus(attack: 3, defense: 5, maxHP: 30), level: 15, sell: 350)
+            setPiece("Briar Hood", "Hides you in the brambles.", .hat, StatBonus(attack: 3, defense: 5, maxHP: 30), level: 15, buy: 900, sell: 225)
         case .briarJerkin:
-            setPiece("Briar Jerkin", "Thorny side out.", .body, StatBonus(defense: 9, maxHP: 55), level: 15, sell: 350)
+            setPiece("Briar Jerkin", "Thorny side out.", .body, StatBonus(defense: 9, maxHP: 55), level: 15, buy: 900, sell: 225)
         case .briarBracers:
-            setPiece("Briar Bracers", "Steady arms, straight shots.", .gloves, StatBonus(attack: 6, defense: 3), level: 15, sell: 350)
+            setPiece("Briar Bracers", "Steady arms, straight shots.", .gloves, StatBonus(attack: 6, defense: 3), level: 15, buy: 900, sell: 225)
         case .briarTreads:
-            setPiece("Briar Treads", "Silent on dry leaves.", .boots, StatBonus(defense: 4, maxHP: 25, maxMP: 15), level: 15, sell: 350)
+            setPiece("Briar Treads", "Silent on dry leaves.", .boots, StatBonus(defense: 4, maxHP: 25, maxMP: 15), level: 15, buy: 900, sell: 225)
 
         // Sporecaster set: Mycelium.
         case .myceliumCowl:
-            setPiece("Mycelium Cowl", "Whispers from the underground.", .hat, StatBonus(defense: 4, maxMP: 40), level: 15, sell: 350)
+            setPiece("Mycelium Cowl", "Whispers from the underground.", .hat, StatBonus(defense: 4, maxMP: 40), level: 15, buy: 900, sell: 225)
         case .myceliumRobe:
             setPiece("Mycelium Robe", "Threads that grow back when torn.", .body, StatBonus(defense: 8, maxHP: 40, maxMP: 60),
-                     level: 15, sell: 350)
+                     level: 15, buy: 900, sell: 225)
         case .myceliumGloves:
             setPiece("Mycelium Gloves", "Spores drift from the fingertips.", .gloves, StatBonus(attack: 7, maxMP: 20),
-                     level: 15, sell: 350)
+                     level: 15, buy: 900, sell: 225)
         case .myceliumSlippers:
-            setPiece("Mycelium Slippers", "Soft as loam.", .boots, StatBonus(defense: 3, maxMP: 30), level: 15, sell: 350)
+            setPiece("Mycelium Slippers", "Soft as loam.", .boots, StatBonus(defense: 3, maxMP: 30), level: 15, buy: 900, sell: 225)
 
         // Dewkeeper set: Rainpetal.
         case .rainpetalCirclet:
             setPiece("Rainpetal Circlet", "Petals that never wilt.", .hat, StatBonus(defense: 5, maxHP: 30, maxMP: 30),
-                     level: 15, sell: 350)
+                     level: 15, buy: 900, sell: 225)
         case .rainpetalGown:
             setPiece("Rainpetal Gown", "Smells of the first spring rain.", .body, StatBonus(defense: 9, maxHP: 60, maxMP: 40),
-                     level: 15, sell: 350)
+                     level: 15, buy: 900, sell: 225)
         case .rainpetalMitts:
             setPiece("Rainpetal Mitts", "Gentle hands, quick to mend.", .gloves, StatBonus(attack: 4, defense: 3, maxMP: 20),
-                     level: 15, sell: 350)
+                     level: 15, buy: 900, sell: 225)
         case .rainpetalSandals:
             setPiece("Rainpetal Sandals", "Every step sounds like a raindrop.", .boots, StatBonus(defense: 4, maxHP: 25, maxMP: 25),
-                     level: 15, sell: 350)
+                     level: 15, buy: 900, sell: 225)
         case .dandelionSeed:
             item("Dandelion Seed", "Hold on tight and let the breeze do the rest. Lets you fly.", .glider,
                  level: 10, buy: 300, sell: 75)
@@ -519,17 +620,20 @@ extension ItemID {
                        buyPrice: buy, sellPrice: sell, maxStack: stack, weaponType: nil, rarity: rarity)
     }
 
-    private func weapon(_ name: String, _ description: String, _ type: WeaponType, _ bonus: StatBonus,
+    /// The weapon's attack comes from its level and type (`WeaponType.attack`); `bonus` adds the rest.
+    private func weapon(_ name: String, _ description: String, _ type: WeaponType, _ extra: StatBonus = StatBonus(),
                         level: Int, buy: Int? = nil, sell: Int, rarity: Rarity = .common) -> ItemDefinition {
-        ItemDefinition(id: self, name: name, description: description, kind: .equipment(.weapon, bonus), requiredLevel: level,
+        var bonus = extra
+        bonus.attack += WeaponType.attack(level: level, type: type, rarity: rarity)
+        return ItemDefinition(id: self, name: name, description: description, kind: .equipment(.weapon, bonus), requiredLevel: level,
                        buyPrice: buy, sellPrice: sell, maxStack: 1, weaponType: type, rarity: rarity)
     }
 
-    /// Set pieces are never sold in shops.
+    /// As in Flyff, the class sets hang in the armor shop for whoever saved up for them; the others only drop.
     private func setPiece(_ name: String, _ description: String, _ slot: EquipSlot, _ bonus: StatBonus,
-                          level: Int, sell: Int) -> ItemDefinition {
+                          level: Int, buy: Int? = nil, sell: Int) -> ItemDefinition {
         ItemDefinition(id: self, name: name, description: description, kind: .equipment(slot, bonus), requiredLevel: level,
-                       buyPrice: nil, sellPrice: sell, maxStack: 1, weaponType: nil, rarity: .set)
+                       buyPrice: buy, sellPrice: sell, maxStack: 1, weaponType: nil, rarity: .set)
     }
 }
 
@@ -538,32 +642,39 @@ public struct ItemStack: Codable, Sendable, Equatable {
     public var count: Int
     /// +0...+10 (gear only). Stacks only merge at the same upgrade.
     public var upgrade: Int
+    /// The infused element (weapons and body armor only). Stacks only merge with the same element.
+    public var element: ElementUpgrade?
 
-    public init(item: ItemID, count: Int, upgrade: Int = 0) {
+    public init(item: ItemID, count: Int, upgrade: Int = 0, element: ElementUpgrade? = nil) {
         self.item = item
         self.count = count
         self.upgrade = upgrade
+        self.element = element
     }
 
-    /// Saves from before upgrades have no `upgrade`.
+    /// Saves from before upgrades have no `upgrade` (and from before elements, no `element`).
     public init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         item = try container.decode(ItemID.self, forKey: .item)
         count = try container.decode(Int.self, forKey: .count)
         upgrade = try container.decodeIfPresent(Int.self, forKey: .upgrade) ?? 0
+        element = try container.decodeIfPresent(ElementUpgrade.self, forKey: .element)
     }
 
-    public var gear: Gear { Gear(item, upgrade: upgrade) }
+    public var gear: Gear { Gear(item, upgrade: upgrade, element: element) }
 }
 
-/// One piece of gear as it exists in the world: which item, and how far it has been upgraded.
+/// One piece of gear as it exists in the world: which item, how far it has been upgraded, and the
+/// element infused into it (weapons and body armor).
 public struct Gear: Codable, Sendable, Hashable {
     public let item: ItemID
     public var upgrade: Int
+    public var element: ElementUpgrade?
 
-    public init(_ item: ItemID, upgrade: Int = 0) {
+    public init(_ item: ItemID, upgrade: Int = 0, element: ElementUpgrade? = nil) {
         self.item = item
         self.upgrade = upgrade
+        self.element = element
     }
 
     public var definition: ItemDefinition { item.definition }
@@ -574,10 +685,10 @@ public struct Gear: Codable, Sendable, Hashable {
         return Upgrade.bonus(base, slot: slot, level: upgrade)
     }
 
-    /// Upgraded gear is worth more to a shopkeeper.
-    public var sellPrice: Int { definition.sellPrice * (2 + upgrade) / 2 }
+    /// Upgraded (and infused) gear is worth more to a shopkeeper.
+    public var sellPrice: Int { definition.sellPrice * (2 + upgrade) / 2 + (element?.level ?? 0) * 10 }
 
-    private enum CodingKeys: String, CodingKey { case item, upgrade }
+    private enum CodingKeys: String, CodingKey { case item, upgrade, element }
 
     /// Saves from before upgrades stored equipped gear as a bare `ItemID`.
     public init(from decoder: any Decoder) throws {
@@ -587,13 +698,15 @@ public struct Gear: Codable, Sendable, Hashable {
         }
         let container = try decoder.container(keyedBy: CodingKeys.self)
         self.init(try container.decode(ItemID.self, forKey: .item),
-                  upgrade: try container.decodeIfPresent(Int.self, forKey: .upgrade) ?? 0)
+                  upgrade: try container.decodeIfPresent(Int.self, forKey: .upgrade) ?? 0,
+                  element: try container.decodeIfPresent(ElementUpgrade.self, forKey: .element))
     }
 
     public func encode(to encoder: any Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(item, forKey: .item)
         try container.encode(upgrade, forKey: .upgrade)
+        try container.encodeIfPresent(element, forKey: .element)
     }
 }
 
@@ -610,21 +723,37 @@ public struct Inventory: Codable, Sendable, Equatable {
         stacks.reduce(0) { $0 + ($1.item == item ? $1.count : 0) }
     }
 
+    /// How many of `item` at `upgrade` with no element.
     public func count(of item: ItemID, upgrade: Int) -> Int {
-        stacks.reduce(0) { $0 + ($1.item == item && $1.upgrade == upgrade ? $1.count : 0) }
+        count(of: Gear(item, upgrade: upgrade))
+    }
+
+    /// How many of exactly this piece (item, upgrade, and element).
+    public func count(of gear: Gear) -> Int {
+        stacks.reduce(0) { $0 + ($1.gear == gear ? $1.count : 0) }
     }
 
     public func canAdd(_ item: ItemID, count: Int, upgrade: Int = 0) -> Bool {
+        canAdd(Gear(item, upgrade: upgrade), count: count)
+    }
+
+    public func canAdd(_ gear: Gear, count: Int) -> Bool {
         var probe = self
-        return probe.add(item, count: count, upgrade: upgrade) == 0
+        return probe.add(gear, count: count) == 0
     }
 
     /// Adds as much as fits; returns how many didn't.
     @discardableResult
     public mutating func add(_ item: ItemID, count: Int, upgrade: Int = 0) -> Int {
-        let maxStack = item.definition.maxStack
+        add(Gear(item, upgrade: upgrade), count: count)
+    }
+
+    /// Adds as much of this exact piece as fits; returns how many didn't.
+    @discardableResult
+    public mutating func add(_ gear: Gear, count: Int) -> Int {
+        let maxStack = gear.definition.maxStack
         var remaining = count
-        for i in stacks.indices where stacks[i].item == item && stacks[i].upgrade == upgrade && remaining > 0 {
+        for i in stacks.indices where stacks[i].gear == gear && remaining > 0 {
             let room = maxStack - stacks[i].count
             let moved = min(room, remaining)
             stacks[i].count += moved
@@ -632,23 +761,48 @@ public struct Inventory: Codable, Sendable, Equatable {
         }
         while remaining > 0, stacks.count < Self.capacity {
             let moved = min(maxStack, remaining)
-            stacks.append(ItemStack(item: item, count: moved, upgrade: upgrade))
+            stacks.append(ItemStack(item: gear.item, count: moved, upgrade: gear.upgrade, element: gear.element))
             remaining -= moved
         }
         return remaining
     }
 
-    /// Removes exactly `count` at `upgrade`, or nothing.
+    /// Removes exactly `count` at `upgrade` (with no element), or nothing.
     @discardableResult
     public mutating func remove(_ item: ItemID, count: Int, upgrade: Int = 0) -> Bool {
-        guard count > 0, self.count(of: item, upgrade: upgrade) >= count else { return false }
+        remove(Gear(item, upgrade: upgrade), count: count)
+    }
+
+    /// Removes exactly `count` of this exact piece, or nothing.
+    @discardableResult
+    public mutating func remove(_ gear: Gear, count: Int) -> Bool {
+        guard count > 0, self.count(of: gear) >= count else { return false }
         var remaining = count
-        for i in stacks.indices.reversed() where stacks[i].item == item && stacks[i].upgrade == upgrade && remaining > 0 {
+        for i in stacks.indices.reversed() where stacks[i].gear == gear && remaining > 0 {
             let taken = min(stacks[i].count, remaining)
             stacks[i].count -= taken
             remaining -= taken
         }
         stacks.removeAll { $0.count == 0 }
         return true
+    }
+}
+
+extension PlayerStatus {
+    /// What a quick slot drinks: the smallest potion in the bag that tops you right up, or failing that
+    /// the strongest you have (so a Dew Potion isn't wasted on a scratch, nor a Draught on a sliver).
+    /// nil when the bag holds no potion of that kind.
+    public func quickPotion(restoresMP: Bool) -> ItemID? {
+        let missing = restoresMP ? stats.maxMP - stats.mp : stats.maxHP - stats.hp
+        let owned = ItemID.allCases.compactMap { item -> (ItemID, Int)? in
+            guard inventory.count(of: item) > 0, case let .consumable(effect) = item.definition.kind else { return nil }
+            switch effect {
+            case let .restoreHP(amount) where !restoresMP: return (item, amount)
+            case let .restoreMP(amount) where restoresMP: return (item, amount)
+            default: return nil
+            }
+        }
+        let enough = owned.filter { $0.1 >= missing }.min { $0.1 < $1.1 }
+        return (enough ?? owned.max { $0.1 < $1.1 })?.0
     }
 }

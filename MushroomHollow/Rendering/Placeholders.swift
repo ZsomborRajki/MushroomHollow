@@ -74,6 +74,21 @@ enum Palette {
     static let thornStem = UIColor(red: 0.26, green: 0.44, blue: 0.20, alpha: 1)
     static let stagBrown = UIColor(red: 0.32, green: 0.18, blue: 0.10, alpha: 1)
     static let stagDark = UIColor(red: 0.17, green: 0.10, blue: 0.06, alpha: 1)
+    // The Sunken Warren
+    static let moleFur = UIColor(red: 0.27, green: 0.26, blue: 0.31, alpha: 1)
+    static let moleKing = UIColor(red: 0.2, green: 0.17, blue: 0.22, alpha: 1)
+    static let moleBelly = UIColor(red: 0.45, green: 0.42, blue: 0.46, alpha: 1)
+    static let molePink = UIColor(red: 0.96, green: 0.6, blue: 0.62, alpha: 1)
+    static let claw = UIColor(red: 0.93, green: 0.88, blue: 0.78, alpha: 1)
+    static let minerHat = UIColor(red: 0.95, green: 0.72, blue: 0.2, alpha: 1)
+    static let lamp = UIColor(red: 1, green: 0.93, blue: 0.6, alpha: 1)
+    static let crown = UIColor(red: 1, green: 0.8, blue: 0.25, alpha: 1)
+    static let capeRed = UIColor(red: 0.62, green: 0.1, blue: 0.16, alpha: 1)
+    static let crawlerRed = UIColor(red: 0.62, green: 0.22, blue: 0.12, alpha: 1)
+    static let crawlerDark = UIColor(red: 0.3, green: 0.12, blue: 0.08, alpha: 1)
+    static let crawlerLeg = UIColor(red: 0.9, green: 0.62, blue: 0.3, alpha: 1)
+    static let cliffRock = UIColor(red: 0.47, green: 0.43, blue: 0.38, alpha: 1)
+    static let warrenEarth = UIColor(red: 0.3, green: 0.22, blue: 0.15, alpha: 1)
 }
 
 /// Shared unit meshes; every placeholder part is one of these, scaled.
@@ -326,7 +341,8 @@ enum Materials {
     private static var cache: [String: any RealityKit.Material] = [:]
 
     static func matte(_ color: UIColor, roughness: Float = 0.85) -> any RealityKit.Material {
-        if ArtStyle.isInk, let toon = InkMaterials.toon(color, shine: roughness < 0.5) { return toon }
+        // The ink style is matte all over: glossy parts draw like any other.
+        if ArtStyle.isInk, let toon = InkMaterials.toon(color) { return toon }
         let key = "matte-\(color.description)-\(roughness)"
         if let cached = cache[key] { return cached }
         var material = PhysicallyBasedMaterial()
@@ -396,8 +412,9 @@ enum Materials {
         return material
     }()
 
-    /// Gradient sky, seen from inside a sphere.
+    /// Gradient sky, seen from inside a sphere (drawn, in the ink style).
     static let sky: any RealityKit.Material = {
+        if ArtStyle.isInk, let ink = InkMaterials.sky { return ink }
         guard let library = shaderLibrary,
               var material = try? CustomMaterial(
                   surfaceShader: .init(named: "skyGradient", in: library),

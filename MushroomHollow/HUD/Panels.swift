@@ -125,6 +125,11 @@ struct InventoryPanel: View {
                             .padding(3)
                             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                     }
+                    if let element = cell.element {
+                        ElementBadge(element: element.element, size: 14)
+                            .padding(3)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+                    }
                 } else if cell.isPetSlot || cell.slot != nil {
                     Image(systemName: cell.slot?.placeholderSymbol ?? "pawprint")
                         .font(.system(size: 18))
@@ -184,6 +189,14 @@ private struct ItemDetail: View {
                                 if let line = gear.statLine {
                                     Text(line).font(.caption.weight(.semibold)).foregroundStyle(.green)
                                 }
+                            }
+                        }
+                        if let element = gear.element {
+                            HStack(spacing: 6) {
+                                ElementBadge(element: element.element, size: 16)
+                                Text("\(element.label) · strong vs \(element.element.strongAgainst.displayName), weak vs \(element.element.weakAgainst.displayName)")
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(element.element.color)
                             }
                         }
                         Text(definition.description)
@@ -255,9 +268,9 @@ private struct ItemDetail: View {
                     if stats.blockChance > 0 {
                         stat("BLK", StatBonus.percent(stats.blockChance))
                     }
-                    if stats.critChance > 0.1 {
-                        stat("CRT", StatBonus.percent(stats.critChance))
-                    }
+                    stat("CRT", StatBonus.percent(stats.critChance))
+                    // Swings per second: Dexterity's main gift.
+                    stat("SPD", String(format: "%.2f", 1 / max(stats.attackInterval, 0.01)))
                 }
             }
         }
@@ -373,7 +386,7 @@ struct NPCPanel: View {
                                     Text(definition.isShopkeeper
                                          ? session.shopTab == .buyback ? "Nothing to buy back. What you sell waits here for a while, in every shop."
                                          : "Nothing to sell."
-                                         : definition.upgradesGear ? "No gear to upgrade."
+                                         : definition.upgradesGear ? session.forgeTab == .element ? "No weapon or body armor to infuse." : "No gear to upgrade."
                                          : definition.makesPetFood ? "Bring me critter drops and I'll bake them into Kibble."
                                          : definition.buysMaterials ? "Bring me whatever the critters drop. Every species has something!"
                                          : "No tasks right now. Come back later!")
@@ -431,6 +444,9 @@ struct NPCPanel: View {
         case .sell: "Sell 1"
         case .buyBack: "Buy back"
         case .upgrade: "Upgrade"
+        case .infuseElement: "Infuse"
+        case .removeElement: "Remove element"
+        case .convertElement: "Convert"
         case .accept: "Accept"
         case .turnIn: "Turn in"
         case .chooseClass: "Choose this path"
@@ -441,23 +457,49 @@ struct NPCPanel: View {
     }
 }
 
-/// Materials on hand and the Ward Charm switch (LB/RB, Q/E).
+/// The bench switch (Upgrade / Element, LB/RB or Q/E), materials on hand, and the Ward Charm switch (X).
 private struct ForgeHeader: View {
     let session: GameSession
     let player: PlayerStatus
 
     var body: some View {
-        HStack(spacing: 14) {
-            Label("\(player.inventory.count(of: .amberShard))", systemImage: ItemID.amberShard.symbol)
-                .foregroundStyle(ItemID.amberShard.tint)
-            Label("\(player.inventory.count(of: .wardCharm))", systemImage: ItemID.wardCharm.symbol)
-                .foregroundStyle(ItemID.wardCharm.tint)
-            Spacer()
-            if let glyph = session.glyphs?.previousTarget { Image(systemName: glyph) }
-            Toggle("Ward Charm", isOn: Binding(get: { session.protectUpgrades }, set: { session.setProtectUpgrades($0) }))
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 10) {
+                if let glyph = session.glyphs?.previousTarget { Image(systemName: glyph) }
+                Picker("Bench", selection: Binding(get: { session.forgeTab }, set: { session.setForgeTab($0) })) {
+                    Text("Upgrade").tag(ForgeTab.upgrade)
+                    Text("Element").tag(ForgeTab.element)
+                }
+                .pickerStyle(.segmented)
                 .fixedSize()
-            Label("\(player.caps)", systemImage: "circle.circle.fill")
-                .foregroundStyle(.yellow)
+                if let glyph = session.glyphs?.nextTarget { Image(systemName: glyph) }
+                Spacer()
+                if let glyph = session.glyphs?.secondary { Image(systemName: glyph) }
+                Toggle("Ward Charm", isOn: Binding(get: { session.protectUpgrades }, set: { session.setProtectUpgrades($0) }))
+                    .fixedSize()
+                Label("\(player.caps)", systemImage: "circle.circle.fill")
+                    .foregroundStyle(.yellow)
+                    .fixedSize()
+            }
+            // What's on hand for this bench.
+            HStack(spacing: 12) {
+                if session.forgeTab == .upgrade {
+                    Label("\(player.inventory.count(of: .amberShard)) Amber", systemImage: ItemID.amberShard.symbol)
+                        .foregroundStyle(ItemID.amberShard.tint)
+                } else {
+                    ForEach(Element.allCases, id: \.self) { element in
+                        HStack(spacing: 3) {
+                            ElementBadge(element: element, size: 15)
+                            Text("\(player.inventory.count(of: element.stone))")
+                        }
+                        .fixedSize()
+                    }
+                }
+                Label("\(player.inventory.count(of: .wardCharm)) Ward", systemImage: ItemID.wardCharm.symbol)
+                    .foregroundStyle(ItemID.wardCharm.tint)
+                    .fixedSize()
+            }
+            .font(.caption.weight(.semibold).monospacedDigit())
         }
         .font(.callout.weight(.semibold).monospacedDigit())
     }

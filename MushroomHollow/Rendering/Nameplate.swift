@@ -12,6 +12,8 @@ final class Nameplate {
     private let isNPC: Bool
     private let isGiant: Bool
     private var label: ModelEntity?
+    /// The mob's element tile, left of its name.
+    private var elementIcon: ModelEntity?
     private var shownLevel: Int?
     private var shownTier: Tier?
 
@@ -43,11 +45,17 @@ final class Nameplate {
         }
     }
 
-    init(title: String, subtitle: String?, isNPC: Bool, isGiant: Bool) {
+    init(title: String, subtitle: String?, isNPC: Bool, isGiant: Bool, element: Element? = nil) {
         self.title = title
         self.isNPC = isNPC
         self.isGiant = isGiant
         root.components.set(DynamicLightShadowComponent(castsShadow: false))
+        if let element, let material = Self.iconMaterial(element) {
+            let side = Self.fontSize * (isGiant ? 1.5 : 1.2)
+            let icon = ModelEntity(mesh: .generatePlane(width: side, height: side), materials: [material])
+            root.addChild(icon)
+            elementIcon = icon
+        }
         if isNPC {
             let name = Self.text(title, size: Self.fontSize, color: UIColor(red: 0.6, green: 1, blue: 0.75, alpha: 1))
             name.position.y = 0.12
@@ -79,6 +87,24 @@ final class Nameplate {
         let text = Self.text("Lv \(level) \(title)", size: isGiant ? Self.fontSize * 1.25 : Self.fontSize, color: tier.color)
         root.addChild(text)
         label = text
+        if let icon = elementIcon, let mesh = (text.children.first as? ModelEntity)?.model?.mesh {
+            let side = icon.model?.mesh.bounds.extents.x ?? Self.fontSize
+            icon.position = [-mesh.bounds.extents.x / 2 - side * 0.75, 0, 0]
+        }
+    }
+
+    private static var iconMaterials: [Element: UnlitMaterial] = [:]
+
+    /// The element's tile (`Element.icon`) as a see-through unlit material.
+    private static func iconMaterial(_ element: Element) -> UnlitMaterial? {
+        if let cached = iconMaterials[element] { return cached }
+        guard let image = element.icon(size: 48).cgImage,
+              let texture = try? TextureResource(image: image, options: .init(semantic: .color)) else { return nil }
+        var material = UnlitMaterial()
+        material.color = .init(tint: .white, texture: .init(texture))
+        material.blending = .transparent(opacity: .init(floatLiteral: 1))
+        iconMaterials[element] = material
+        return material
     }
 
     // MARK: - Text

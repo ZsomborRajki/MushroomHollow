@@ -76,10 +76,15 @@ final class WorldRenderer {
         var nameplate: Nameplate?
         /// A rig's merged parts, taken apart again before it changes gear.
         var merged: PartMerger.Record?
+        /// The element showing on the weapon (from +3), and the particles showing it.
+        var weaponElement: ElementUpgrade?
+        var aura: Entity?
         /// Ground under the actor (and the slope it leans to), kept while it stands still.
         var groundAt: SIMD2<Float>?
         var ground: Float = 0
         var slope = simd_quatf.identity
+        /// Eases idle flourishes in and out.
+        var idle = IdleFlourish.Blend()
 
         init(entity: Entity, model: Entity, kind: EntityKind) {
             self.entity = entity
@@ -232,6 +237,9 @@ final class WorldRenderer {
             }
             if current.gear != view.gear || current.playerClass != view.playerClass {
                 updateGear(view, current.gear, playerClass: current.playerClass)
+                updateAura(view, current.weaponElement)
+            } else if current.weaponElement != view.weaponElement {
+                updateAura(view, current.weaponElement)
             }
             if current.kind == .player { updateGlider(view, airborne: current.isFlying || current.position.y > 0.05) }
             animate(view, snapshot: current, time: time)
@@ -459,7 +467,7 @@ final class WorldRenderer {
         switch snapshot.kind {
         case let .mob(kind):
             let plate = Nameplate(title: kind.displayName(giant: snapshot.isGiant), subtitle: nil, isNPC: false,
-                                  isGiant: snapshot.isGiant)
+                                  isGiant: snapshot.isGiant, element: kind.element)
             plate.attach(to: entity, headHeight: kind.headHeight, size: view.size)
             view.nameplate = plate
         case let .npc(npc):
@@ -492,6 +500,16 @@ final class WorldRenderer {
         view.model.addInkHulls(width: InkStyle.hullWidth(for: view.kind))
         view.gear = gear
         view.playerClass = playerClass
+    }
+
+    /// Hangs the weapon's element on it (flames, drips, sparks...), or takes it off. Dressing rebuilds the
+    /// weapon, so this runs after every gear change too.
+    private func updateAura(_ view: ActorView, _ element: ElementUpgrade?) {
+        view.aura?.removeFromParent()
+        view.aura = nil
+        view.weaponElement = element
+        guard let element, let weapon = view.rig?.heldWeapon else { return }
+        view.aura = ElementAura.attach(element, to: weapon.held, weapon: weapon.type)
     }
 
     private func updateGlider(_ view: ActorView, airborne: Bool) {
@@ -569,10 +587,25 @@ final class WorldRenderer {
             // Gentle idle sway.
             rotation = simd_quatf(angle: sin(t * 1.3 + seed) * 0.04, axis: [0, 0, 1])
         }
+        // Now and then an idle mob shows off a little: a bee's barrel roll, a mushroom's stretch.
+        if case let .mob(kind) = view.kind {
+            let idle = snapshot.pose == .normal && !isMoving && snapshot.target == nil && snapshot.isAlive
+                && view.lungeStart == nil && view.hitStart == nil && view.deathStart == nil
+            let weight = view.idle.step(idle: idle, time: time)
+            if weight > 0.001, let pose = IdleFlourish.pose(kind, id: snapshot.id, time: time) {
+                offset += pose.offset * weight
+                scale *= simd_mix(SIMD3<Float>.one, pose.scale, SIMD3(repeating: weight))
+                rotation = (weight > 0.999 ? pose.rotation : simd_slerp(simd_quatf.identity, pose.rotation, weight)) * rotation
+            }
+        }
 
         switch snapshot.pose {
         case .normal:
             break
+        case .hiding where view.kind == .mob(.delverMole):
+            // Half dug into the ground.
+            scale *= [1.15, 0.4, 1.1]
+            offset.y -= 0.1
         case .hiding:
             scale *= [1.05, 0.72, 0.8]
             offset.y -= 0.04
@@ -590,6 +623,12 @@ final class WorldRenderer {
         case .spreadingWings:
             offset.x += sin(t * 40) * 0.05
             scale *= [1.05, 1.05, 1.05]
+        case .burrowed:
+            // Tunnelling: just a heaving hump of earth moving under the ground.
+            scale *= [1.2, 0.07 + abs(sin(t * 9)) * 0.03, 1.2]
+            offset.y -= 0.05
+        case .sitting:
+            break // the rig sits down
         }
         if let telegraph = view.telegraph {
             let winding = snapshot.pose == .windingUp
@@ -627,8 +666,12 @@ final class WorldRenderer {
         }
 
         view.model.transform = Transform(scale: scale, rotation: rotation, translation: offset)
+        // Townsfolk wave, stretch, and look about while they wait.
+        var gesture: IdleFlourish.Playing?
+        if case .npc = view.kind { gesture = IdleFlourish.gesture(id: snapshot.id, time: time) }
         view.rig?.animate(PlayerRig.Motion(moving: isMoving, airborne: view.glider != nil, fainted: view.deathStart != nil,
-                                            engaged: snapshot.target != nil),
+                                            engaged: snapshot.target != nil, sitting: snapshot.pose == .sitting,
+                                            gesture: gesture),
                           time: time, seed: seed)
     }
 

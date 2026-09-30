@@ -42,6 +42,8 @@ enum WorldBuilder {
         for plant in map.plants { FloraBuilder.build(plant, map: map, into: scenery) }
         for boulder in map.boulders { FloraBuilder.build(boulder, map: map, into: scenery) }
         for twig in map.twigs { FloraBuilder.build(twig, map: map, into: scenery) }
+        TerrainBuilder.addCliffs(map, to: world, into: scenery)
+        TerrainBuilder.addFords(map, to: world)
         addGroundLitter(map, to: details, random: &random)
         addZoneDressing(map, to: details, lights: world, random: &random)
         if let arena = map.bossArena { addBossArena(arena, map: map, to: details, lights: world, random: &random) }
@@ -58,6 +60,7 @@ enum WorldBuilder {
         addForge(map, to: town)
         TownBuilder.build(map, into: town)
         PartMerger.flatten(town, cellSize: 40)
+        town.addInkHulls(width: InkStyle.sceneryHullWidth)
         world.addChild(town)
 
         // Every ink-style material is unlit, so point lights would only cost time.
@@ -425,6 +428,39 @@ enum WorldBuilder {
                     let base = onGround(map, p)
                     batch.cylinder(Palette.stem, at: base + [0, s * 0.3, 0], radius: s * 0.08, height: s * 0.7)
                     batch.sphere(Palette.glowCap, at: base + [0, s * 0.65, 0], radius: s * 0.3, squash: [1, 0.45, 1], glow: true, low: true)
+                }
+
+            case .delverMole:
+                // The Sunken Warren: molehills all over the moles' side.
+                for p in spots(14, spread: 2, clearance: 0.8) {
+                    batch.anchor = p
+                    let r = random.float(in: 0.45...0.95)
+                    batch.sphere(Palette.warrenEarth, at: onGround(map, p), radius: r, squash: [1, 0.5, 1], low: true)
+                }
+
+            case .rootcrawler:
+                // Great Tree roots arching out of the floor, chewed by the rootcrawlers.
+                for p in spots(9, spread: 2, clearance: 1.2) {
+                    batch.anchor = p
+                    let direction = AngleMath.direction(forYaw: random.float(in: 0...(2 * .pi)))
+                    let span = random.float(in: 0.8...1.4)
+                    let a = onGround(map, p - direction * span, lift: -0.1), b = onGround(map, p + direction * span, lift: -0.1)
+                    let top = (a + b) / 2 + [0, random.float(in: 0.6...1.1), 0]
+                    batch.rod(Palette.darkBark, from: a, to: top, radius: 0.14, endRadius: 0.1)
+                    batch.rod(Palette.darkBark, from: top, to: b, radius: 0.1, endRadius: 0.13)
+                }
+
+            case .moldywarp:
+                // The king's hoard: a heap of earth behind its spot, strewn with bottle caps.
+                let behind = area.center + area.center.normalizedOrZero * 4.5
+                batch.anchor = behind
+                batch.sphere(Palette.warrenEarth, at: onGround(map, behind), radius: 3.2, squash: [1, 0.45, 0.8], low: true)
+                for _ in 0..<26 {
+                    let p = random.point(inDiscAt: behind, radius: 4)
+                    batch.anchor = p
+                    let lift = max(0, 1.4 * (1 - p.distance(to: behind) / 3.2))
+                    batch.cylinder(Palette.crown, at: onGround(map, p, lift: lift + 0.03), radius: 0.22, height: 0.05,
+                                   rotation: simd_quatf(angle: random.float(in: -0.5...0.5), axis: [1, 0, 0]))
                 }
 
             case .stagBeetle:

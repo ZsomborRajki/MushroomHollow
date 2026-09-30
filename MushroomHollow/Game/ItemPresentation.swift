@@ -47,6 +47,11 @@ extension ItemID {
         case .roseHip: "camera.macro"
         case .grumbleSpore: "circle.hexagonpath.fill"
         case .stagMandible: "arrow.up.and.down.and.sparkles"
+        case .velvetPelt: "circle.fill"
+        case .crawlerPlate: "capsule.fill"
+        case .delversPick: "hammer.fill"
+        case .warrenCrown: "crown.fill"
+        case .tunnelerClaws: "hand.raised.fill"
         case .stingerBlade, .silkfangSaber, .mantisEdge: "wand.and.rays"
         case .mossbackCleaver, .quillsplitter, .stagjawAxe: "hammer.fill"
         case .lilypadTarge, .mossbackShield, .pineconeBulwark: "shield.fill"
@@ -56,6 +61,7 @@ extension ItemID {
         case .buttercupStaff, .thornroseStaff: "camera.macro"
         case .amberShard: "diamond.fill"
         case .wardCharm: "seal.fill"
+        case .fireStone, .windStone, .earthStone, .electricStone, .waterStone: Element(stone: self)!.symbol
         case .dandelionSeed: "wind"
         case .pip: "dog.fill"
         case .kibble: "pawprint.circle.fill"
@@ -122,8 +128,12 @@ extension ItemID {
         case .roseHip, .thornroseStaff, .rosethornGauntlets: Color(red: 0.9, green: 0.25, blue: 0.38)
         case .grumbleSpore, .grumblecapScepter: Color(red: 0.95, green: 0.3, blue: 0.3)
         case .stagMandible, .stagjawAxe, .stagCrusher: Color(red: 0.55, green: 0.35, blue: 0.22)
+        case .velvetPelt: Color(red: 0.6, green: 0.58, blue: 0.68)
+        case .crawlerPlate: Color(red: 0.85, green: 0.35, blue: 0.2)
+        case .delversPick, .warrenCrown, .tunnelerClaws: Color(red: 1, green: 0.8, blue: 0.25)
         case .amberShard: Color(red: 1, green: 0.66, blue: 0.2)
         case .wardCharm: Color(red: 0.45, green: 0.95, blue: 0.85)
+        case .fireStone, .windStone, .earthStone, .electricStone, .waterStone: Element(stone: self)!.color
         case .pip: Color(red: 1, green: 0.85, blue: 0.6)
         case .kibble: Color(red: 0.85, green: 0.55, blue: 0.3)
         default: definition.set?.tint ?? .white
@@ -152,14 +162,23 @@ extension Gear {
     /// One-line stat summary including the upgrade, e.g. "+6 ATK · +10 HP".
     var statLine: String? {
         switch definition.kind {
-        case let .consumable(.restoreHP(amount)): "Restores \(amount) HP"
-        case let .consumable(.restoreMP(amount)): "Restores \(amount) MP"
-        case .consumable(.returnToTown): "Back to Capstone Town"
-        case .material: nil
-        case .glider: "Lets you fly"
-        case .pet: "Pet · fetches your drops"
-        case .petFood: "Fills up your pet"
-        case .equipment: bonus.summary
+        case let .consumable(.restoreHP(amount)): return "Restores \(amount) HP"
+        case let .consumable(.restoreMP(amount)): return "Restores \(amount) MP"
+        case .consumable(.returnToTown): return "Back to Capstone Town"
+        case .material: return nil
+        case .glider: return "Lets you fly"
+        case .pet: return "Pet · fetches your drops"
+        case .petFood: return "Fills up your pet"
+        case .equipment:
+            if let type = definition.weaponType {
+                // Flyff's "Attack 27~33": the weapon's min~max, then whatever else it grants.
+                let attack = Float(bonus.attack)
+                var rest = bonus
+                rest.attack = 0
+                let range = "\(Int((attack * (1 - type.spread)).rounded()))~\(Int((attack * (1 + type.spread)).rounded())) ATK"
+                return [range, rest.summary, element?.label ?? ""].filter { !$0.isEmpty }.joined(separator: " · ")
+            }
+            return [bonus.summary, element?.label ?? ""].filter { !$0.isEmpty }.joined(separator: " · ")
         }
     }
 }
@@ -175,6 +194,9 @@ extension StatBonus {
         if block > 0 { parts.append("\(Self.percent(block)) Block") }
         if attackSpeed > 0 { parts.append("+\(Self.percent(attackSpeed)) Speed") }
         if critical > 0 { parts.append("+\(Self.percent(critical)) Crit") }
+        for attribute in Attribute.allCases where attributes[attribute] > 0 {
+            parts.append("+\(attributes[attribute]) \(attribute.abbreviation)")
+        }
         return parts.joined(separator: " · ")
     }
 
@@ -220,6 +242,27 @@ extension UpgradeResult {
     var succeeded: Bool {
         if case .succeeded = self { return true }
         return false
+    }
+}
+
+extension ElementForgeResult {
+    func message(for item: ItemID) -> String {
+        let name = item.definition.name
+        return switch self {
+        case let .succeeded(upgrade): "Success! \(name) is now \(upgrade.label)"
+        case let .failed(upgrade): "The infusion fizzled. \(name) stays \(upgrade.label)"
+        case let .protected(upgrade): "Fizzled, but the Ward Charm held. \(name) stays \(upgrade.label)"
+        case let .downgraded(upgrade): "Fizzled! \(name) dropped to \(upgrade.label)"
+        case .removed: "\(name) is plain again"
+        case let .converted(upgrade): "\(name) is now \(upgrade.label)"
+        }
+    }
+
+    var succeeded: Bool {
+        switch self {
+        case .succeeded, .removed, .converted: true
+        case .failed, .protected, .downgraded: false
+        }
     }
 }
 
@@ -274,13 +317,16 @@ extension ActionFailure {
         case .notAvailable: "Not available"
         case .itemCooldown: "Not ready yet"
         case .wrongClass: "Your class can't use that"
-        case .missingMaterials: "You need more Amber Shards"
+        case .missingMaterials: "Not enough materials"
         case .maxUpgrade: "Already +10"
         case .noPet: "Put a pet in your pet slot first"
         case .petHungry: "Too hungry to come out. Feed it Kibble"
         case .petFull: "Your pet is already full"
         case .noStatPoints: "No stat points left to spend"
         case .inCombat: "Not while fighting"
+        case .trialFirst: "Finish the Trial of the Path first"
+        case .elementMismatch: "It carries another element. Remove or convert it first"
+        case .noElement: "It has no element"
         }
     }
 }
@@ -328,10 +374,10 @@ extension Attribute {
     /// What one point buys.
     var perPoint: String {
         switch self {
-        case .strength: "+\(Self.decimal(Attributes.attackPerStrength)) ATK"
+        case .strength: "+\(Self.decimal(Attributes.attackPerPoint)) ATK with blades"
         case .stamina: "+\(Attributes.hpPerStamina) HP, +\(Self.decimal(Attributes.defensePerStamina)) DEF"
-        case .dexterity: "+\(Self.decimal(Attributes.speedPerDexterity * 100))% speed, +\(Self.decimal(Attributes.criticalPerDexterity * 100))% crit"
-        case .intelligence: "+\(Attributes.mpPerIntelligence) MP, +\(Self.decimal(Attributes.skillPowerPerIntelligence * 100))% skills"
+        case .dexterity: "+\(Self.decimal(Attributes.speedPerDexterity * 100))% speed, +\(Self.decimal(Attributes.criticalPerDexterity * 100))% crit, aim, dodge, bow ATK"
+        case .intelligence: "+\(Attributes.mpPerIntelligence) MP, +\(Self.decimal(Attributes.skillPowerPerIntelligence * 100))% skills, wand ATK"
         }
     }
 

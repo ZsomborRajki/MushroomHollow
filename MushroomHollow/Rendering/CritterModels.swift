@@ -439,6 +439,82 @@ extension ActorModels {
         }
     }
 
+    // MARK: - The Sunken Warren
+
+    /// A plump velvet mole with a pink star nose and huge digging hands. Delvers wear a miner's hat
+    /// and lamp; Moldywarp, the Warren King, is the same shape `size` times bigger, with a crown and cape.
+    static func buildMole(into e: Entity, size s: Float, king: Bool) {
+        let fur = Materials.matte(king ? Palette.moleKing : Palette.moleFur, roughness: 1)
+        let pink = Materials.matte(Palette.molePink, roughness: 0.7)
+        let claw = Materials.matte(Palette.claw, roughness: 0.5)
+        e.addSphere(fur, at: [0, 0.5 * s, -0.05 * s], radius: 1, squash: SIMD3(0.62, 0.5, 0.75) * s)
+        e.addSphere(Materials.matte(Palette.moleBelly, roughness: 1), at: [0, 0.4 * s, 0.3 * s], radius: 1,
+                    squash: SIMD3(0.45, 0.36, 0.42) * s)
+        // A snout ending in a pink star of feelers.
+        e.addSphere(fur, at: [0, 0.46 * s, 0.68 * s], radius: 0.2 * s, squash: [1, 0.85, 1.2])
+        e.addSphere(pink, at: [0, 0.46 * s, 0.9 * s], radius: 0.08 * s)
+        for i in 0..<8 {
+            let a = Float(i) / 8 * 2 * .pi
+            e.addSphere(pink, at: [sin(a) * 0.1 * s, (0.46 + cos(a) * 0.1) * s, 0.87 * s], radius: 0.04 * s)
+        }
+        addCuteEyes(to: e, at: [0, 0.66 * s, 0.6 * s], spacing: 0.32 * s, size: 0.07 * s)
+        for side: Float in [-1, 1] {
+            // Big pink shovel hands, palms out, with pale claws.
+            let hand = SIMD3<Float>(side * 0.55, 0.32, 0.45) * s
+            e.addSphere(pink, at: hand, radius: 0.2 * s, squash: [0.5, 1, 0.9])
+            for c in 0..<4 {
+                e.addPart(Meshes.cone, claw, at: hand + SIMD3(side * 0.03, -0.2, (Float(c) - 1.5) * 0.08) * s,
+                          scale: SIMD3(0.03, 0.12, 0.03) * s, rotation: simd_quatf(angle: .pi, axis: [1, 0, 0]))
+            }
+            e.addSphere(pink, at: SIMD3(side * 0.3, 0.06, -0.45) * s, radius: 0.12 * s, squash: [1, 0.5, 1.3])
+        }
+        e.addRod(pink, from: SIMD3(0, 0.32, -0.76) * s, to: SIMD3(0, 0.38, -0.98) * s, radius: 0.03 * s)
+        if king {
+            // A gold crown with a glowing gem, and a red cape down the back.
+            let gold = Materials.glossy(Palette.crown)
+            e.addCylinder(gold, at: SIMD3(0, 1.0, 0.05) * s, radius: 0.22 * s, height: 0.12 * s)
+            for i in 0..<6 {
+                let a = Float(i) / 6 * 2 * .pi
+                e.addPart(Meshes.cone, gold, at: SIMD3(sin(a) * 0.2, 1.12, 0.05 + cos(a) * 0.2) * s, scale: SIMD3(0.05, 0.14, 0.05) * s)
+            }
+            e.addSphere(Materials.glow(Palette.roseRed), at: SIMD3(0, 1.0, 0.28) * s, radius: 0.05 * s)
+            e.addSphere(Materials.matte(Palette.capeRed, roughness: 0.8), at: SIMD3(0, 0.6, -0.4) * s, radius: 1,
+                        squash: SIMD3(0.66, 0.46, 0.42) * s)
+        } else {
+            // A miner's hat with a lamp: delvers dig by lamplight.
+            let hat = Materials.glossy(Palette.minerHat)
+            e.addSphere(hat, at: [0, 0.9, 0.12], radius: 0.3, squash: [1, 0.55, 1])
+            e.addCylinder(hat, at: [0, 0.88, 0.12], radius: 0.36, height: 0.03)
+            e.addSphere(Materials.glow(Palette.lamp), at: [0, 0.98, 0.4], radius: 0.07)
+        }
+    }
+
+    /// A long, low centipede of glossy red plates, with a leg pair on every segment.
+    static func buildRootcrawler(into e: Entity) {
+        let shell = Materials.glossy(Palette.crawlerRed)
+        let dark = Materials.glossy(Palette.crawlerDark)
+        let leg = Materials.matte(Palette.crawlerLeg, roughness: 0.6)
+        for i in 0..<8 {
+            let z = 0.78 - Float(i) * 0.26
+            let r: Float = i == 0 ? 0.3 : 0.27 - Float(i) * 0.012
+            let y: Float = i == 0 ? 0.36 : 0.28
+            e.addSphere(i % 2 == 0 ? shell : dark, at: [0, y, z], radius: 1, squash: [r * 1.25, r * 0.8, r * 0.75])
+            guard i > 0 else { continue }
+            for side: Float in [-1, 1] {
+                let hip = SIMD3<Float>(side * r, 0.22, z)
+                let knee = hip + [side * 0.2, 0.08, 0.02]
+                e.addRod(leg, from: hip, to: knee, radius: 0.022)
+                e.addRod(leg, from: knee, to: [side * (r + 0.36), 0.01, z + 0.06], radius: 0.018)
+            }
+        }
+        addCuteEyes(to: e, at: [0, 0.44, 1.0], spacing: 0.22, size: 0.07)
+        for side: Float in [-1, 1] {
+            e.addRod(leg, from: [side * 0.12, 0.26, 1.0], to: [side * 0.06, 0.22, 1.24], radius: 0.03) // mandibles
+            e.addRod(dark, from: [side * 0.08, 0.5, 0.96], to: [side * 0.34, 0.8, 1.28], radius: 0.015) // antennae
+            e.addRod(dark, from: [side * 0.08, 0.3, -1.05], to: [side * 0.3, 0.45, -1.35], radius: 0.015) // tail feelers
+        }
+    }
+
     // MARK: - Shared parts
 
     /// Big, shiny anime eyes on a face looking along +Z: white, a large iris, and a sparkle, with rosy cheeks.

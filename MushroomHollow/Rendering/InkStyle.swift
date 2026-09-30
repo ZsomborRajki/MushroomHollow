@@ -7,7 +7,7 @@ import UIKit
 /// Which look the world is drawn in. Chosen at launch (materials are built once and cached):
 /// a client preference, never part of `PlayerProfile`. DEBUG builds also take `-style ink|classic`.
 nonisolated enum ArtStyle: String, CaseIterable, Sendable {
-    /// Hand-drawn: ink lines that boil, flat two-tone fills, hatching (see InkStyle).
+    /// Hand-drawn, like the "2D café": bold black marker lines, matte flat cartoon fills (see InkStyle).
     case ink
     /// The original lit, shadowed, physically based look.
     case classic
@@ -38,12 +38,16 @@ nonisolated enum InkStyle {
     /// Outline width (meters, as seen from 8 m) for an actor: bold on the boss, finer on small critters.
     static func hullWidth(for kind: EntityKind) -> Float {
         switch kind {
-        case .player: 0.022
-        case .npc: 0.022
-        case .mob(.owl): 0.06
-        case let .mob(mob): min(0.03, max(0.014, mob.radius * 0.05))
+        case .player: 0.03
+        case .npc: 0.03
+        case .mob(.owl): 0.08
+        case .mob(.moldywarp): 0.06
+        case let .mob(mob): min(0.042, max(0.022, mob.radius * 0.07))
         }
     }
+
+    /// Outline width for static scenery and the town (like `hullWidth`, meters as seen from 8 m).
+    static let sceneryHullWidth: Float = 0.04
 
     /// Radius of the hatched blob shadow under an actor.
     static func shadowRadius(for kind: EntityKind) -> Float {
@@ -51,6 +55,7 @@ nonisolated enum InkStyle {
         case .player: 0.42
         case .npc: 0.5
         case .mob(.owl): 3.2
+        case .mob(.moldywarp): 2.6
         case let .mob(mob): mob.radius * 1.25
         }
     }
@@ -66,11 +71,9 @@ nonisolated enum InkStyle {
 final class ToonLighting {
     struct Values: Equatable {
         var key = SIMD3<Float>(1, 1, 1)
-        var shadow = SIMD3<Float>(0.62, 0.66, 0.8)
-        var hatch: Float = 1
-        var ink = SIMD3<Float>(0.12, 0.09, 0.08)
+        var shadow = SIMD3<Float>(0.8, 0.75, 0.88)
+        var ink = SIMD3<Float>(0.008, 0.007, 0.007)
         var direction = simd_normalize(SIMD3<Float>(0.45, 0.8, 0.4))
-        var rim: Float = 1
     }
 
     static let shared = ToonLighting()
@@ -96,8 +99,8 @@ final class ToonLighting {
         guard values != current, let texture, let queue, let staging,
               let commandBuffer = queue.makeCommandBuffer() else { return }
         current = values
-        let texels: [SIMD4<Float>] = [SIMD4(values.key, 1), SIMD4(values.shadow, values.hatch),
-                                      SIMD4(values.ink, 1), SIMD4(values.direction, values.rim)]
+        let texels: [SIMD4<Float>] = [SIMD4(values.key, 1), SIMD4(values.shadow, 1),
+                                      SIMD4(values.ink, 1), SIMD4(values.direction, 1)]
         let halves = staging.contents().bindMemory(to: Float16.self, capacity: 16)
         for (i, texel) in texels.enumerated() {
             for c in 0..<4 { halves[i * 4 + c] = Float16(texel[c]) }
@@ -139,21 +142,21 @@ enum InkMaterials {
         return material
     }
 
-    /// Flat two-tone fill with hatching in the shade; `shine` adds a cartoon highlight and rim.
-    static func toon(_ color: UIColor, shine: Bool) -> (any RealityKit.Material)? {
-        cached("toon-\(color.description)-\(shine)") {
+    /// Matte flat fill in the color's cartoon version, with one crisp shadow tone.
+    static func toon(_ color: UIColor) -> (any RealityKit.Material)? {
+        cached("toon-\(color.description)") {
             guard var material = make("toonSurface") else { return nil }
             material.baseColor = .init(tint: color)
-            material.custom.value = [0, shine ? 1 : 0, 1, 1]
-            if let fingerprint = PartMerger.fingerprint(material) { toonColors[fingerprint] = (color, shine) }
+            material.custom.value = [0, 1, 0, 1]
+            if let fingerprint = PartMerger.fingerprint(material) { toonColors[fingerprint] = color }
             return material
         }
     }
 
     /// Opaque toon materials by `PartMerger.fingerprint`, so merged parts can move into the atlas.
-    private static var toonColors: [String: (color: UIColor, shine: Bool)] = [:]
+    private static var toonColors: [String: UIColor] = [:]
 
-    static func toonColor(fingerprint: String) -> (color: UIColor, shine: Bool)? {
+    static func toonColor(fingerprint: String) -> UIColor? {
         toonColors[fingerprint]
     }
 
@@ -161,37 +164,41 @@ enum InkMaterials {
         cached("translucent-\(color.description)-\(opacity)") {
             guard var material = make("toonSurface") else { return nil }
             material.baseColor = .init(tint: color)
-            material.custom.value = [0, 0, 0, opacity]
+            material.custom.value = [0, 1, 0, opacity]
             material.blending = .transparent(opacity: .init(floatLiteral: 1))
             material.faceCulling = .none
             return material
         }
     }
 
-    /// A painted texture (the face), toon shaded, lightly hatched.
+    /// A painted texture (the face), toon shaded in the colors it was painted in.
     static func textured(_ texture: TextureResource) -> (any RealityKit.Material)? {
         guard var material = make("toonTextured") else { return nil }
         material.baseColor = .init(tint: .white, texture: .init(texture))
-        material.custom.value = [0, 0, 0.5, 1]
+        material.custom.value = [0, 0, 0, 1]
         return material
     }
 
-    /// Batched scenery: the color atlas, glowing colors in the emissive atlas (its wobble is baked in,
-    /// see `InkWobble`). `shine` adds the cartoon highlight (batched actor parts).
-    static func atlas(base: TextureResource, glow: TextureResource, doubleSided: Bool, shine: Bool = false) -> (any RealityKit.Material)? {
+    /// Batched scenery and merged actor parts: the color atlas, glowing colors in the emissive atlas
+    /// (scenery's wobble is baked in, see `InkWobble`).
+    static func atlas(base: TextureResource, glow: TextureResource, doubleSided: Bool) -> (any RealityKit.Material)? {
         guard var material = make("toonAtlas") else { return nil }
         material.baseColor = .init(tint: .white, texture: .init(base))
         material.emissiveColor = .init(color: .black, texture: .init(glow))
-        material.custom.value = [0, shine ? 1 : 0, 1, 1]
+        material.custom.value = [0, 1, 0, 1]
         if doubleSided { material.faceCulling = .none }
         return material
     }
 
-    /// The forest floor, with its contact shadows (white = shadow) to fill with hatching.
-    static func ground(_ painting: TextureResource, shadows: TextureResource) -> (any RealityKit.Material)? {
+    /// The forest floor, with its contact shadows (white = shadow).
+    /// The forest floor: the painted ground (base color), the surface mask (roughness slot: r contact
+    /// shadow, g dirt, b sand; see `GroundPainter.paintSurfaceMask`), and the repeating block detail
+    /// (emissive slot, `InkPainter.groundDetail`).
+    static func ground(_ painting: TextureResource, surfaces: TextureResource, detail: TextureResource) -> (any RealityKit.Material)? {
         guard var material = make("inkGround") else { return nil }
         material.baseColor = .init(tint: .white, texture: .init(painting))
-        material.roughness = .init(scale: 1, texture: .init(shadows))
+        material.roughness = .init(scale: 1, texture: .init(surfaces))
+        material.emissiveColor = .init(color: .white, texture: .init(detail))
         material.custom.value = [0, 0, 0, 1]
         return material
     }
@@ -208,11 +215,19 @@ enum InkMaterials {
         return material
     }()
 
-    /// The outline shell for inverted-hull outlines.
-    static func hull(width: Float) -> (any RealityKit.Material)? {
-        cached("hull-\(width)") {
+    /// The drawn sky (inside of a sphere): paper, a scalloped canopy line, drawn stars.
+    static let sky: (any RealityKit.Material)? = {
+        guard var material = make("inkSky") else { return nil }
+        material.faceCulling = .front
+        return material
+    }()
+
+    /// The outline shell for inverted-hull outlines. `weightedByUV`: each vertex's u scales the
+    /// width (batched scenery, where thin stems want thin lines).
+    static func hull(width: Float, weightedByUV: Bool = false) -> (any RealityKit.Material)? {
+        cached("hull-\(width)-\(weightedByUV)") {
             guard var material = make("inkHullSurface", geometry: "inkHullPush") else { return nil }
-            material.custom.value = [width, 0, 0, 1]
+            material.custom.value = [width, weightedByUV ? 1 : 0, 0, 1]
             material.faceCulling = .front
             return material
         }
@@ -221,7 +236,7 @@ enum InkMaterials {
     static let blobShadow: (any RealityKit.Material)? = {
         guard let texture = InkPainter.blobShadow(), var material = make("inkBlobShadow") else { return nil }
         material.baseColor = .init(tint: .white, texture: .init(texture))
-        material.custom.value = [0, 0, 0, 0.75]
+        material.custom.value = [0, 0, 0, 1]
         material.blending = .transparent(opacity: .init(floatLiteral: 1))
         return material
     }()
@@ -289,7 +304,8 @@ extension Entity {
                !part.children.contains(where: { $0.name == InkStyle.hullName }) {
                 let size = model.mesh.bounds.extents * part.scale(relativeTo: root)
                 if max(size.x, size.y, size.z) >= minimumSize {
-                    let hull = ModelEntity(mesh: model.mesh, materials: Array(repeating: material, count: model.materials.count))
+                    let hull = ModelEntity(mesh: InkHullMesh.smoothed(model.mesh),
+                                           materials: Array(repeating: material, count: model.materials.count))
                     hull.name = InkStyle.hullName
                     hull.components.set(DynamicLightShadowComponent(castsShadow: false))
                     part.addChild(hull)
@@ -306,7 +322,7 @@ extension Entity {
         return false
     }
 
-    /// A hatched ink shadow on the ground, for actors (the ink style has no shadow maps).
+    /// A flat drawn shadow on the ground, for actors (the ink style has no shadow maps).
     static func makeBlobShadow(radius: Float) -> ModelEntity? {
         guard let material = InkMaterials.blobShadow else { return nil }
         let shadow = ModelEntity(mesh: InkPainter.shadowPlane, materials: [material])
@@ -315,5 +331,48 @@ extension Entity {
         shadow.position.y = 0.04
         shadow.components.set(DynamicLightShadowComponent(castsShadow: false))
         return shadow
+    }
+}
+
+// MARK: - Hull meshes
+
+/// Outline shells want smooth normals: pushed along a box's face normals, the faces drift apart and
+/// the outline breaks at every corner. These copies share the original's triangles, with each normal
+/// averaged over every vertex at that spot (hard edges and all), so the shell inflates in one piece.
+@MainActor
+enum InkHullMesh {
+    /// By source mesh (kept alive here, so an identifier is never reused for another mesh).
+    private static var cache: [ObjectIdentifier: (source: MeshResource, hull: MeshResource)] = [:]
+
+    static func smoothed(_ mesh: MeshResource) -> MeshResource {
+        let id = ObjectIdentifier(mesh)
+        if let hit = cache[id] { return hit.hull }
+        let hull = PartMerger.meshData(mesh).flatMap { smoothed($0).resource(named: InkStyle.hullName) } ?? mesh
+        cache[id] = (mesh, hull)
+        return hull
+    }
+
+    /// The same triangles with normals averaged per position (to about a millimeter). Triangles are
+    /// weighted by area, so a sliver doesn't tip a corner.
+    static func smoothed(_ data: MeshData) -> MeshData {
+        var sums: [SIMD3<Int32>: SIMD3<Float>] = [:]
+        func key(_ p: SIMD3<Float>) -> SIMD3<Int32> {
+            SIMD3(Int32(clamping: Int((p.x * 1000).rounded())), Int32(clamping: Int((p.y * 1000).rounded())),
+                  Int32(clamping: Int((p.z * 1000).rounded())))
+        }
+        var i = 0
+        while i + 2 < data.indices.count {
+            let a = data.positions[Int(data.indices[i])], b = data.positions[Int(data.indices[i + 1])]
+            let c = data.positions[Int(data.indices[i + 2])]
+            let face = simd_cross(b - a, c - a)
+            for p in [a, b, c] { sums[key(p), default: .zero] += face }
+            i += 3
+        }
+        var result = data
+        for (index, p) in data.positions.enumerated() {
+            let sum = sums[key(p)] ?? .zero
+            result.normals[index] = simd_length(sum) > 1e-9 ? simd_normalize(sum) : data.normals[index]
+        }
+        return result
     }
 }

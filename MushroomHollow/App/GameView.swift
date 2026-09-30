@@ -90,6 +90,10 @@ struct GameView: View {
                 .padding()
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
 
+            MuteButton(session: session)
+                .padding()
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+
             if let npc = session.nearbyNPC {
                 InteractPrompt(npc: npc, glyph: session.glyphs?.primary) {
                     session.perform(.primary)
@@ -133,20 +137,31 @@ struct GameView: View {
     }
 }
 
-/// Utility row, top right: potions, flight, bag.
+/// Utility row, top right: potions, sitting, flight, and a menu that opens to character, map, and bag.
 private struct UtilityRow: View {
     let session: GameSession
+    /// Closes again whenever a panel opens (the row leaves the view tree).
+    @State private var isMenuOpen = false
 
     var body: some View {
         let player = session.hud.player
         // Rendered together (see ActionBar).
         GlassEffectContainer(spacing: 4) {
         HStack(spacing: 12) {
-            ForEach(Array([ItemID.dewPotion, .nectarVial].enumerated()), id: \.element) { index, item in
+            // Each slot shows the potion it would drink right now.
+            ForEach(0..<2, id: \.self) { index in
+                let item = player?.quickPotion(restoresMP: index == 1) ?? (index == 0 ? .dewPotion : .nectarVial)
                 PotionButton(item: item, count: player?.inventory.count(of: item) ?? 0,
                              isCoolingDown: (player?.itemCooldown ?? 0) > 0, glyph: session.glyphs?.quickItems[index]) {
                     session.perform(.quickItem(index))
                 }
+            }
+            if player?.isFlying != true {
+                let sitting = player?.isSitting == true
+                RoundButton(symbol: "figure.mind.and.body", size: 48, tint: sitting ? .mint : .white, glyph: nil) {
+                    session.perform(.toggleSit)
+                }
+                .accessibilityLabel(sitting ? "Stand up" : "Sit and rest")
             }
             if player?.canFly == true {
                 let flying = player?.isFlying == true
@@ -156,27 +171,35 @@ private struct UtilityRow: View {
                 .accessibilityLabel(flying ? "Land" : "Fly")
                 .transition(.scale.combined(with: .opacity))
             }
-            RoundButton(symbol: session.isMuted ? "speaker.slash.fill" : "speaker.wave.2.fill", size: 48,
-                        tint: session.isMuted ? .gray : .white, glyph: nil) {
-                session.toggleMute()
+            if isMenuOpen {
+                MenuButtons(session: session)
+                    .transition(.move(edge: .trailing).combined(with: .opacity))
             }
-            .accessibilityLabel(session.isMuted ? "Unmute" : "Mute")
             let unspent = player?.unspentStatPoints ?? 0
+            RoundButton(symbol: isMenuOpen ? "xmark" : "line.3.horizontal", size: 48,
+                        tint: !isMenuOpen && unspent > 0 ? .mint : .white, glyph: nil) {
+                withAnimation(.snappy) { isMenuOpen.toggle() }
+            }
+            .overlay(alignment: .topLeading) {
+                if !isMenuOpen { StatPointsBadge(unspent: unspent) }
+            }
+            .accessibilityLabel(isMenuOpen ? "Close menu" : "Menu")
+        }
+        }
+    }
+}
+
+/// The menu's buttons: character, map, bag. Controllers reach these directly (see the glyphs).
+private struct MenuButtons: View {
+    let session: GameSession
+
+    var body: some View {
+        let unspent = session.hud.player?.unspentStatPoints ?? 0
+        HStack(spacing: 12) {
             RoundButton(symbol: "figure.stand", size: 48, tint: unspent > 0 ? .mint : .white, glyph: nil) {
                 session.perform(.toggleCharacter)
             }
-            .overlay(alignment: .topLeading) {
-                // Unspent stat points: a Flyff-style nag until they're spent.
-                if unspent > 0 {
-                    Text("+\(unspent)")
-                        .font(.caption2.weight(.heavy).monospacedDigit())
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 1)
-                        .background(.mint, in: .capsule)
-                        .foregroundStyle(.black)
-                        .offset(x: -4, y: -4)
-                }
-            }
+            .overlay(alignment: .topLeading) { StatPointsBadge(unspent: unspent) }
             .accessibilityLabel(unspent > 0 ? "Character, \(unspent) stat points to spend" : "Character")
             RoundButton(symbol: "map.fill", size: 48, glyph: session.glyphs?.map) {
                 session.perform(.toggleMap)
@@ -187,7 +210,36 @@ private struct UtilityRow: View {
             }
             .accessibilityLabel("Bag")
         }
+    }
+}
+
+/// Unspent stat points: a Flyff-style nag until they're spent.
+private struct StatPointsBadge: View {
+    let unspent: Int
+
+    var body: some View {
+        if unspent > 0 {
+            Text("+\(unspent)")
+                .font(.caption2.weight(.heavy).monospacedDigit())
+                .padding(.horizontal, 5)
+                .padding(.vertical, 1)
+                .background(.mint, in: .capsule)
+                .foregroundStyle(.black)
+                .offset(x: -4, y: -4)
         }
+    }
+}
+
+/// Bottom left, out of the way: sound on/off.
+private struct MuteButton: View {
+    let session: GameSession
+
+    var body: some View {
+        RoundButton(symbol: session.isMuted ? "speaker.slash.fill" : "speaker.wave.2.fill", size: 36,
+                    tint: session.isMuted ? .gray : .white, glyph: nil) {
+            session.toggleMute()
+        }
+        .accessibilityLabel(session.isMuted ? "Unmute" : "Mute")
     }
 }
 

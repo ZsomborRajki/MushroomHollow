@@ -18,6 +18,7 @@ enum SproutLook {
     static let tunic = Palette.tunic
     static let trim = UIColor(red: 0.98, green: 0.94, blue: 0.84, alpha: 1)
     static let scarf = UIColor(red: 0.98, green: 0.74, blue: 0.22, alpha: 1)
+    static let shirt = UIColor(red: 0.9, green: 0.36, blue: 0.3, alpha: 1)
     static let boots = Palette.boots
     static let bootCuff = UIColor(red: 0.58, green: 0.4, blue: 0.26, alpha: 1)
     static let belt = Palette.door

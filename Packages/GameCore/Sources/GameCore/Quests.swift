@@ -22,6 +22,8 @@ public enum QuestID: String, Codable, Sendable, CaseIterable {
     case prayingForRain, everyRose
     // Stagshade Grove
     case grumblingUnderground, kingOfTheGrove
+    // The Sunken Warren
+    case somethingStirsBelow, crawlingWithThem, theWarrenKing
 
     // Side quests
     /// The world boss (only out at night, so it never blocks the story).
@@ -37,15 +39,23 @@ public enum QuestID: String, Codable, Sendable, CaseIterable {
 
     // Exploration (Flyff's patrol quests): no story to follow, just places to go and see.
     case layOfTheLand, puppyPatrol, highGround, owlsEyeView, beyondTheRing, windAndWater, stonesAndTimber, theGrandTour
+    case rockAndRill
+
+    /// The job-change trial: prove yourself against a Giant before Elder Morel lets you choose a class.
+    case trialOfThePath
+
+    // More hunting requests (the Sunken Warren)
+    case huntDelverMole, huntRootcrawler
 
     /// Side quests that send you somewhere rather than after something.
     public static let explorations: [QuestID] = [
         .layOfTheLand, .puppyPatrol, .highGround, .owlsEyeView, .beyondTheRing, .windAndWater, .stonesAndTimber, .theGrandTour,
+        .rockAndRill,
     ]
 
     /// In order: each one opens once the one before it is done.
     public static let mainStory: [QuestID] = allCases.filter {
-        $0 != .hollowOwl && $0 != .aNoseForTrouble && $0.huntTarget == nil && !explorations.contains($0)
+        $0 != .hollowOwl && $0 != .aNoseForTrouble && $0 != .trialOfThePath && $0.huntTarget == nil && !explorations.contains($0)
     }
 
     /// The species a hunting request is after.
@@ -74,6 +84,8 @@ public enum QuestID: String, Codable, Sendable, CaseIterable {
         case .huntThornrose: .thornrose
         case .huntGrumblecap: .grumblecap
         case .huntStagBeetle: .stagBeetle
+        case .huntDelverMole: .delverMole
+        case .huntRootcrawler: .rootcrawler
         default: nil
         }
     }
@@ -98,11 +110,20 @@ public enum QuestObjective: Sendable, Equatable {
     case collect(ItemID, count: Int)
     /// Set foot on each of these places, in any order.
     case explore([LandmarkID])
+    /// Bring down Giants (of any kind) of at least this level.
+    case defeatGiant(minLevel: Int, count: Int)
 
     public var goal: Int {
         switch self {
-        case let .defeat(_, count), let .collect(_, count): count
+        case let .defeat(_, count), let .collect(_, count), let .defeatGiant(_, count): count
         case let .explore(places): places.count
+        }
+    }
+
+    /// The kinds whose fields a `defeatGiant` quest points you to: the nearest few that qualify.
+    public static func giantKinds(minLevel: Int) -> [MobKind] {
+        MobKind.allCases.filter {
+            $0.hasGiant && $0.stats.level + Giant.levelBonus >= minLevel && $0.stats.level + Giant.levelBonus <= minLevel + 5
         }
     }
 
@@ -115,6 +136,8 @@ public enum QuestObjective: Sendable, Equatable {
             let list = names.count <= 2 ? names.joined(separator: " and ")
                 : names.dropLast().joined(separator: ", ") + ", and " + names.last!
             return "Visit \(list)"
+        case let .defeatGiant(minLevel, count):
+            return count == 1 ? "Defeat a Giant (level \(minLevel) or higher)" : "Defeat \(count) Giants (level \(minLevel) or higher)"
         }
     }
 }
@@ -170,7 +193,7 @@ extension QuestID {
             story("Shell Shock", giver: .elderMorel, level: 1,
                   "Snails from Dewleaf Glade keep nibbling the village mushrooms. They won't start a fight, but they'll fight back once you swing. Chase five of them off, would you?",
                   .defeat(.snail, count: 5), xp: 60, caps: 90,
-                  [ItemStack(item: .twigSword, count: 1), ItemStack(item: .dewPotion, count: 3)])
+                  [ItemStack(item: .grassMitts, count: 1), ItemStack(item: .dewPotion, count: 3)])
         case .spotsBeforeYourEyes:
             story("Spots Before Your Eyes", giver: .chanterelle, level: 2,
                   "Ladybug wing cases make the loveliest buttons, and my stall's clean out. The ladybugs over in the glade leave them behind. Four should do!",
@@ -309,11 +332,30 @@ extension QuestID {
                   .defeat(.stagBeetle, count: 5), xp: 12_000, caps: 6_000,
                   [ItemStack(item: .amberShard, count: 10), ItemStack(item: .wardCharm, count: 2)])
 
+        // MARK: The Sunken Warren
+        case .somethingStirsBelow:
+            story("Something Stirs Below", giver: .porcini, level: 29,
+                  "The ground past Pinecone Rise has fallen in, and there's a whole warren down there! Moles, dear, big ones, digging in the dark. Walk down the ramp off the ring road and bring me six velvet pelts. Mind: down there, half of them come at you.",
+                  .collect(.velvetPelt, count: 6), xp: 12_000, caps: 6_000,
+                  [ItemStack(item: .honeydewDraught, count: 6), ItemStack(item: .amberShard, count: 8)])
+        case .crawlingWithThem:
+            story("Crawling With Them", giver: .shiitake, level: 30,
+                  "Rootcrawlers! A hundred legs and every one of them in a hurry. They're chewing through the Great Tree's deepest roots. Seven fewer and the roots might hold. They charge in a line, so step aside.",
+                  .defeat(.rootcrawler, count: 7), xp: 14_000, caps: 7_000,
+                  [ItemStack(item: .amberShard, count: 10), ItemStack(item: .wardCharm, count: 1)])
+        case .theWarrenKing:
+            story("The Warren King", giver: .elderMorel, level: 30,
+                  "At the bottom of the Sunken Warren sits Moldywarp, the Warren King, fat on the tree's roots. It digs under your feet and bursts up where you stand, so watch the ground and keep moving. Bring the Hollow its peace, and keep whatever's in its hoard.",
+                  .defeat(.moldywarp, count: 1), xp: 20_000, caps: 10_000,
+                  [ItemStack(item: .wardCharm, count: 2), ItemStack(item: .amberShard, count: 12),
+                   ItemStack(item: .honeydewDraught, count: 8)])
+
         // MARK: Hunting requests
         case .huntSnail, .huntLadybug, .huntAphid, .huntSlug, .huntPillBug, .huntEarthworm,
              .huntBeetle, .huntAcornling, .huntCricket, .huntSporeBeast, .huntBogFrog,
              .huntFuzzbee, .huntPuffweed, .huntMossTurtle, .huntEmberNewt, .huntWeaverSpider, .huntDuskMoth,
-             .huntHedgehog, .huntConeKnight, .huntMantis, .huntThornrose, .huntGrumblecap, .huntStagBeetle:
+             .huntHedgehog, .huntConeKnight, .huntMantis, .huntThornrose, .huntGrumblecap, .huntStagBeetle,
+             .huntDelverMole, .huntRootcrawler:
             request(huntTarget!)
 
         // MARK: Exploration
@@ -359,6 +401,21 @@ extension QuestID {
                     xp: 9_000, caps: 5_000,
                     [ItemStack(item: .wardCharm, count: 2), ItemStack(item: .amberShard, count: 10),
                      ItemStack(item: .honeydewDraught, count: 5)])
+        case .rockAndRill:
+            explore("Rock and Rill", giver: .enoki, level: 18,
+                    "My dyes want the cleanest water in the Hollow, and the cleanest water starts at Silverthread Spring, up the brook that feeds Dewdrop Lake. Then climb Sunstone Mesa, past the thicket, and tell me if the stone up there really glows at noon.",
+                    [.silverthreadSpring, .sunstoneMesa], xp: 3_600, caps: 1_800,
+                    [ItemStack(item: .moonNectar, count: 5), ItemStack(item: .amberShard, count: 4)])
+
+        // MARK: Job change
+        case .trialOfThePath:
+            QuestDefinition(
+                id: self, title: "The Trial of the Path",
+                story: "Fifteen already! Before I help you choose a calling, show me you can stand your ground. Every field has its Giant, the biggest of its kind. Bring one down, one of level ten or more, and come back to me. Take potions.",
+                giver: .elderMorel, requiredLevel: PlayerClass.requiredLevel, prerequisite: nil,
+                objective: .defeatGiant(minLevel: 10, count: 1),
+                rewardXP: 1_500, rewardCaps: 800,
+                rewardItems: [ItemStack(item: .nectarVial, count: 5), ItemStack(item: .amberShard, count: 3)])
 
         // MARK: Side quests
         case .hollowOwl:

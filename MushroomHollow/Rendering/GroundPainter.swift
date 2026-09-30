@@ -70,9 +70,10 @@ enum GroundPainter {
         cg.restoreGState()
     }
 
-    /// Soft blotches of darker moss, pale moss, bare earth, and leaf litter.
-    private static func paintMottling(_ map: WorldMap, in cg: CGContext, random: inout SeededRandom) {
-        let tones = [
+    /// Soft blotches of darker moss, pale moss, bare earth, and leaf litter. In the surface mask
+    /// (`surfaces`), the bare earth and leaf litter count as dirt.
+    private static func paintMottling(_ map: WorldMap, in cg: CGContext, random: inout SeededRandom, surfaces: Bool = false) {
+        let tones = surfaces ? [nil, nil, dirtMask.withAlphaComponent(0.6), dirtMask.withAlphaComponent(0.5)] : [
             UIColor(red: 0.15, green: 0.25, blue: 0.1, alpha: 0.55),
             UIColor(red: 0.33, green: 0.45, blue: 0.2, alpha: 0.4),
             UIColor(red: 0.36, green: 0.28, blue: 0.18, alpha: 0.35),
@@ -80,11 +81,20 @@ enum GroundPainter {
         ]
         for i in 0..<1800 {
             let p = random.point(inDiscAt: .zero, radius: extent)
-            blot(cg, at: p, radius: random.float(in: 2...11), color: tones[i % tones.count])
+            let radius = random.float(in: 2...11)
+            if let tone = tones[i % tones.count] { blot(cg, at: p, radius: radius, color: tone) }
         }
     }
 
-    private static func paintBiomes(_ map: WorldMap, in cg: CGContext, random: inout SeededRandom) {
+    /// Hunting grounds whose floor is bare earth rather than moss (dirt in the surface mask).
+    private static let dirtZones: Set<String> = [
+        "Barkfall Hollow", "Pinecone Rise", "Briar Tangle", "Hollowlog Crossing", "The Sunken Warren", "Sunstone Mesa",
+    ]
+
+    /// In the surface mask (`surfaces`): the same blots, dirt zones as dirt, the creek bed as sand, the
+    /// village and the trunk's feet as dirt. The random stream runs the same either way, so the
+    /// patches land where the painting has them.
+    private static func paintBiomes(_ map: WorldMap, in cg: CGContext, random: inout SeededRandom, surfaces: Bool = false) {
         for zone in map.zones {
             let tint: UIColor?
             switch zone.name {
@@ -103,9 +113,15 @@ enum GroundPainter {
             case "Windwhistle Peak": tint = UIColor(red: 0.46, green: 0.46, blue: 0.3, alpha: 0.45)
             case "Mossring Stones": tint = UIColor(red: 0.3, green: 0.4, blue: 0.24, alpha: 0.5)
             case "Hollowlog Crossing": tint = UIColor(red: 0.36, green: 0.28, blue: 0.19, alpha: 0.45)
+            case "The Sunken Warren": tint = UIColor(red: 0.3, green: 0.22, blue: 0.15, alpha: 0.75)
+            case "Sunstone Mesa": tint = UIColor(red: 0.6, green: 0.5, blue: 0.3, alpha: 0.5)
+            case "Silverthread Spring": tint = UIColor(red: 0.3, green: 0.45, blue: 0.3, alpha: 0.4)
             default: tint = nil
             }
-            guard let tint else { continue }
+            guard var tint else { continue }
+            if surfaces {
+                tint = dirtZones.contains(zone.name) ? dirtMask.withAlphaComponent(0.75) : .clear
+            }
             // A soft wash over the whole ground, plus patchy extra blots so the edge isn't a circle.
             blot(cg, at: zone.center, radius: zone.radius * 1.15, color: tint.withAlphaComponent(tint.cgColor.alpha * 0.8))
             for _ in 0..<Int(zone.radius / 2) {
@@ -114,16 +130,16 @@ enum GroundPainter {
             }
         }
         // Mossback Creek's sandy bed.
-        let sand = UIColor(red: 0.66, green: 0.58, blue: 0.43, alpha: 1)
+        let sand = surfaces ? sandMask : UIColor(red: 0.66, green: 0.58, blue: 0.43, alpha: 1)
         for hill in map.terrain.hills where hill.height < 0 && hill.radius < 10 {
             blot(cg, at: hill.center, radius: hill.radius * 0.9, color: sand.withAlphaComponent(0.8))
         }
         // Packed dirt in the village, bare earth around the trunk's feet.
-        let dirt = UIColor(red: 0.42, green: 0.33, blue: 0.22, alpha: 0.95)
+        let dirt = surfaces ? dirtMask : UIColor(red: 0.42, green: 0.33, blue: 0.22, alpha: 0.95)
         blot(cg, at: map.villageCenter, radius: map.villageRadius * 1.05, color: dirt)
-        blot(cg, at: .zero, radius: map.trunkCollisionRadius + 9, color: UIColor(red: 0.2, green: 0.16, blue: 0.11, alpha: 0.8))
+        blot(cg, at: .zero, radius: map.trunkCollisionRadius + 9, color: surfaces ? dirtMask : UIColor(red: 0.2, green: 0.16, blue: 0.11, alpha: 0.8))
         if let arena = map.bossArena {
-            blot(cg, at: arena.center, radius: arena.radius * 1.2, color: UIColor(red: 0.3, green: 0.32, blue: 0.3, alpha: 0.85))
+            blot(cg, at: arena.center, radius: arena.radius * 1.2, color: surfaces ? dirtMask : UIColor(red: 0.3, green: 0.32, blue: 0.3, alpha: 0.85))
         }
     }
 
@@ -144,12 +160,16 @@ enum GroundPainter {
         }
     }
 
-    private static func paintRoads(_ map: WorldMap, in cg: CGContext) {
+    /// Dirt roads; `mask` draws just the road bed in that color instead (the surface mask).
+    private static func paintRoads(_ map: WorldMap, in cg: CGContext, color mask: UIColor? = nil) {
         cg.setLineCap(.round)
         cg.setLineJoin(.round)
-        for (width, color) in [(1.9, UIColor(red: 0.38, green: 0.32, blue: 0.2, alpha: 0.35)),
-                               (1.0, UIColor(red: 0.47, green: 0.37, blue: 0.24, alpha: 0.95)),
-                               (0.45, UIColor(red: 0.53, green: 0.43, blue: 0.29, alpha: 0.6))] as [(CGFloat, UIColor)] {
+        let strokes: [(CGFloat, UIColor)] = mask.map { [(1.0, $0)] } ?? [
+            (1.9, UIColor(red: 0.38, green: 0.32, blue: 0.2, alpha: 0.35)),
+            (1.0, UIColor(red: 0.47, green: 0.37, blue: 0.24, alpha: 0.95)),
+            (0.45, UIColor(red: 0.53, green: 0.43, blue: 0.29, alpha: 0.6)),
+        ]
+        for (width, color) in strokes {
             cg.setStrokeColor(color.cgColor)
             for trail in map.trails {
                 cg.setLineWidth(CGFloat(trail.width) * width)
@@ -162,8 +182,15 @@ enum GroundPainter {
         }
     }
 
-    /// Just the contact shadows, white on black, for the ink style to fill with hatching.
-    static func paintShadowMask(_ map: WorldMap, size: Int) -> UIImage {
+    // Surface mask channels (drawn with the lighten blend mode, so each only raises its own channel).
+    private static let shadowMask = UIColor(red: 1, green: 0, blue: 0, alpha: 0.9)
+    private static let dirtMask = UIColor(red: 0, green: 1, blue: 0, alpha: 1)
+    private static let sandMask = UIColor(red: 0, green: 0, blue: 1, alpha: 1)
+
+    /// What the ink ground needs besides color: r = contact shadow, g = dirt (roads, the village,
+    /// bare earth), b = sand (beaches, the creek bed). Grass is whatever is neither. The shader
+    /// picks each spot's block detail (`InkPainter.groundDetail`) from g and b.
+    static func paintSurfaceMask(_ map: WorldMap, size: Int) -> UIImage {
         let format = UIGraphicsImageRendererFormat()
         format.scale = 1
         format.opaque = true
@@ -176,7 +203,19 @@ enum GroundPainter {
             let scale = pixels / CGFloat(2 * extent)
             cg.scaleBy(x: scale, y: scale)
             cg.translateBy(x: CGFloat(extent), y: CGFloat(extent))
-            paintShadows(map, in: cg, color: UIColor(white: 1, alpha: 0.9))
+            cg.setBlendMode(.lighten)
+            var random = SeededRandom(seed: 0x6A0_0D)
+            paintMottling(map, in: cg, random: &random, surfaces: true)
+            paintBiomes(map, in: cg, random: &random, surfaces: true)
+            for lake in map.terrain.lakes {
+                sandMask.setFill()
+                for disc in lake.discs {
+                    let r = CGFloat(disc.radius + Lake.shoreWidth - 0.5)
+                    cg.fillEllipse(in: CGRect(x: CGFloat(disc.center.x) - r, y: CGFloat(disc.center.y) - r, width: 2 * r, height: 2 * r))
+                }
+            }
+            paintRoads(map, in: cg, color: dirtMask)
+            paintShadows(map, in: cg, color: shadowMask)
         }
     }
 

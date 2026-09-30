@@ -95,7 +95,8 @@ extension GameSimulation {
                 brain.hasHidden = false
                 if brain.boss != nil {
                     // A reset boss fight starts over.
-                    brain.boss = BossBrain(swoopTimer: Self.ticks(4), gustTimer: Self.ticks(6))
+                    brain.boss = kind.isFieldBoss ? BossBrain(burrowTimer: Self.ticks(Self.burrowFirstDelay))
+                        : BossBrain(swoopTimer: Self.ticks(4), gustTimer: Self.ticks(6))
                 }
                 brain.state = .idle(ticksLeft: Self.ticks(2))
                 move(&mob, velocity: .zero)
@@ -165,7 +166,7 @@ extension GameSimulation {
             if mob.combat.attackTimer <= 0 {
                 let enraged = brain.boss?.enraged == true
                 mob.combat.attackTimer = Self.ticks(stats.attackInterval * (enraged ? 0.7 : 1))
-                dealDamage(from: &mob, to: preyID, multiplier: 1, skill: nil, blockable: true)
+                dealDamage(from: &mob, to: preyID, multiplier: 1, skill: nil, blockable: true, canMiss: true)
             }
         }
     }
@@ -206,7 +207,7 @@ extension MobKind {
     /// Pulls into its shell (or curls up) once when badly hurt: much harder to hurt for a few seconds.
     public var hidesWhenHurt: Bool {
         switch self {
-        case .snail, .pillBug, .mossTurtle, .coneKnight: true
+        case .snail, .pillBug, .mossTurtle, .coneKnight, .delverMole: true
         default: false
         }
     }
@@ -214,7 +215,7 @@ extension MobKind {
     /// Lowers its head, then charges (or leaps) in a straight line. Step aside!
     public var charges: Bool {
         switch self {
-        case .beetle, .bogFrog, .hedgehog, .mantis, .stagBeetle: true
+        case .beetle, .bogFrog, .hedgehog, .mantis, .stagBeetle, .rootcrawler: true
         default: false
         }
     }

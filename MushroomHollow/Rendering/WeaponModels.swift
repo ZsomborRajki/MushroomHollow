@@ -164,6 +164,14 @@ enum WeaponModels {
             part(Meshes.cone, jaw, [0, 0.09, -0.04], [0.02, 0.2, 0.03], simd_quatf(angle: 0.5, axis: [1, 0, 0]))
             part(Meshes.sphere, Materials.glossy(Palette.stagDark), [0, 0.02, 0], [0.035, 0.04, 0.05])
             trail = (0.64, UIColor(red: 1, green: 0.72, blue: 0.4, alpha: 1))
+        case .delversPick:
+            // A pickaxe: Moldywarp's claws, one each way, on a gold-banded haft.
+            e.addRod(Materials.matte(Palette.darkBark), from: -d * 0.08, to: d * 0.56, radius: 0.022)
+            let claw = Materials.glossy(Palette.claw)
+            part(Meshes.cone, claw, [0, 0.1, -0.015], [0.024, 0.19, 0.024], simd_quatf(angle: -0.25, axis: [1, 0, 0]))
+            part(Meshes.cone, claw, [0, -0.1, -0.015], [0.024, 0.19, 0.024], simd_quatf(angle: .pi + 0.25, axis: [1, 0, 0]))
+            part(Meshes.sphere, Materials.glossy(Palette.crown), [0, 0, 0], [0.034, 0.04, 0.05])
+            trail = (0.62, UIColor(red: 1, green: 0.85, blue: 0.45, alpha: 1))
         default: // Pebble hatchet
             e.addRod(Materials.matte(Palette.bark), from: -d * 0.08, to: d * 0.5, radius: 0.02)
             part(Meshes.sphere, Materials.matte(Palette.pebble, roughness: 0.6), [0, 0.05, 0], [0.032, 0.085, 0.065])

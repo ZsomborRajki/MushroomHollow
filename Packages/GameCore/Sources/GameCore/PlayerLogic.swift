@@ -1,5 +1,7 @@
 extension GameSimulation {
     static let itemCooldownSeconds: Float = 1.5
+    /// Sitting down multiplies HP and MP recovery (as in Flyff).
+    public static let sitRegenMultiplier: Float = 2.5
 
     // Flight tuning.
     public static let flightSpeed: Float = 8
@@ -25,6 +27,7 @@ extension GameSimulation {
             if player.combat.target != id { player.combat.queuedSkill = nil }
             player.combat.target = id
             player.combat.engaged = !isAirborne(player) && (engage || (player.combat.engaged && player.combat.target == id))
+            if player.combat.engaged { player.isSitting = false }
 
         case let .useSkill(skill):
             guard player.stats.isAlive else { return }
@@ -43,8 +46,21 @@ extension GameSimulation {
             player.moveIntent = .zero
             player.velocity = .zero
             player.isFlying = false
+            player.isSitting = false
             player.player?.buffs = []
             events.append(.respawned(entity: player.id))
+
+        case .toggleSit:
+            if player.isSitting {
+                player.isSitting = false
+            } else {
+                guard player.stats.isAlive, !isAirborne(player), player.knockbackTicks == 0 else { return fail(.notUsable, player) }
+                player.isSitting = true
+                player.combat.engaged = false
+                player.combat.queuedSkill = nil
+                player.moveIntent = .zero
+                move(&player, velocity: .zero)
+            }
 
         case let .useItem(item):
             if let failure = useItem(item, player: &player) { fail(failure, player) }
@@ -52,12 +68,12 @@ extension GameSimulation {
         case let .pickupDrop(id):
             if let failure = collectDrop(id, for: &player) { fail(failure, player) }
 
-        case let .equip(item, upgrade):
-            if let failure = equip(Gear(item, upgrade: upgrade), player: &player) { fail(failure, player) }
+        case let .equip(item, upgrade, element):
+            if let failure = equip(Gear(item, upgrade: upgrade, element: element), player: &player) { fail(failure, player) }
 
         case let .unequip(slot):
             guard var data = player.player, let gear = data.equipment[slot] else { return }
-            guard data.inventory.add(gear.item, count: 1, upgrade: gear.upgrade) == 0 else { return fail(.inventoryFull, player) }
+            guard data.inventory.add(gear, count: 1) == 0 else { return fail(.inventoryFull, player) }
             data.equipment[slot] = nil
             player.player = data
             refreshStats(&player)
@@ -66,14 +82,25 @@ extension GameSimulation {
         case let .buy(item, npc):
             if let failure = buy(item, from: npc, player: &player) { fail(failure, player) }
 
-        case let .sell(item, count, upgrade, npc):
-            if let failure = sell(Gear(item, upgrade: upgrade), count: count, to: npc, player: &player) { fail(failure, player) }
+        case let .sell(item, count, upgrade, element, npc):
+            if let failure = sell(Gear(item, upgrade: upgrade, element: element), count: count, to: npc, player: &player) {
+                fail(failure, player)
+            }
 
-        case let .buyBack(item, upgrade, npc):
-            if let failure = buyBack(Gear(item, upgrade: upgrade), from: npc, player: &player) { fail(failure, player) }
+        case let .buyBack(item, upgrade, element, npc):
+            if let failure = buyBack(Gear(item, upgrade: upgrade, element: element), from: npc, player: &player) { fail(failure, player) }
 
         case let .upgrade(location, protect):
             if let failure = upgrade(location, protect: protect, player: &player) { fail(failure, player) }
+
+        case let .infuseElement(location, element, protect):
+            if let failure = infuseElement(location, element: element, protect: protect, player: &player) { fail(failure, player) }
+
+        case let .removeElement(location):
+            if let failure = removeElement(location, player: &player) { fail(failure, player) }
+
+        case let .convertElement(location, element):
+            if let failure = convertElement(location, to: element, player: &player) { fail(failure, player) }
 
         case let .acceptQuest(quest):
             if let failure = acceptQuest(quest, player: &player) { fail(failure, player) }
@@ -121,6 +148,17 @@ extension GameSimulation {
         tickTimers(&player)
         regenerate(&player)
         recordVisits(&player)
+
+        if player.isSitting {
+            // Moving, attacking, casting, or being shoved gets you back on your feet.
+            if player.moveIntent.length > 0.05 || player.combat.engaged || player.combat.queuedSkill != nil
+                || isAirborne(player) || player.knockbackTicks > 0 {
+                player.isSitting = false
+            } else {
+                move(&player, velocity: .zero)
+                return
+            }
+        }
 
         // Being shoved: no control until it wears off.
         if player.knockbackTicks > 0 {
@@ -178,7 +216,7 @@ extension GameSimulation {
         }
         if player.combat.engaged, player.combat.attackTimer <= 0 {
             player.combat.attackTimer = Self.ticks(player.stats.attackInterval)
-            dealDamage(from: &player, to: targetID, multiplier: 1, skill: nil)
+            dealDamage(from: &player, to: targetID, multiplier: 1, skill: nil, canMiss: true)
         }
     }
 
@@ -222,6 +260,7 @@ extension GameSimulation {
         guard data.inventory.count(of: .dandelionSeed) > 0 else { return .missingItem }
         guard player.stats.level >= ItemID.dandelionSeed.definition.requiredLevel else { return .levelTooLow }
         player.isFlying = true
+        player.isSitting = false
         player.combat.engaged = false
         player.combat.queuedSkill = nil
         events.append(.flightChanged(player: player.id, isFlying: true))
@@ -234,6 +273,8 @@ extension GameSimulation {
         guard var data = player.player else { return .notAvailable }
         guard data.playerClass == nil else { return .notAvailable }
         guard player.stats.level >= PlayerClass.requiredLevel else { return .levelTooLow }
+        // As in Flyff, the job change comes after a trial.
+        guard data.completedQuests.contains(.trialOfThePath) else { return .trialFirst }
         guard isNear(.elderMorel, player) else { return .tooFar }
         data.playerClass = playerClass
         player.player = data
@@ -284,8 +325,9 @@ extension GameSimulation {
             if case let .regen(fraction) = buff.effect { return total + fraction }
             return total
         }
-        let hpPerSecond = Float(player.stats.maxHP) * ((outOfCombat ? 0.04 : 0.005) + buffRegen)
-        let mpPerSecond = Float(player.stats.maxMP) * (outOfCombat ? 0.05 : 0.01)
+        let rest = player.isSitting ? Self.sitRegenMultiplier : 1
+        let hpPerSecond = Float(player.stats.maxHP) * ((outOfCombat ? 0.04 : 0.005) * rest + buffRegen)
+        let mpPerSecond = Float(player.stats.maxMP) * (outOfCombat ? 0.05 : 0.01) * rest
         data.hpRegen += hpPerSecond * Self.tickDuration
         data.mpRegen += mpPerSecond * Self.tickDuration
         let hpGain = Int(data.hpRegen), mpGain = Int(data.mpRegen)
@@ -331,6 +373,7 @@ extension GameSimulation {
             let home = map.resolve(map.playerSpawn, radius: player.radius)
             player.position = Vec3(home.x, 0, home.y)
             player.isFlying = false
+            player.isSitting = false
             player.climbIntent = 0
             player.combat = CombatState()
             player.moveIntent = .zero
@@ -345,7 +388,7 @@ extension GameSimulation {
     private mutating func equip(_ gear: Gear, player: inout WorldEntity) -> ActionFailure? {
         let definition = gear.definition
         guard var data = player.player, let slot = definition.equipSlot else { return .notUsable }
-        guard data.inventory.count(of: gear.item, upgrade: gear.upgrade) > 0 else { return .missingItem }
+        guard data.inventory.count(of: gear) > 0 else { return .missingItem }
         guard player.stats.level >= definition.requiredLevel else { return .levelTooLow }
         if let required = definition.requiredClass, data.playerClass != required { return .wrongClass }
 
@@ -354,10 +397,10 @@ extension GameSimulation {
         if definition.weaponType?.isTwoHanded == true { freed.append(.shield) }
         if slot == .shield, data.equipment[.weapon]?.definition.weaponType?.isTwoHanded == true { freed.append(.weapon) }
 
-        data.inventory.remove(gear.item, count: 1, upgrade: gear.upgrade)
+        data.inventory.remove(gear, count: 1)
         for freedSlot in freed {
             guard let previous = data.equipment[freedSlot] else { continue }
-            guard data.inventory.add(previous.item, count: 1, upgrade: previous.upgrade) == 0 else { return .inventoryFull }
+            guard data.inventory.add(previous, count: 1) == 0 else { return .inventoryFull }
             data.equipment[freedSlot] = nil
         }
         data.equipment[slot] = gear
@@ -395,7 +438,7 @@ extension GameSimulation {
         guard npc.definition.isShopkeeper else { return .notAvailable }
         // Pets and Kibble aren't for sale.
         guard gear.definition.sellPrice > 0 else { return .notAvailable }
-        guard data.inventory.remove(gear.item, count: count, upgrade: gear.upgrade) else { return .missingItem }
+        guard data.inventory.remove(gear, count: count) else { return .missingItem }
 
         let earned = gear.sellPrice * count
         data.caps += earned
@@ -413,7 +456,7 @@ extension GameSimulation {
         if data.completedQuests.contains(quest) { return .completed }
         if let kills = data.activeQuests[quest] {
             let progress: Int = switch definition.objective {
-            case .defeat: kills
+            case .defeat, .defeatGiant: kills
             case let .collect(item, _): data.inventory.count(of: item)
             case .explore: kills.nonzeroBitCount // a bitmask of the places visited
             }
@@ -421,6 +464,8 @@ extension GameSimulation {
             return progress >= goal ? .readyToTurnIn : .active(progress: progress, goal: goal)
         }
         if let prerequisite = definition.prerequisite, !data.completedQuests.contains(prerequisite) { return .hidden }
+        // Characters who chose a class before the trial existed never need it.
+        if quest == .trialOfThePath, data.playerClass != nil { return .hidden }
         if let maxLevel = definition.maxLevel, player.stats.level > maxLevel { return .hidden }
         if player.stats.level < definition.requiredLevel { return .tooLowLevel(required: definition.requiredLevel) }
         return .available
@@ -468,13 +513,18 @@ extension GameSimulation {
         return nil
     }
 
-    /// Kill quests count kills of the right mob.
-    mutating func recordKill(of kind: MobKind, by player: inout WorldEntity) {
+    /// Kill quests count kills of the right mob (and Giant trials, Giants of the right level).
+    mutating func recordKill(of kind: MobKind, giant: Bool = false, by player: inout WorldEntity) {
         guard var data = player.player else { return }
         for quest in QuestID.allCases {
-            guard let kills = data.activeQuests[quest],
-                  case let .defeat(target, goal) = quest.definition.objective, target == kind, kills < goal
-            else { continue }
+            guard let kills = data.activeQuests[quest] else { continue }
+            let goal: Int
+            switch quest.definition.objective {
+            case let .defeat(target, count) where target == kind: goal = count
+            case let .defeatGiant(minLevel, count) where giant && kind.stats.level + Giant.levelBonus >= minLevel: goal = count
+            default: continue
+            }
+            guard kills < goal else { continue }
             data.activeQuests[quest] = kills + 1
             events.append(.questProgress(player: player.id, quest: quest, progress: kills + 1, goal: goal))
         }

@@ -3,15 +3,17 @@ import RealityKit
 import SwiftUI
 import UIKit
 
-/// Sprout, the player character, in Flyff proportions: about four heads tall, long-legged and
-/// slim, with big anime eyes and spiky hair (and a sprout leaf growing out of it). A joint
-/// hierarchy (hips, torso, head, shoulders, legs) animated procedurally; gear attaches to the
-/// joints and every armor piece changes the outfit's shape and colors. Townsfolk use the same
-/// body with their own `Look`. Faces +Z and stands on y = 0.
+/// Sprout, the player character, in lively Flyff proportions: about four and a half heads tall,
+/// long-legged and slim-waisted, with big fists and chunky cuffed boots, baggy shorts over bare
+/// knees, a short-sleeved vest, pointed ears, big anime eyes, and spiky hair (with a sprout leaf
+/// growing out of it). A joint hierarchy (hips, torso, head, shoulders, elbows, legs, knees)
+/// animated procedurally, springy and never stiff: knees and elbows stay a little bent. Gear
+/// attaches to the joints and every armor piece changes the outfit's shape and colors.
+/// Townsfolk use the same body with their own `Look`. Faces +Z and stands on y = 0.
 @MainActor
 final class PlayerRig {
     /// Where the right hand grips the dandelion stalk while flying (model space).
-    static let gliderGrip: SIMD3<Float> = [-0.42, 1.45, 0.04]
+    static let gliderGrip: SIMD3<Float> = [-0.42, hipHeight + 0.77, 0.04]
 
     let look: Look
 
@@ -28,12 +30,18 @@ final class PlayerRig {
     private let hatSpots = Entity()
     private let sprout = Entity()
     private var arms: [Entity] = []
+    private var elbows: [Entity] = []
     private var hands: [Entity] = []
     private var legs: [Entity] = []
+    private var knees: [Entity] = []
     private var scarfTails: [Entity] = []
     private var scarfParts: [ModelEntity] = []
     private var outfitParts: [ModelEntity] = []
     private var legParts: [ModelEntity] = []
+    /// Bare knees and shins, covered by trousers when body armor is worn.
+    private var shinParts: [ModelEntity] = []
+    /// Wristbands, hidden under gloves.
+    private var bandParts: [ModelEntity] = []
     private var bootParts: [ModelEntity] = []
     private var cuffParts: [ModelEntity] = []
     private var gear: [Entity] = []
@@ -57,62 +65,101 @@ final class PlayerRig {
     private var cheerStart: Double?
     /// 0 relaxed ... 1 in the battle stance; eases toward the wanted pose each frame.
     private var stance: Float = 0
+    /// 0 standing ... 1 sitting on the ground.
+    private var sit: Float = 0
     private var lastCombat = -Double.infinity
     private var lastFrame: Double?
 
     /// +1 is the character's left (+X), -1 their right (-X). Index 1 holds the weapon.
     private static let sides: [Float] = [1, -1]
-    private static let hipHeight: Float = 0.68
+    private static let hipHeight: Float = 0.8
+    /// Hip to knee; the shin runs from the knee down to the ground.
+    private static let thighLength: Float = 0.38
+    private static let shinLength: Float = hipHeight - thighLength
+    private static let knee: SIMD3<Float> = [0, -thighLength, 0]
     private static let shoulder: SIMD3<Float> = [0.15, 0.4, 0]
+    /// Shoulder to elbow (arm space), then elbow to the fist.
+    private static let elbow: SIMD3<Float> = [0, -0.2, 0]
+    private static let forearmHand: SIMD3<Float> = [0, -0.22, 0]
+    /// Fists (and the gloves over them) are drawn big, Flyff style.
+    private static let fistSize: Float = 1.6
     /// The head keeps its anime detail but is drawn smaller than Sprout's old chibi one.
-    private static let headScale: Float = 0.66
+    private static let headScale: Float = 0.7
     private static let headCenter: SIMD3<Float> = [0, 0.33, 0]
     private static let headRadius: Float = 0.31
 
-    /// A slim tunic over square shoulders, a chest, and a narrow waist, flaring at the hem
-    /// (Flyff's travelling clothes). Wider than it is deep, like a body.
+    /// A short vest over square shoulders, a chest, and a narrow waist, ending just above the
+    /// belt (Flyff's travelling clothes). Wider than it is deep, like a body.
     private static let tunicMesh = Meshes.loft([
         .init(0.455, 0, 0), .init(0.452, 0.045, 0.04), .init(0.44, 0.095, 0.066), .init(0.42, 0.132, 0.08),
         .init(0.385, 0.146, 0.088), .init(0.34, 0.138, 0.094, 0.008), .init(0.27, 0.124, 0.09, 0.006),
-        .init(0.2, 0.108, 0.078), .init(0.15, 0.104, 0.077), .init(0.09, 0.122, 0.089), .init(0.02, 0.152, 0.108),
-        .init(-0.045, 0.176, 0.128), .init(-0.062, 0.179, 0.131), .init(-0.07, 0.15, 0.11), .init(-0.07, 0, 0),
+        .init(0.2, 0.108, 0.078), .init(0.15, 0.102, 0.075), .init(0.11, 0.108, 0.08), .init(0.085, 0.114, 0.084),
+        .init(0.075, 0.09, 0.066), .init(0.075, 0, 0),
     ], segments: 28, name: "tunic")
-    /// A sleeve from the shoulder to the elbow's cuff.
+    /// Baggy shorts from under the vest to the hips, where the legs take over (hips space).
+    private static let pelvisMesh = Meshes.loft([
+        .init(0.2, 0, 0), .init(0.19, 0.098, 0.074), .init(0.1, 0.122, 0.088), .init(0.02, 0.142, 0.098),
+        .init(-0.04, 0.146, 0.1), .init(-0.075, 0.1, 0.08), .init(-0.085, 0, 0),
+    ], segments: 24, name: "pelvis")
+    /// A puffed short sleeve from the shoulder to the middle of the upper arm.
     private static let sleeveMesh = Meshes.loft([
-        .init(0.035, 0, 0), .init(0.025, 0.042, 0.046), .init(0, 0.058, 0.06), .init(-0.06, 0.052, 0.053),
-        .init(-0.14, 0.044, 0.045), .init(-0.2, 0.04, 0.041), .init(-0.25, 0.045, 0.044), .init(-0.262, 0.03, 0.03), .init(-0.262, 0, 0),
+        .init(0.035, 0, 0), .init(0.025, 0.048, 0.052), .init(0, 0.066, 0.066), .init(-0.05, 0.068, 0.066),
+        .init(-0.1, 0.064, 0.062), .init(-0.128, 0.06, 0.058), .init(-0.138, 0.042, 0.042), .init(-0.138, 0, 0),
     ], segments: 16, name: "sleeve")
-    /// A forearm swelling below the elbow and slimming to the wrist.
+    /// The bare upper arm below the sleeve, down to the elbow.
+    private static let upperArmMesh = Meshes.loft([
+        .init(-0.1, 0, 0), .init(-0.105, 0.036, 0.037), .init(-0.16, 0.034, 0.035), .init(-0.2, 0.032, 0.032),
+        .init(-0.215, 0, 0),
+    ], segments: 14, name: "upperArm")
+    /// A forearm swelling below the elbow and slimming to the wrist (elbow space).
     private static let forearmMesh = Meshes.loft([
-        .init(-0.23, 0, 0), .init(-0.24, 0.031, 0.031), .init(-0.29, 0.034, 0.031, 0.002), .init(-0.35, 0.028, 0.025),
-        .init(-0.4, 0.023, 0.021), .init(-0.41, 0, 0),
+        .init(0.015, 0, 0), .init(0.005, 0.032, 0.032), .init(-0.05, 0.036, 0.034, 0.003), .init(-0.12, 0.03, 0.028),
+        .init(-0.19, 0.025, 0.023), .init(-0.2, 0, 0),
     ], segments: 14, name: "forearm")
+    /// A chunky band around the wrist (elbow space).
+    private static let wristbandMesh = Meshes.loft([
+        .init(-0.13, 0, 0), .init(-0.132, 0.035, 0.033), .init(-0.195, 0.032, 0.03), .init(-0.198, 0, 0),
+    ], segments: 14, name: "wristband")
     /// A closed fist: knuckles run front to back while the arm hangs, the palm against the thigh.
     private static let fistMesh = Meshes.loft([
         .init(0.035, 0, 0), .init(0.03, 0.022, 0.026), .init(0.012, 0.033, 0.042), .init(-0.015, 0.037, 0.046, 0.003),
         .init(-0.038, 0.033, 0.042, 0.002), .init(-0.052, 0.022, 0.03), .init(-0.057, 0, 0),
     ], segments: 14, name: "fist")
-    /// Hip to ankle: a thigh tapering to the knee, then a calf.
-    private static let legMesh = Meshes.loft([
-        .init(0.02, 0, 0), .init(0.01, 0.05, 0.052), .init(-0.03, 0.068, 0.07), .init(-0.1, 0.064, 0.067, 0.002),
-        .init(-0.2, 0.052, 0.054, 0.004), .init(-0.26, 0.045, 0.047, 0.006), .init(-0.31, 0.048, 0.05, -0.004),
-        .init(-0.37, 0.049, 0.051, -0.006), .init(-0.44, 0.039, 0.041), .init(-0.48, 0.036, 0.038), .init(-0.49, 0, 0),
-    ], segments: 18, name: "leg")
-    /// A boot's shaft, from below the knee to the ankle.
+    /// Baggy shorts down the thigh, flaring to a hem above the knee (leg space).
+    private static let shortsMesh = Meshes.loft([
+        .init(0.04, 0, 0), .init(0.03, 0.064, 0.066), .init(-0.02, 0.076, 0.08), .init(-0.08, 0.082, 0.084),
+        .init(-0.15, 0.092, 0.09), .init(-0.2, 0.1, 0.096), .init(-0.215, 0.102, 0.097), .init(-0.225, 0.064, 0.064),
+        .init(-0.23, 0, 0),
+    ], segments: 18, name: "shorts")
+    /// The bare thigh between the hem and the knee (leg space).
+    private static let thighMesh = Meshes.loft([
+        .init(-0.17, 0, 0), .init(-0.18, 0.056, 0.058), .init(-0.3, 0.05, 0.052), .init(-0.38, 0.046, 0.048),
+        .init(-0.395, 0, 0),
+    ], segments: 16, name: "thigh")
+    /// Knee to the boot: a slim shin (knee space).
+    private static let shinMesh = Meshes.loft([
+        .init(0.02, 0, 0), .init(0.01, 0.047, 0.049), .init(-0.05, 0.05, 0.053, 0.006), .init(-0.12, 0.046, 0.048, 0.004),
+        .init(-0.19, 0.038, 0.04), .init(-0.2, 0, 0),
+    ], segments: 16, name: "shin")
+    /// A boot's shaft, from mid-shin to the ankle, widening toward the foot (knee space).
     private static let bootShaftMesh = Meshes.loft([
-        .init(-0.435, 0, 0), .init(-0.44, 0.056, 0.058), .init(-0.5, 0.053, 0.056), .init(-0.58, 0.046, 0.05),
-        .init(-0.63, 0.049, 0.056, -0.004), .init(-0.665, 0.05, 0.058, -0.004), .init(-0.672, 0, 0),
+        .init(-0.13, 0, 0), .init(-0.135, 0.058, 0.061), .init(-0.22, 0.056, 0.059), .init(-0.3, 0.064, 0.068, 0.006),
+        .init(-0.345, 0.07, 0.076, 0.012), .init(-0.355, 0, 0),
     ], segments: 18, name: "bootShaft")
-    /// The foot of a boot, lofted heel to toe along its Y and laid flat (so the sole stays level
-    /// while the top slopes down to a rounded toe).
+    /// The boot's big folded-over cuff, flaring out at the top of the shaft (knee space).
+    private static let bootCuffMesh = Meshes.lathe([
+        [0.055, -0.095], [0.078, -0.1], [0.1, -0.16], [0.095, -0.19], [0.06, -0.182], [0.055, -0.095],
+    ], segments: 24, closed: true)
+    /// The foot of a big, chunky boot, lofted toe to heel along its Y (running down its Y, like
+    /// every loft, so it faces outward) and laid flat, so the sole stays level while the top
+    /// slopes down to a round toe.
     private static let bootFootMesh = Meshes.loft([
-        (-0.06, 0.0, 0.0), (-0.055, 0.04, 0.026), (-0.02, 0.05, 0.034), (0.03, 0.053, 0.033), (0.08, 0.05, 0.027),
-        (0.115, 0.038, 0.02), (0.13, 0.0, 0.0),
-    ].map { Meshes.Section($0.0, $0.1, $0.2, PlayerRig.soleLevel - $0.2) }, segments: 16, name: "bootFoot")
+        (-0.09, 0.0, 0.0), (-0.085, 0.056, 0.042), (-0.05, 0.07, 0.062), (0.0, 0.074, 0.066), (0.07, 0.078, 0.056),
+        (0.14, 0.076, 0.05), (0.19, 0.062, 0.042), (0.218, 0.036, 0.026), (0.226, 0.0, 0.0),
+    ].reversed().map { Meshes.Section($0.0, $0.1, $0.2, PlayerRig.soleLevel - $0.2) }, segments: 16, name: "bootFoot")
     private static let soleLevel: Float = 0.03
-    /// A robe's long skirt, from the hips to below the knee.
     private static let robeMesh = Meshes.lathe([
-        [0.17, 0.02], [0.19, -0.1], [0.22, -0.25], [0.25, -0.4], [0.26, -0.44], [0.2, -0.45], [0.15, -0.3], [0.13, 0.02],
+        [0.17, 0.02], [0.19, -0.1], [0.22, -0.27], [0.25, -0.46], [0.26, -0.5], [0.2, -0.51], [0.15, -0.33], [0.13, 0.02],
     ])
     private static let capMesh = Meshes.lathe([
         [0, 0.17], [0.08, 0.163], [0.15, 0.14], [0.21, 0.105], [0.26, 0.06], [0.293, 0.015],
@@ -147,12 +194,20 @@ final class PlayerRig {
         torso.addChild(tunic)
         outfitParts.append(tunic)
         let trim = Materials.matte(look.trim)
-        torso.addPart(Meshes.torus(radius: 0.176, tube: 0.016), trim, at: [0, -0.058, 0], scale: [1.02, 1, 0.74])
-        torso.addPart(Meshes.torus(radius: 0.106, tube: 0.018), Materials.matte(SproutLook.belt), at: [0, 0.15, 0], scale: [1, 1, 0.75])
-        torso.addPart(Meshes.roundedBox, Materials.glossy(SproutLook.gold), at: [0, 0.15, 0.092], scale: [0.05, 0.042, 0.02])
-        for y: Float in [0.26, 0.34] {
-            torso.addSphere(trim, at: [0, y, 0.098 + (y - 0.25) * 0.05], radius: 0.012)
+        // The vest's hem at the waist, and the shirt showing between its open fronts.
+        torso.addPart(Meshes.torus(radius: 0.11, tube: 0.016), trim, at: [0, 0.088, 0], scale: [1.02, 1, 0.76])
+        torso.addPart(Meshes.roundedBox, Materials.matte(look.shirt ?? look.trim), at: [0, 0.27, 0.083], scale: [0.13, 0.3, 0.03],
+                      rotation: simd_quatf(angle: -0.1, axis: [1, 0, 0]))
+        for side in Self.sides {
+            // Lapels folding back from the collar, narrowing to the waist.
+            torso.addPart(Meshes.roundedBox, trim, at: [side * 0.068, 0.29, 0.095], scale: [0.035, 0.26, 0.022],
+                          rotation: simd_quatf(angle: -0.1, axis: [1, 0, 0]) * simd_quatf(angle: -side * 0.12, axis: [0, 0, 1]))
         }
+        // Shorts from under the vest to the thighs, belted at the waist (on the hips, so they
+        // don't lean with the chest).
+        legParts.append(hips.addPart(Self.pelvisMesh, Materials.matte(look.legs), at: .zero, scale: .one))
+        hips.addPart(Meshes.torus(radius: 0.128, tube: 0.019), Materials.matte(SproutLook.belt), at: [0, 0.075, 0], scale: [1, 1, 0.74])
+        hips.addPart(Meshes.roundedBox, Materials.glossy(SproutLook.gold), at: [0, 0.075, 0.097], scale: [0.055, 0.045, 0.02])
         // A slim neck, a little forward of the shoulders.
         torso.addPart(Meshes.loft([.init(0.54, 0.034, 0.036, 0.01), .init(0.47, 0.036, 0.038, 0.004), .init(0.42, 0.045, 0.042)],
                                   segments: 14, name: "neck"),
@@ -176,18 +231,29 @@ final class PlayerRig {
 
     private func buildLegs() {
         let leggings = Materials.matte(look.legs)
+        let shins = Materials.matte(look.bareLegs ? look.skin : look.legs, roughness: 0.7)
+        let boots = Materials.matte(look.boots)
         for side in Self.sides {
             let leg = Entity()
-            leg.position = [side * 0.075, 0, 0]
-            legParts.append(leg.addPart(Self.legMesh, leggings, at: .zero, scale: .one))
-            bootParts.append(leg.addPart(Self.bootShaftMesh, Materials.matte(look.boots), at: .zero, scale: .one))
-            // Laid flat so the sole sits on the ground (hip height below the hips).
-            bootParts.append(leg.addPart(Self.bootFootMesh, Materials.matte(look.boots), at: [0, Self.soleLevel - Self.hipHeight, 0.012],
-                                         scale: .one, rotation: simd_quatf(angle: .pi / 2, axis: [1, 0, 0])))
-            cuffParts.append(leg.addPart(Meshes.torus(radius: 0.058, tube: 0.017), Materials.matte(look.bootCuff),
-                                         at: [0, -0.445, 0], scale: [1, 1, 1.03]))
+            leg.position = [side * 0.08, 0, 0]
+            legParts.append(leg.addPart(Self.shortsMesh, leggings, at: .zero, scale: .one))
+            // A rolled hem, tipped out a little like the baggy shorts in Flyff.
+            legParts.append(leg.addPart(Meshes.torus(radius: 0.097, tube: 0.017), leggings, at: [side * 0.004, -0.21, 0],
+                                        scale: [1, 1, 1.0], rotation: simd_quatf(angle: -side * 0.08, axis: [0, 0, 1])))
+            shinParts.append(leg.addPart(Self.thighMesh, shins, at: .zero, scale: .one))
+            let knee = Entity()
+            knee.position = Self.knee
+            shinParts.append(knee.addPart(Meshes.sphere, shins, at: [0, 0, 0.004], scale: [0.047, 0.05, 0.05]))
+            shinParts.append(knee.addPart(Self.shinMesh, shins, at: .zero, scale: .one))
+            bootParts.append(knee.addPart(Self.bootShaftMesh, boots, at: .zero, scale: .one))
+            // Laid flat so the sole sits on the ground (the shin's length below the knee).
+            bootParts.append(knee.addPart(Self.bootFootMesh, boots, at: [0, Self.soleLevel - Self.shinLength, 0.018],
+                                          scale: .one, rotation: simd_quatf(angle: .pi / 2, axis: [1, 0, 0])))
+            cuffParts.append(knee.addPart(Self.bootCuffMesh, Materials.matte(look.bootCuff), at: .zero, scale: [1, 1, 1.04]))
+            leg.addChild(knee)
             hips.addChild(leg)
             legs.append(leg)
+            knees.append(knee)
         }
     }
 
@@ -197,20 +263,28 @@ final class PlayerRig {
             let arm = Entity()
             arm.position = Self.shoulder * [side, 1, 1]
             outfitParts.append(arm.addPart(Self.sleeveMesh, Materials.matte(look.tunic), at: .zero, scale: .one))
-            arm.addPart(Meshes.torus(radius: 0.042, tube: 0.012), Materials.matte(look.trim), at: [0, -0.252, 0], scale: .one)
-            arm.addPart(Self.forearmMesh, skin, at: .zero, scale: .one)
+            arm.addPart(Meshes.torus(radius: 0.058, tube: 0.017), Materials.matte(look.trim), at: [0, -0.125, 0], scale: .one)
+            arm.addPart(Self.upperArmMesh, skin, at: .zero, scale: .one)
+            let elbow = Entity()
+            elbow.position = Self.elbow
+            elbow.addPart(Meshes.sphere, skin, at: .zero, scale: .init(repeating: 0.033))
+            elbow.addPart(Self.forearmMesh, skin, at: .zero, scale: .one)
+            bandParts.append(elbow.addPart(Self.wristbandMesh, Materials.matte(look.bootCuff), at: .zero, scale: .one))
             let hand = Entity()
-            hand.position = Self.hand
+            hand.position = Self.forearmHand
             addFist(to: hand, skin)
-            arm.addChild(hand)
+            elbow.addChild(hand)
+            arm.addChild(elbow)
             torso.addChild(arm)
             arms.append(arm)
+            elbows.append(elbow)
             hands.append(hand)
         }
     }
 
     /// A fist with its thumb folded over the front, `grow` times the bare hand's size (gloves).
     private func addFist(to hand: Entity, _ material: any RealityKit.Material, grow: Float = 1) {
+        let grow = grow * Self.fistSize
         hand.addPart(Self.fistMesh, material, at: [0, 0.01, 0] * grow, scale: .init(repeating: grow))
         hand.addPart(Meshes.sphere, material, at: [0, 0.006, 0.036] * grow, scale: [0.017, 0.028, 0.016] * grow,
                      rotation: simd_quatf(angle: -0.5, axis: [1, 0, 0]))
@@ -224,9 +298,9 @@ final class PlayerRig {
         face.transform = Transform(scale: [0.32, Self.headRadius, Self.headRadius], rotation: simd_quatf(angle: 0, axis: [0, 1, 0]),
                                    translation: Self.headCenter)
         head.addChild(face)
-        // Small ears, pointed a little up and back, peeking out between the side locks.
+        // Long pointed ears (Flyff's), sweeping up and back out of the side locks.
         for side in Self.sides {
-            addLock(skin, lon: side * 1.5, lat: -0.12, size: [0.04, 0.07, 0.02], roll: side * 0.55 + .pi, lift: -0.02)
+            addLock(skin, lon: side * 1.55, lat: -0.05, size: [0.05, 0.15, 0.024], roll: side * 1.1 + .pi, lift: 0.01)
         }
 
         // Hair: a soft cap hugging the skull, then pointed locks laid onto it, so the outline is
@@ -353,6 +427,7 @@ final class PlayerRig {
 
         var outfit = Materials.matte(look.tunic)
         var leggings = Materials.matte(look.legs)
+        var shins = Materials.matte(look.bareLegs ? look.skin : look.legs, roughness: 0.7)
         var boots = Materials.matte(look.boots)
         var cuffs = Materials.matte(look.bootCuff)
         var cap = Materials.matte(Palette.capRed, roughness: 0.5)
@@ -384,6 +459,7 @@ final class PlayerRig {
             if item.definition.equipSlot == .body, let style = Self.bodyStyle(item) {
                 // Legs match the armor, a shade darker (Flyff sets come with trousers).
                 leggings = Materials.matte(Self.bodyColor(item).darker(0.72))
+                shins = leggings
                 addBodyStyle(style, color: Self.bodyColor(item), trim: Self.bodyTrim(item))
             }
             switch item {
@@ -464,6 +540,20 @@ final class PlayerRig {
                     petal.addSphere(Materials.matte(Palette.mantisPink, roughness: 0.6), at: [0, 0.02, 0], radius: 0.09, squash: [1.2, 0.6, 1.1])
                     attach(petal, to: arm)
                 }
+            case .warrenCrown:
+                cap = Materials.matte(Palette.moleKing, roughness: 1)
+                showSpots = false
+                let crown = Entity()
+                let gold = Materials.glossy(Palette.crown)
+                crown.addPart(Meshes.torus(radius: 0.17, tube: 0.025), gold, at: [0, 0.13, 0], scale: .one)
+                for i in 0..<6 {
+                    let a = Float(i) / 6 * 2 * .pi
+                    crown.addPart(Meshes.cone, gold, at: [sin(a) * 0.17, 0.19, cos(a) * 0.17], scale: [0.03, 0.09, 0.03])
+                }
+                crown.addSphere(Materials.glow(Palette.roseRed), at: [0, 0.14, 0.19], radius: 0.028)
+                attach(crown, to: hat)
+            case .tunnelerClaws:
+                addGloves(Materials.matte(Palette.molePink, roughness: 0.7), cuff: Materials.matte(Palette.moleFur, roughness: 1))
             case .silkweaveGloves:
                 addGloves(Materials.matte(Palette.mothFur, roughness: 0.8), cuff: Materials.matte(Palette.spiderPurple))
             case .rosethornGauntlets:
@@ -516,6 +606,9 @@ final class PlayerRig {
 
         for part in outfitParts { part.model?.materials = [outfit] }
         for part in legParts { part.model?.materials = [leggings] }
+        for part in shinParts { part.model?.materials = [shins] }
+        let gloved = items.contains { $0.definition.equipSlot == .gloves }
+        for band in bandParts { band.isEnabled = !gloved }
         for part in bootParts { part.model?.materials = [boots] }
         for part in cuffParts { part.model?.materials = [cuffs] }
         hatCap.model?.materials = [cap]
@@ -640,7 +733,7 @@ final class PlayerRig {
         case .robe:
             let skirt = Entity()
             skirt.addPart(Self.robeMesh, main, at: [0, -0.02, 0], scale: .one)
-            skirt.addPart(Meshes.torus(radius: 0.255, tube: 0.018), edge, at: [0, -0.46, 0], scale: .one)
+            skirt.addPart(Meshes.torus(radius: 0.255, tube: 0.018), edge, at: [0, -0.52, 0], scale: .one)
             attach(skirt, to: hips)
         case .coat:
             let coat = Entity()
@@ -658,7 +751,8 @@ final class PlayerRig {
         for hand in hands {
             let glove = Entity()
             addFist(to: glove, material, grow: 1.18)
-            glove.addPart(Meshes.torus(radius: 0.034, tube: 0.014), cuff, at: [0, 0.05, 0], scale: [1, 1, 1.1])
+            glove.addPart(Meshes.torus(radius: 0.034, tube: 0.014), cuff, at: [0, 0.05 * Self.fistSize, 0],
+                          scale: [Self.fistSize, Self.fistSize, Self.fistSize * 1.1])
             attach(glove, to: hand)
         }
     }
@@ -683,6 +777,12 @@ final class PlayerRig {
     /// World position projectiles leave from: the nocked arrow, a wand's tip, a staff's droplet.
     var muzzlePosition: SIMD3<Float>? {
         held?.muzzle?.position(relativeTo: nil)
+    }
+
+    /// The held weapon and its family, for effects hung on it (element auras).
+    var heldWeapon: (held: WeaponModels.Held, type: WeaponType)? {
+        guard let held, let weapon else { return nil }
+        return (held, weapon)
     }
 
     // MARK: - Animation
@@ -797,7 +897,8 @@ final class PlayerRig {
     private static let trailSpan: Float = 0.2
     /// The wrist cocks the blade out along the arm while swinging.
     private static let wristBend = simd_quatf(angle: 1.35, axis: [1, 0, 0])
-    private static let hand: SIMD3<Float> = [0, -0.42, 0]
+    /// Where the fist is in arm space with the elbow straight.
+    private static let hand = elbow + forearmHand
     private static let identity = simd_quatf(angle: 0, axis: [1, 0, 0])
     private static let rightShoulder = shoulder * [-1, 1, 1]
     private static let leftShoulder = shoulder
@@ -831,6 +932,10 @@ final class PlayerRig {
         var fainted = false
         /// Fighting something (the sim's `EntitySnapshot.target`).
         var engaged = false
+        /// Resting on the ground (Flyff's sit).
+        var sitting = false
+        /// An idle gesture (townsfolk waving, stretching, looking about).
+        var gesture: IdleFlourish.Playing?
     }
 
     /// The battle-ready pose, weapon arm at index 1: feet staggered with the left foot forward,
@@ -844,15 +949,21 @@ final class PlayerRig {
         var armSwing: [Float]
         var armSpread: [Float]
         var wrist: Float
+        /// Knees bend into a crouch, elbows bend the forearms up.
+        var knee: [Float]
+        var elbow: [Float]
     }
 
-    private static let meleeStance = Stance(legSwing: [-0.36, 0.3], legSpread: 0.16, hipYaw: -0.38, twist: 0.1, lean: 0.16,
-                                            armSwing: [-1, -1.25], armSpread: [0.5, 0.22], wrist: 0.3)
+    private static let meleeStance = Stance(legSwing: [-0.55, 0.18], legSpread: 0.2, hipYaw: -0.38, twist: 0.1, lean: 0.18,
+                                            armSwing: [-0.6, -0.9], armSpread: [0.55, 0.3], wrist: 0.3,
+                                            knee: [0.55, 0.4], elbow: [0.7, 0.35])
     /// Wide and low under a heavy two-hander.
-    private static let maulStance = Stance(legSwing: [-0.4, 0.36], legSpread: 0.2, hipYaw: -0.5, twist: 0.2, lean: 0.14,
-                                            armSwing: [-0.8, -0.6], armSpread: [0.3, 0.3], wrist: 0)
-    private static let rangedStance = Stance(legSwing: [-0.22, 0.2], legSpread: 0.17, hipYaw: -0.45, twist: 0.12, lean: 0.06,
-                                             armSwing: [-1.1, -0.35], armSpread: [0.2, 0.45], wrist: 0)
+    private static let maulStance = Stance(legSwing: [-0.6, 0.22], legSpread: 0.24, hipYaw: -0.5, twist: 0.2, lean: 0.16,
+                                            armSwing: [-0.8, -0.6], armSpread: [0.3, 0.3], wrist: 0,
+                                            knee: [0.6, 0.45], elbow: [0, 0])
+    private static let rangedStance = Stance(legSwing: [-0.38, 0.1], legSpread: 0.19, hipYaw: -0.45, twist: 0.12, lean: 0.08,
+                                             armSwing: [-1.1, -0.35], armSpread: [0.2, 0.5], wrist: 0,
+                                             knee: [0.4, 0.3], elbow: [0, 0.5])
     /// How long the stance lingers after the last swing or hit.
     private static let stanceLinger = 4.0
 
@@ -902,14 +1013,23 @@ final class PlayerRig {
 
         // Square up while fighting, and relax a few seconds after the last exchange.
         let fighting = motion.engaged || time - lastCombat < Self.stanceLinger
-        let ready = fighting && !motion.moving && !motion.airborne && !motion.fainted && cheer == nil
+        let ready = fighting && !motion.moving && !motion.airborne && !motion.fainted && !motion.sitting && cheer == nil
+        // Ease down onto the ground and back up.
+        sit += ((motion.sitting && !motion.fainted ? 1 : 0) - sit) * min(1, dt * 7)
+        let seated = Self.ease(sit)
         stance += ((ready ? 1 : 0) - stance) * min(1, dt * 6)
         let k = Self.ease(stance)
 
         var armSwing: [Float] = [0, 0] // about X; negative swings forward and up
-        var armSpread: [Float] = [0.28, 0.28]
+        var armSpread: [Float] = [0.46, 0.46]
         var legSwing: [Float] = [0, 0] // about X; positive swings back
-        var legSpread: [Float] = [0, 0] // about Z; positive moves the foot outward
+        var legSpread: [Float] = [0.13, 0.13] // about Z; positive moves the foot outward
+        var knee: [Float] = [0, 0] // positive folds the shin back
+        var legTurn: Float = 0.22 // toes and knees turned out, a little bow-legged
+        var elbow: [Float] = [0.45, 0.45] // positive folds the forearm forward and up
+        var armRoll: [Float] = [0.55, 0.55] // turns the elbow's bend outward, fists out from the hips
+        /// 0...1 per arm: how much a pose needs the arm straight (aiming, gripping, striking).
+        var straighten: [Float] = [0, 0]
         var hipYaw: Float = 0
         var twist: Float = 0
         var lean: Float = 0 // torso pitch; positive leans forward
@@ -924,29 +1044,64 @@ final class PlayerRig {
         if motion.fainted {
             armSpread = [0.55, 0.55]
             armSwing = [-0.2, -0.3]
+            elbow = [0.2, 0.2]
+            knee = [0.3, 0.1]
             tilt = 0.3
         } else if motion.airborne {
             // Legs dangle and kick; they trail behind when gliding forward.
             let trail: Float = motion.moving ? 0.5 : 0.15
             legSwing = [trail + sin(t * 2.1) * 0.35, trail + sin(t * 2.1 + 2) * 0.35]
+            knee = [0.5 + sin(t * 2.1 + 1) * 0.35, 0.5 + sin(t * 2.1 + 3) * 0.35]
             armSpread[0] = 1.1 + sin(t * 2.4) * 0.15
             armSwing[0] = -0.3
+            elbow[0] = 0.35
             scarfLift = motion.moving ? 1.1 + sin(t * 14) * 0.12 : 0.5 + sin(t * 3) * 0.1
             sproutSway = sin(t * 5) * 0.25
         } else if motion.moving {
             // A bouncy, skipping run (the renderer bobs the whole body in step).
             let stride = sin(t * 12)
+            let pace = cos(t * 12)
             legSwing = [stride * 0.7, -stride * 0.7]
+            legSpread = [0.03, 0.03]
+            legTurn = 0.08
+            // The knee folds high as the leg swings through, anime style.
+            knee = [0.2 + max(0, -pace) * 1.2, 0.2 + max(0, pace) * 1.2]
             armSwing = [-stride * 0.6, stride * 0.6]
+            // Forearms pump, bent up at the elbow.
+            elbow = [1.0 + stride * 0.25, 1.0 - stride * 0.25]
+            armRoll = [0.3, 0.3]
             twist = stride * 0.1
             nod = 0.06
             scarfLift = 0.75 + sin(t * 16) * 0.12
             sproutSway = stride * 0.3
         } else {
+            // Standing easy but springy: feet apart, knees soft, elbows out, weight
+            // rocking slowly from foot to foot.
             breath = sin(t * 2.1 + seed)
-            armSwing = [breath * 0.04, -breath * 0.04]
+            let shift = sin(t * 0.9 + seed)
+            armSwing = [breath * 0.04 - 0.08, -breath * 0.04 - 0.08]
+            elbow = [0.5 + breath * 0.05, 0.5 - breath * 0.05]
+            knee = [0.16 + shift * 0.07, 0.16 - shift * 0.07]
+            legSwing = [-knee[0] * 0.5, -knee[1] * 0.5]
+            hipYaw = shift * 0.04
             tilt = sin(t * 0.8 + seed) * 0.07
             nod = breath * 0.02
+        }
+        if seated > 0.001 {
+            // Sitting on the ground, legs out in front, hands resting on the knees, swaying a little.
+            let sway = sin(t * 1.1 + seed)
+            for i in 0..<2 {
+                legSwing[i] += (-1.5 + Float(i) * 0.08 - legSwing[i]) * seated
+                legSpread[i] += (0.24 - legSpread[i]) * seated
+                knee[i] += (0.45 - knee[i]) * seated
+                armSwing[i] += (-0.7 - armSwing[i]) * seated
+                armSpread[i] += (0.28 - armSpread[i]) * seated
+                elbow[i] += (0.35 - elbow[i]) * seated
+                armRoll[i] += (0.2 - armRoll[i]) * seated
+            }
+            lean += (0.08 + sway * 0.03) * seated
+            tilt += sway * 0.05 * seated
+            nod += 0.06 * seated
         }
         let strideTwist = twist
 
@@ -960,7 +1115,11 @@ final class PlayerRig {
                 blend(&legSpread[i], pose.legSpread)
                 blend(&armSwing[i], pose.armSwing[i] + bounce * 0.08)
                 blend(&armSpread[i], pose.armSpread[i])
+                blend(&knee[i], pose.knee[i] + bounce * 0.05)
+                blend(&elbow[i], pose.elbow[i])
+                blend(&armRoll[i], 0)
             }
+            blend(&legTurn, 0.3)
             blend(&hipYaw, pose.hipYaw)
             blend(&twist, pose.twist)
             blend(&lean, pose.lean + bounce * 0.04)
@@ -982,6 +1141,7 @@ final class PlayerRig {
                 let thrust = sin(p * .pi)
                 armSwing[1] += (-1.5 - armSwing[1]) * thrust
                 armSpread[1] += (0.1 - armSpread[1]) * thrust
+                straighten[1] = max(straighten[1], thrust)
                 armSwing[0] += (-0.4 - armSwing[0]) * thrust
                 twist += 0.25 * thrust
                 hipYaw += 0.15 * thrust
@@ -999,6 +1159,7 @@ final class PlayerRig {
                 lift += body.lift
                 legSwing[0] -= body.step
                 legSwing[1] += body.step * 0.7
+                knee[0] += body.step * 0.5
                 for i in 0..<2 { legSpread[i] += body.spread }
                 if weapon != .maul {
                     // The free arm flings back and out for balance.
@@ -1023,6 +1184,7 @@ final class PlayerRig {
                 twist += 0.2 * phase.thrust
                 legSwing[0] -= 0.32 * phase.thrust
                 legSwing[1] += 0.22 * phase.thrust
+                knee[0] += 0.2 * phase.thrust
                 lift += 0.02 * phase.twirl * abs(sin(phase.spin))
                 sproutSway += sin(p * 2 * .pi) * 0.3
             }
@@ -1052,12 +1214,14 @@ final class PlayerRig {
 
         var armPose = (0..<2).map { i in
             simd_quatf(angle: Self.sides[i] * armSpread[i], axis: [0, 0, 1]) * simd_quatf(angle: armSwing[i], axis: [1, 0, 0])
+                * simd_quatf(angle: Self.sides[i] * armRoll[i], axis: [0, 1, 0])
         }
         if let hold = weapon.flatMap({ Self.holds[$0] }) {
             armPose[1] = simd_slerp(armPose[1], hold, k)
         }
         if let slash {
             armPose[1] = simd_slerp(armPose[1], slash.arm, slash.amount)
+            straighten[1] = max(straighten[1], slash.amount)
         }
 
         // Bow: the left arm aims, the right hand draws the string back to the cheek.
@@ -1078,6 +1242,7 @@ final class PlayerRig {
             armPose[1] = simd_slerp(armPose[1], pull, aimAmount)
             nockAmount = aimAmount * phase.holding
             arrowShown = aimAmount > 0.4 && phase.nocked
+            for i in 0..<2 { straighten[i] = max(straighten[i], aimAmount) }
         }
 
         // Staff: held upright, thrust at the foe, then twirled.
@@ -1088,11 +1253,13 @@ final class PlayerRig {
             staffFrame = simd_slerp(staffFrame, Self.staffThrust, phase.thrust)
             armPose[1] = simd_slerp(armPose[1], Self.staffTwirlArm, phase.twirl)
             staffFrame = simd_slerp(staffFrame, simd_quatf(angle: phase.spin, axis: Self.twirlAxis), phase.twirl)
+            straighten[1] = max(straighten[1], phase.thrust, phase.twirl)
         }
 
         // Shield: raised in front of the face to catch a blow.
         if shield != nil {
             armPose[0] = simd_slerp(armPose[0], Self.blockArm, blockAmount)
+            elbow[0] += (0.5 - elbow[0]) * blockAmount
         }
 
         let slashWrist = motion.airborne || cast != nil || cheer != nil ? 0 : slash?.amount ?? 0
@@ -1105,17 +1272,20 @@ final class PlayerRig {
             let grip = Self.rightShoulder + armPose[1].act(Self.hand + weaponWrist.act(WeaponModels.offhandGrip))
             let reach = simd_quatf(from: [0, -1, 0], to: simd_normalize(grip - Self.leftShoulder))
             armPose[0] = simd_slerp(armPose[0], reach, max(k, slash?.amount ?? 0))
+            for i in 0..<2 { straighten[i] = max(straighten[i], k, slash?.amount ?? 0) }
         }
 
         if motion.airborne, !motion.fainted {
             // Hanging on to the dandelion stalk.
             let shoulder = SIMD3<Float>(-Self.shoulder.x, Self.hipHeight + Self.shoulder.y, 0)
             armPose[1] = simd_quatf(from: [0, -1, 0], to: simd_normalize(Self.gliderGrip - shoulder))
+            straighten[1] = 1
         } else if cast != nil, !motion.fainted {
             // Both arms up in a V to call the magic down.
             for i in 0..<2 {
                 let raised = simd_quatf(from: [0, -1, 0], to: simd_normalize([Self.sides[i] * 0.6, 0.75, 0.3]))
                 armPose[i] = simd_slerp(armPose[i], raised, castAmount)
+                elbow[i] += (0.25 - elbow[i]) * castAmount
             }
             nod -= 0.15 * castAmount
         }
@@ -1126,39 +1296,84 @@ final class PlayerRig {
                 let wave = simd_quatf(angle: Self.sides[i] * sin(t * 18) * 0.3, axis: [0, 0, 1])
                 let raised = wave * simd_quatf(from: [0, -1, 0], to: simd_normalize([Self.sides[i] * 0.45, 0.85, 0.1]))
                 armPose[i] = simd_slerp(armPose[i], raised, cheerAmount)
+                elbow[i] += (0.7 - elbow[i]) * cheerAmount
             }
             nod -= 0.12 * cheerAmount
         }
+        // Idle gestures, only while standing about with nothing else going on.
+        var glance: Float = 0
+        var gestureFace: FacePainter.Expression?
+        if let playing = motion.gesture, !motion.moving, !motion.airborne, !motion.fainted, !fighting,
+           attackProgress == nil, hurt == nil, cast == nil, cheer == nil, seated < 0.999 {
+            let p = playing.progress
+            let amount = Self.ease(min(1, p / 0.2) * min(1, (1 - p) / 0.25)) * (1 - seated)
+            switch playing.gesture {
+            case .wave:
+                // A friendly wave with the right hand, head tipped.
+                let wave = simd_quatf(angle: sin(t * 9) * 0.35, axis: [0, 0, 1])
+                armPose[1] = simd_slerp(armPose[1], wave * simd_quatf(from: [0, -1, 0], to: simd_normalize([-0.6, 0.6, 0.2])), amount)
+                elbow[1] += (0.8 - elbow[1]) * amount
+                tilt += 0.12 * amount
+                if amount > 0.3 { gestureFace = .happy }
+            case .stretch:
+                // Both arms up, up on the toes, face to the sky with the eyes shut.
+                for i in 0..<2 {
+                    let raised = simd_quatf(from: [0, -1, 0], to: simd_normalize([Self.sides[i] * 0.3, 1, -0.1]))
+                    armPose[i] = simd_slerp(armPose[i], raised, amount)
+                    elbow[i] += (0.1 - elbow[i]) * amount
+                }
+                lift += 0.03 * amount
+                nod -= 0.3 * amount
+                if amount > 0.5 { gestureFace = .blink }
+            case .lookAround:
+                // A glance one way, then the other.
+                glance = 0.75 * amount * (IdleFlourish.plateau(p, 0.05, 0.2, 0.4, 0.5) - IdleFlourish.plateau(p, 0.5, 0.62, 0.82, 0.95))
+                tilt += glance * 0.1
+            case .scratchHead:
+                // Scratching beside the ear, head tipped toward the hand.
+                let scratch = simd_quatf(angle: sin(t * 22) * 0.08, axis: [1, 0, 0])
+                armPose[1] = simd_slerp(armPose[1], scratch * simd_quatf(from: [0, -1, 0], to: simd_normalize([-0.5, 0.75, 0.3])), amount)
+                elbow[1] += (1.7 - elbow[1]) * amount
+                tilt += 0.18 * amount
+            }
+        }
 
-        var drop: Float = 0
-        if !motion.moving, !motion.airborne, !motion.fainted {
-            // Sink so the planted foot stays on the ground as the legs spread and stagger.
-            let reach = (0..<2).map { cos(legSwing[$0]) * cos(legSpread[$0]) }.max() ?? 1
-            drop = Self.hipHeight * (1 - reach)
+        var drop: Float = Self.hipHeight * 0.86 * seated
+        if !motion.airborne, !motion.fainted, seated < 0.001 {
+            // Sink so the planted foot stays on the ground as the legs spread, stagger, and bend
+            // (the renderer bobs a running body in step, so running only sinks for the knees).
+            let reach = (0..<2).map { i in
+                Self.footDepth(swing: motion.moving ? 0 : legSwing[i], spread: legSpread[i], turn: legTurn, knee: knee[i])
+            }.max() ?? Self.hipHeight
+            drop = Self.hipHeight - reach
         }
         body.position.y = lift - drop
         hips.orientation = hipsRotation
         torso.orientation = torsoRotation
         torso.scale = [1 + breath * 0.008, 1 + breath * 0.012, 1 + breath * 0.008]
-        head.orientation = simd_quatf(angle: look, axis: [0, 1, 0]) * simd_quatf(angle: nod, axis: [1, 0, 0])
+        head.orientation = simd_quatf(angle: look + glance, axis: [0, 1, 0]) * simd_quatf(angle: nod, axis: [1, 0, 0])
             * simd_quatf(angle: tilt, axis: [0, 0, 1])
         for i in 0..<2 {
             arms[i].orientation = armPose[i]
+            elbows[i].orientation = simd_quatf(angle: -max(0, elbow[i]) * (1 - straighten[i]), axis: [1, 0, 0])
             legs[i].orientation = simd_quatf(angle: Self.sides[i] * legSpread[i], axis: [0, 0, 1])
-                * simd_quatf(angle: legSwing[i], axis: [1, 0, 0])
+                * simd_quatf(angle: legSwing[i], axis: [1, 0, 0]) * simd_quatf(angle: Self.sides[i] * legTurn, axis: [0, 1, 0])
+            knees[i].orientation = simd_quatf(angle: max(0, knee[i]), axis: [1, 0, 0])
         }
+        // Frames the hands hold in torso space, whatever the elbow does.
+        let forearms = (0..<2).map { armPose[$0] * elbows[$0].orientation }
         for (i, tail) in scarfTails.enumerated() {
             tail.orientation = simd_quatf(angle: Self.sides[i] * 0.18, axis: [0, 0, 1])
                 * simd_quatf(angle: scarfLift + Float(i) * 0.08 + sin(t * 9 + Float(i)) * 0.04, axis: [1, 0, 0])
         }
         // Bows, staves, and shields keep their own facing whatever the arm does.
-        hands[1].orientation = weapon == .staff ? armPose[1].inverse * staffFrame : weaponWrist
+        hands[1].orientation = weapon == .staff ? forearms[1].inverse * staffFrame : weaponWrist
         if weapon == .bow {
-            hands[0].orientation = armPose[0].inverse * bowFrame
+            hands[0].orientation = forearms[0].inverse * bowFrame
             updateBowString(nock: nockAmount, arrow: arrowShown)
         } else if shield != nil {
             let facing = simd_slerp(simd_slerp(Self.shieldRest, Self.shieldReady, k), Self.shieldBlock, blockAmount)
-            hands[0].orientation = armPose[0].inverse * facing
+            hands[0].orientation = forearms[0].inverse * facing
         }
         if let p = slashProgress, slashWrist > 0, case let .slash(style) = attack {
             updateTrail(p, style, baseTwist: base.twist, baseLean: base.lean)
@@ -1177,6 +1392,8 @@ final class PlayerRig {
             .hurt
         } else if cheer != nil {
             .happy
+        } else if let gestureFace {
+            gestureFace
         } else {
             blinking ? .blink : .open
         }
@@ -1312,6 +1529,14 @@ final class PlayerRig {
         trail.show(samples, strength: strength)
     }
 
+    /// How far below the hip joint a foot reaches with the leg swung, spread, turned, and bent at the knee.
+    private static func footDepth(swing: Float, spread: Float, turn: Float, knee: Float) -> Float {
+        let leg = simd_quatf(angle: spread, axis: [0, 0, 1]) * simd_quatf(angle: swing, axis: [1, 0, 0])
+            * simd_quatf(angle: turn, axis: [0, 1, 0])
+        let shin = simd_quatf(angle: max(0, knee), axis: [1, 0, 0]).act([0, -shinLength, 0])
+        return -leg.act(Self.knee + shin).y
+    }
+
     /// 0...1 progress of a timed move, clearing it once it's over.
     private static func progress(_ start: inout Double?, _ time: Double, duration: Double) -> Float? {
         guard let begin = start else { return nil }
@@ -1343,6 +1568,10 @@ extension PlayerRig {
         var bootCuff = SproutLook.bootCuff
         var scarf = true
         var scarfColor = SproutLook.scarf
+        /// The shirt under the open vest (the trim color when nil).
+        var shirt: UIColor? = SproutLook.shirt
+        /// Bare knees and shins between the shorts and the boots, like a Flyff vagrant.
+        var bareLegs = true
         var sprout = true
         var beard: UIColor?
         var longBeard = false

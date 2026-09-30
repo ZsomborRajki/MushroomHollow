@@ -76,6 +76,9 @@ extension MobKind {
         case .thornrose: 2.3
         case .grumblecap: 2.3
         case .stagBeetle: 1.4
+        case .delverMole: 1.3
+        case .rootcrawler: 0.9
+        case .moldywarp: 3.5
         case .mouse: 0.9
         case .owl: 6.8
         }
@@ -106,6 +109,11 @@ extension EntityKind {
         case let .mob(kind): kind.headHeight
         case .npc: 2.1
         }
+    }
+
+    /// A boss's full title, for banners and the boss bar.
+    var bossTitle: String {
+        self == .mob(.moldywarp) ? "Moldywarp, the Warren King" : displayName
     }
 
     var displayName: String {

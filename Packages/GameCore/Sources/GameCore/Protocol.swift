@@ -9,23 +9,32 @@ public enum PlayerCommand: Codable, Sendable, Equatable {
     case useSkill(SkillID)
     /// Get back up at the village after fainting.
     case respawn
+    /// Sit down to rest (faster HP/MP recovery) or stand back up. Moving, fighting, or being hit also stands you up.
+    case toggleSit
 
     // Items
     case useItem(ItemID)
     /// Collect a ground drop within reach (walking over drops also collects them).
     case pickupDrop(UInt32)
-    /// Equips `item` at `upgrade` from the bag.
-    case equip(ItemID, upgrade: Int = 0)
+    /// Equips `item` at `upgrade` (and with `element`) from the bag.
+    case equip(ItemID, upgrade: Int = 0, element: ElementUpgrade? = nil)
     case unequip(EquipSlot)
 
     // NPCs (must be within `NPCID.interactionRange`)
     case buy(ItemID, from: NPCID)
-    case sell(ItemID, count: Int, upgrade: Int = 0, to: NPCID)
+    case sell(ItemID, count: Int, upgrade: Int = 0, element: ElementUpgrade? = nil, to: NPCID)
     /// Undo a sale: buys back the newest sale of this item (the whole pile) for what the shop paid.
-    case buyBack(ItemID, upgrade: Int = 0, from: NPCID)
+    case buyBack(ItemID, upgrade: Int = 0, element: ElementUpgrade? = nil, from: NPCID)
     /// At a blacksmith: try to raise one piece of gear by +1. `protect` spends a Ward Charm
     /// on risky attempts so a failure can't cost a level or the item.
     case upgrade(GearLocation, protect: Bool)
+    /// At a blacksmith: raise a weapon's or body armor's element by +1 with that element's stones (see
+    /// `ElementForge`). Gear with no element takes on `element`. `protect` spends a Ward Charm on risky attempts.
+    case infuseElement(GearLocation, element: Element, protect: Bool)
+    /// At a blacksmith: strip the element off, back to plain gear.
+    case removeElement(GearLocation)
+    /// At a blacksmith: change the element to another, keeping its level (costs Ward Charms and lots of caps).
+    case convertElement(GearLocation, to: Element)
     case acceptQuest(QuestID)
     case completeQuest(QuestID)
     /// First job change at level 15, at Elder Morel.
@@ -78,6 +87,12 @@ public enum ActionFailure: String, Codable, Sendable {
     case noStatPoints
     /// Can't do that mid-fight (e.g. a Blinkwing).
     case inCombat
+    /// The job change needs the Trial of the Path done first.
+    case trialFirst
+    /// The gear already carries another element: remove or convert it first.
+    case elementMismatch
+    /// The gear has no element to remove or convert.
+    case noElement
 }
 
 public enum MobAbility: String, Codable, Sendable {
@@ -85,6 +100,8 @@ public enum MobAbility: String, Codable, Sendable {
     case hide, charge, cloud, split
     // The Hollow Owl
     case swoop, swoopImpact, gust, summon, enrage
+    // Moldywarp: digs down, then bursts up under someone
+    case burrow, erupt
 }
 
 /// Things that happened during a tick, for effects, sounds, and HUD feedback.
@@ -92,6 +109,8 @@ public enum WorldEvent: Codable, Sendable, Equatable {
     case damage(source: EntityID, target: EntityID, amount: Int, isCritical: Bool, skill: SkillID?)
     /// `target` caught the attack on its shield: no damage.
     case blocked(source: EntityID, target: EntityID)
+    /// An auto-attack missed (Flyff's "Miss": accuracy against parry, see `CombatStats.hitChance`).
+    case missed(source: EntityID, target: EntityID)
     case heal(target: EntityID, amount: Int, skill: SkillID?)
     case manaRestored(target: EntityID, amount: Int)
     case skillCast(caster: EntityID, skill: SkillID, target: EntityID?)
@@ -111,6 +130,8 @@ public enum WorldEvent: Codable, Sendable, Equatable {
     case itemUsed(player: EntityID, item: ItemID)
     case equipmentChanged(player: EntityID)
     case upgradeAttempted(player: EntityID, item: ItemID, result: UpgradeResult)
+    /// An element infusion, removal, or conversion at the blacksmith.
+    case elementForged(player: EntityID, item: ItemID, result: ElementForgeResult)
     case questAccepted(player: EntityID, quest: QuestID)
     case questProgress(player: EntityID, quest: QuestID, progress: Int, goal: Int)
     case questCompleted(player: EntityID, quest: QuestID)
@@ -121,6 +142,8 @@ public enum WorldEvent: Codable, Sendable, Equatable {
     case worldBossSpawned(entity: EntityID, kind: MobKind)
     case worldBossDeparted(entity: EntityID)
     case worldBossDefeated(entity: EntityID, participants: [EntityID])
+    /// A field boss (Moldywarp) fell; it comes back on a timer.
+    case fieldBossDefeated(entity: EntityID, kind: MobKind, participants: [EntityID])
     case knockedBack(entity: EntityID)
     case petSummoned(player: EntityID)
     case petDismissed(player: EntityID, reason: PetDismissal)
@@ -183,6 +206,8 @@ public struct EntitySnapshot: Codable, Sendable, Equatable, Identifiable {
     public let isAggressive: Bool
     /// Mobs: the rare, huge one of its kind (see `Giant`).
     public var isGiant = false
+    /// Players: the element infused into their weapon (it shows from +3).
+    public var weaponElement: ElementUpgrade?
 
     public var isAlive: Bool { hp > 0 }
 
@@ -232,6 +257,8 @@ public struct PlayerStatus: Codable, Sendable, Equatable {
     public let buffs: [BuffStatus]
     public let canFly: Bool
     public let isFlying: Bool
+    /// Sitting down to rest.
+    public let isSitting: Bool
     /// Meters above the ground.
     public let altitude: Float
     public let pet: PetStatus

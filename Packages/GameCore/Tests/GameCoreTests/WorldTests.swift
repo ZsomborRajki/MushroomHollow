@@ -58,7 +58,12 @@ import Testing
         sim.enqueue(.chooseClass(.guardian), from: rookie)
         #expect(run(&sim, seconds: 0.1).contains(.actionFailed(player: rookie, reason: .levelTooLow)))
 
-        let veteran = sim.spawnPlayer(profile: PlayerProfile(level: 15))
+        let untested = sim.spawnPlayer(profile: PlayerProfile(level: 15))
+        try standNear(.elderMorel, untested, in: &sim)
+        sim.enqueue(.chooseClass(.guardian), from: untested)
+        #expect(run(&sim, seconds: 0.1).contains(.actionFailed(player: untested, reason: .trialFirst)), "the trial comes first")
+
+        let veteran = sim.spawnPlayer(profile: PlayerProfile(level: 15, completedQuests: [.trialOfThePath]))
         sim.enqueue(.chooseClass(.guardian), from: veteran)
         #expect(run(&sim, seconds: 0.1).contains(.actionFailed(player: veteran, reason: .tooFar)))
 

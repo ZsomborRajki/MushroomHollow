@@ -8,6 +8,8 @@ extension NPCID {
         var look = PlayerRig.Look()
         look.sprout = false
         look.scarf = false
+        // The shirt under the vest matches the trim unless someone picks their own.
+        look.shirt = nil
         switch self {
         case .elderMorel:
             look.hair = UIColor(white: 0.92, alpha: 1)
@@ -38,6 +40,9 @@ extension NPCID {
             look.cap = .wide(UIColor(red: 0.42, green: 0.26, blue: 0.16, alpha: 1))
             look.iris = .hazel
             look.lids = 0.45
+            // Work trousers at the forge, a sooty shirt under the vest.
+            look.bareLegs = false
+            look.shirt = UIColor(red: 0.55, green: 0.5, blue: 0.46, alpha: 1)
         case .truffle:
             look.hair = UIColor(red: 0.2, green: 0.14, blue: 0.12, alpha: 1)
             look.tunic = UIColor(red: 0.35, green: 0.6, blue: 0.35, alpha: 1)
@@ -52,6 +57,7 @@ extension NPCID {
             look.cap = .beret(UIColor(red: 0.55, green: 0.33, blue: 0.17, alpha: 1), spots: false)
             look.iris = .leaf
             look.lids = 0.2
+            look.shirt = UIColor(red: 0.95, green: 0.85, blue: 0.5, alpha: 1)
         case .oyster:
             look.hair = UIColor(red: 0.3, green: 0.35, blue: 0.5, alpha: 1)
             look.tunic = UIColor(red: 0.3, green: 0.4, blue: 0.62, alpha: 1)
@@ -59,6 +65,7 @@ extension NPCID {
             look.cap = .fan(UIColor(red: 0.78, green: 0.8, blue: 0.86, alpha: 1))
             look.iris = .sky
             look.lids = 0.3
+            look.bareLegs = false
         case .enoki:
             look.hair = UIColor(red: 0.95, green: 0.92, blue: 0.82, alpha: 1)
             look.cap = .cluster(UIColor(red: 0.98, green: 0.96, blue: 0.88, alpha: 1))
@@ -72,6 +79,7 @@ extension NPCID {
             look.cap = .frills(UIColor(red: 0.5, green: 0.38, blue: 0.26, alpha: 1))
             look.iris = .amber
             look.lids = 0.25
+            look.shirt = UIColor(red: 0.72, green: 0.24, blue: 0.2, alpha: 1)
         }
         return look
     }

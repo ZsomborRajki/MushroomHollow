@@ -110,7 +110,7 @@ import Testing
         let mobs = sim.snapshot().entities.filter(\.kind.isMob)
         for (index, area) in sim.map.mobSpawns.enumerated() {
             let aggressive = mobs.filter { sim.entities[$0.id]?.brain?.spawnArea == index && $0.isAggressive }.count
-            let expected = area.kind.stats.aggroRadius > 0 ? max(1, area.count / GameSimulation.aggressiveShare) : 0
+            let expected = area.kind.stats.aggroRadius > 0 ? max(1, area.count / area.aggressiveShare) : 0
             #expect(aggressive == expected, "\(area.kind)")
         }
         #expect(!mobs.contains { $0.kind == .mob(.snail) && $0.isAggressive }, "the starter glade never picks fights")
@@ -160,7 +160,9 @@ import Testing
             level = definition.requiredLevel
         }
         #expect(QuestID.shellShock.next == .spotsBeforeYourEyes)
-        #expect(QuestID.kingOfTheGrove.next == nil)
+        #expect(QuestID.kingOfTheGrove.next == .somethingStirsBelow)
+        #expect(QuestID.theWarrenKing.next == nil)
+        #expect(!QuestID.trialOfThePath.definition.isMainStory)
         #expect(!QuestID.hollowOwl.definition.isMainStory)
     }
 
@@ -169,7 +171,7 @@ import Testing
             switch quest.definition.objective {
             case let .defeat(kind, _): kind
             case let .collect(item, _): item.specimenOf
-            case .explore: nil
+            case .explore, .defeatGiant: nil
             }
         })
         for area in WorldMap.mushroomHollow.mobSpawns {
@@ -182,7 +184,8 @@ import Testing
     // MARK: - Porcini
 
     @Test func everyMobsMaterialHasABounty() {
-        for kind in MobKind.allCases where kind != .mouse && kind != .sporeling && kind != .puffling {
+        // Summons have no material of their own, and Moldywarp drops its moles' pelts.
+        for kind in MobKind.allCases where kind != .mouse && kind != .sporeling && kind != .puffling && !kind.isFieldBoss {
             let material = kind.drops[0].item
             #expect(material.bounty?.source == kind, "\(kind)")
         }

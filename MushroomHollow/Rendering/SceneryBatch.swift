@@ -260,6 +260,9 @@ final class SceneryBatch {
     /// Which chunk the next shapes belong to: set it to the object's position before building it.
     var anchor: SIMD2<Float> = .zero
     private var meshes: [MeshData] = []
+    /// Per vertex of `meshes`: how wide its ink outline is drawn (thin stems get a thin line, so
+    /// they don't disappear under it).
+    private var outlineWeights: [[Float]] = []
     private var slots: [Slot: Int] = [:]
     private var translucentColors: [String: UIColor] = [:]
 
@@ -277,6 +280,7 @@ final class SceneryBatch {
         } else {
             index = meshes.count
             meshes.append(MeshData())
+            outlineWeights.append([])
             slots[slot] = index
         }
         let normalMatrix = simd_float3x3(
@@ -284,6 +288,24 @@ final class SceneryBatch {
             SIMD3(transform.columns.1.x, transform.columns.1.y, transform.columns.1.z),
             SIMD3(transform.columns.2.x, transform.columns.2.y, transform.columns.2.z)).inverse.transpose
         Self.append(shape, into: &meshes[index], transform: transform, normalMatrix: normalMatrix, uv: uv)
+        if ArtStyle.isInk {
+            outlineWeights[index].append(contentsOf: repeatElement(Self.outlineWeight(shape, transform: transform),
+                                                                   count: shape.positions.count))
+        }
+    }
+
+    /// Full outline from about 0.3 m thick, down to a quarter of it for hair-thin stems.
+    private static func outlineWeight(_ shape: MeshData, transform: simd_float4x4) -> Float {
+        var low = SIMD3<Float>(repeating: .greatestFiniteMagnitude), high = -low
+        for p in shape.positions {
+            low = simd_min(low, p)
+            high = simd_max(high, p)
+        }
+        let axes = SIMD3(simd_length(transform.columns.0), simd_length(transform.columns.1), simd_length(transform.columns.2))
+        let extents = (high - low) * axes
+        // A flat shape (a disc) is as thin as its narrower side.
+        let thickness = extents.min() > 1e-4 ? extents.min() : (extents.sum() - extents.max())
+        return min(max(thickness / 0.3, 0.25), 1)
     }
 
     private static func append(_ shape: MeshData, into mesh: inout MeshData, transform: simd_float4x4,
@@ -362,6 +384,18 @@ final class SceneryBatch {
         part(shape, color, at: base, scale: [width, length, length], rotation: rotation, glow: glow, layer: .foliage)
     }
 
+    /// The outline shell for mesh `index`: smoothed normals, and each vertex's outline weight in u.
+    private func hullData(_ index: Int) -> MeshData {
+        var data = InkHullMesh.smoothed(meshes[index])
+        let weights = outlineWeights[index]
+        if weights.count == data.uvs.count {
+            data.uvs = weights.map { SIMD2($0, 0) }
+        } else {
+            data.uvs = Array(repeating: SIMD2(1, 0), count: data.positions.count)
+        }
+        return data
+    }
+
     func translucent(_ shape: MeshData, _ color: UIColor, opacity: Float, transform: simd_float4x4) {
         let key = "\(color.description)-\(opacity)"
         translucentColors[key] = color
@@ -405,8 +439,19 @@ final class SceneryBatch {
                 model.components.set(DynamicLightShadowComponent(castsShadow: false))
             }
             chunk.addChild(model)
+            // Ink: everything solid gets a marker outline (leaves and petals are too thin for a shell;
+            // their contour shading and the post-process lines draw them).
+            if ArtStyle.isInk, slot.layer == .solid,
+               let hullMaterial = InkMaterials.hull(width: InkStyle.sceneryHullWidth, weightedByUV: true),
+               let hullMesh = hullData(index).resource(named: InkStyle.hullName) {
+                let hull = ModelEntity(mesh: hullMesh, materials: [hullMaterial])
+                hull.name = InkStyle.hullName
+                hull.components.set(DynamicLightShadowComponent(castsShadow: false))
+                model.addChild(hull)
+            }
         }
         meshes = []
+        outlineWeights = []
         slots = [:]
         return chunks.compactMap { key, entity in
             bounds[key].map { SceneryChunk(entity: entity, bounds: $0) }

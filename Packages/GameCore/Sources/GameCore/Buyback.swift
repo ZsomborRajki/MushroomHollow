@@ -34,9 +34,9 @@ extension GameSimulation {
         guard let index = data.buyback.firstIndex(where: { $0.gear == gear }) else { return .missingItem }
         let sold = data.buyback[index]
         guard data.caps >= sold.total else { return .notEnoughCaps }
-        guard data.inventory.canAdd(gear.item, count: sold.count, upgrade: gear.upgrade) else { return .inventoryFull }
+        guard data.inventory.canAdd(gear, count: sold.count) else { return .inventoryFull }
 
-        data.inventory.add(gear.item, count: sold.count, upgrade: gear.upgrade)
+        data.inventory.add(gear, count: sold.count)
         data.caps -= sold.total
         data.buyback.remove(at: index)
         player.player = data

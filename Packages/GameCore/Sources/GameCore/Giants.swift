@@ -35,10 +35,13 @@ extension MobKind {
     /// Species with a hunting field of their own get a Giant (not summons or the world boss).
     public var hasGiant: Bool {
         switch self {
-        case .sporeling, .puffling, .mouse, .owl: false
+        case .sporeling, .puffling, .mouse, .owl, .moldywarp: false
         default: true
         }
     }
+
+    /// A boss that lives in its lair all the time and respawns on a timer (unlike the night's owl).
+    public var isFieldBoss: Bool { self == .moldywarp }
 
     /// "Giant Snail".
     public func displayName(giant: Bool) -> String {

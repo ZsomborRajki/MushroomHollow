@@ -1,13 +1,13 @@
 /// Flyff's four character stats. Every sprout starts with `Attributes.base` in each and earns
 /// `Attributes.pointsPerLevel` points to spend on every level up.
 public enum Attribute: String, Codable, Sendable, CaseIterable {
-    /// Hits harder.
+    /// Hits harder with swords, axes, and mauls.
     case strength
     /// More health and tougher skin.
     case stamina
-    /// Swings faster and lands more critical hits.
+    /// Swings faster, lands more hits and criticals, dodges more, and draws a bow harder.
     case dexterity
-    /// More mana and stronger skills.
+    /// More mana, stronger skills, and harder-hitting wands and staves.
     case intelligence
 
     public var name: String {
@@ -42,11 +42,23 @@ public struct Attributes: Codable, Sendable, Equatable {
     public static let pointsPerLevel = 3
 
     // What each point is worth (see `Progression.playerStats`).
-    public static let attackPerStrength: Float = 1.1
+    /// Attack per point of the weapon's own stat (`WeaponType.attribute`: Strength for blades, Dexterity
+    /// for bows, Intelligence for wands and staves; bare hands use Strength).
+    public static let attackPerPoint: Float = 1.25
     public static let hpPerStamina = 7
     public static let defensePerStamina: Float = 0.5
-    public static let speedPerDexterity: Float = 0.006
-    public static let criticalPerDexterity: Float = 0.0025
+    /// Attack speed per Dexterity point, scaled by the weapon (`WeaponType.dexterityFactor`): about 90 points
+    /// swing a sword twice as fast.
+    public static let speedPerDexterity: Float = 0.012
+    /// Levels add a sliver of speed too (Flyff's level / 8).
+    public static let speedPerLevel: Float = 0.004
+    /// Speed, set bonuses included, tops out here.
+    public static let maxAttackSpeed: Float = 2.5
+    public static let baseCritical: Float = 0.01
+    /// Per point of Dexterity (the full value, base included).
+    public static let criticalPerDexterity: Float = 0.0015
+    /// Parry (dodging mob swings) per point of Dexterity (the full value).
+    public static let parryPerDexterity: Float = 0.5
     public static let mpPerIntelligence = 4
     public static let skillPowerPerIntelligence: Float = 0.015
 

@@ -69,8 +69,14 @@ extension GameSimulation {
 
     // MARK: - The fight
 
-    /// Runs the owl's scripted moves. Returns true when a move used up this tick.
-    mutating func stepBoss(_ owl: inout WorldEntity, brain: inout MobBrain) -> Bool {
+    /// Runs a boss's scripted moves. Returns true when a move used up this tick.
+    mutating func stepBoss(_ mob: inout WorldEntity, brain: inout MobBrain) -> Bool {
+        if case .mob(.moldywarp) = mob.kind { return stepWarrenKing(&mob, brain: &brain) }
+        return stepOwl(&mob, brain: &brain)
+    }
+
+    /// The owl: swoops, wing gusts, and mice.
+    private mutating func stepOwl(_ owl: inout WorldEntity, brain: inout MobBrain) -> Bool {
         guard var boss = brain.boss else { return false }
         defer { brain.boss = boss }
         if boss.swoopTimer > 0 { boss.swoopTimer -= 1 }
@@ -117,7 +123,7 @@ extension GameSimulation {
             }
             return true
 
-        case .none:
+        case .none, .burrow:
             break
         }
 
@@ -181,28 +187,34 @@ extension GameSimulation {
             rollLoot(for: kind, ownedBy: player, at: boss.position.xz)
             entities[id] = player
         }
-        events.append(.worldBossDefeated(entity: boss.id, participants: participants))
+        events.append(kind.isFieldBoss ? .fieldBossDefeated(entity: boss.id, kind: kind, participants: participants)
+                                       : .worldBossDefeated(entity: boss.id, participants: participants))
     }
 
     // MARK: - Helpers
 
     private mutating func summonMice(count: Int, around center: Vec2, angryAt target: EntityID) {
+        summon(.mouse, count: count, around: center, angryAt: target)
+    }
+
+    /// Calls `count` of `kind` to a boss's side, already angry at `target`. They don't respawn.
+    mutating func summon(_ kind: MobKind, count: Int, around center: Vec2, angryAt target: EntityID, leash: Float = 16) {
         for i in 0..<count {
             let angle = Float(i) / Float(count) * 2 * .pi + random.float(in: 0...1)
-            let spot = map.resolve(center + AngleMath.direction(forYaw: angle) * 4, radius: MobKind.mouse.radius)
-            var mouse = WorldEntity(
-                id: makeID(), kind: .mob(.mouse),
+            let spot = map.resolve(center + AngleMath.direction(forYaw: angle) * 4, radius: kind.radius)
+            var helper = WorldEntity(
+                id: makeID(), kind: .mob(kind),
                 position: Vec3(spot.x, 0, spot.y), yaw: angle,
-                radius: MobKind.mouse.radius, moveSpeed: MobKind.mouse.wanderSpeed,
-                stats: MobKind.mouse.stats.combatStats,
-                brain: MobBrain(home: center, leashRadius: 16, spawnArea: nil, state: .engaged, aggressive: true))
-            mouse.combat.target = target
-            mouse.combat.engaged = true
-            insert(mouse)
+                radius: kind.radius, moveSpeed: kind.wanderSpeed,
+                stats: kind.stats.combatStats,
+                brain: MobBrain(home: center, leashRadius: leash, spawnArea: nil, state: .engaged, aggressive: true))
+            helper.combat.target = target
+            helper.combat.engaged = true
+            insert(helper)
         }
     }
 
-    private func players(within radius: Float, of point: Vec2, below height: Float) -> [EntityID] {
+    func players(within radius: Float, of point: Vec2, below height: Float) -> [EntityID] {
         order.filter { id in
             guard let e = entities[id], e.kind == .player, e.stats.isAlive, e.position.y < height else { return false }
             return e.position.xz.distance(to: point) < radius + e.radius
@@ -220,7 +232,7 @@ extension GameSimulation {
         }
     }
 
-    private mutating func knockBack(_ id: EntityID, direction: Vec2) {
+    mutating func knockBack(_ id: EntityID, direction: Vec2) {
         guard var player = entities[id] else { return }
         player.knockback = direction * Self.knockbackSpeed
         player.knockbackTicks = Self.ticks(Self.knockbackSeconds)
@@ -230,8 +242,16 @@ extension GameSimulation {
         events.append(.knockedBack(entity: id))
     }
 
+    /// Danger markers for every boss mid-move.
     var telegraphSnapshots: [TelegraphSnapshot] {
-        guard let id = bossID, let owl = entities[id], let action = owl.brain?.boss?.action else { return [] }
+        order.flatMap { id -> [TelegraphSnapshot] in
+            guard let boss = entities[id], let action = boss.brain?.boss?.action else { return [] }
+            return telegraphs(of: boss, action)
+        }
+    }
+
+    private func telegraphs(of owl: WorldEntity, _ action: BossBrain.Action) -> [TelegraphSnapshot] {
+        let id = owl.id
         switch action {
         case let .swoopWindup(target, ticksLeft):
             let total = Float(Self.ticks(Self.swoopWindup) + Self.ticks(Self.swoopDive))
@@ -245,6 +265,10 @@ extension GameSimulation {
             return [TelegraphSnapshot(source: id, position: owl.position.xz,
                                       shape: .cone(direction: direction, radius: Self.gustRange, halfAngle: Self.gustHalfAngle),
                                       progress: 1 - Float(ticksLeft) / Float(Self.ticks(Self.gustWindup)))]
+        case let .burrow(_, to, ticksLeft):
+            let total = Float(Self.ticks(Self.burrowSeconds))
+            return [TelegraphSnapshot(source: id, position: to, shape: .circle(radius: Self.burrowRadius),
+                                      progress: 1 - Float(ticksLeft) / total)]
         case .none:
             return []
         }

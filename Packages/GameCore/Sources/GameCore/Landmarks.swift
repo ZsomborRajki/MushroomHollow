@@ -6,6 +6,8 @@ public enum LandmarkID: String, Codable, Sendable, CaseIterable {
     case cattailShore, sunnyHillock, cloverKnoll, oldKnot, barkfallBluff, foxgloveHill, owlwatchHill, fallenBough
     // The wild fringe past the outer ring
     case rimviewBluff, glimmerDell, windwhistlePeak, moonwellTarn, hollowlogCrossing, mossringStones
+    // Added with the brook and the mesas
+    case silverthreadSpring, sunstoneMesa
 
     public var name: String {
         switch self {
@@ -23,6 +25,8 @@ public enum LandmarkID: String, Codable, Sendable, CaseIterable {
         case .moonwellTarn: "Moonwell Tarn"
         case .hollowlogCrossing: "Hollowlog Crossing"
         case .mossringStones: "Mossring Stones"
+        case .silverthreadSpring: "Silverthread Spring"
+        case .sunstoneMesa: "Sunstone Mesa"
         }
     }
 
@@ -43,6 +47,8 @@ public enum LandmarkID: String, Codable, Sendable, CaseIterable {
         case .moonwellTarn: "A still, deep pond that holds the moon"
         case .hollowlogCrossing: "A fallen limb so big it's a landmark"
         case .mossringStones: "Old stones standing in a ring"
+        case .silverthreadSpring: "Where the brook to Dewdrop Lake begins"
+        case .sunstoneMesa: "A cliff-walled table of stone, one ramp up"
         }
     }
 }
