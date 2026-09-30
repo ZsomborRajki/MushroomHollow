@@ -3,7 +3,7 @@ import RealityKit
 import SwiftUI
 import UIKit
 
-/// Sprout, the player character, in lively Flyff proportions: about four and a half heads tall,
+/// Sprout, the player character, in lively Flyff proportions: about five and a half heads tall,
 /// long-legged and slim-waisted, with big fists and chunky cuffed boots, baggy shorts over bare
 /// knees, a short-sleeved vest, pointed ears, big anime eyes, and spiky hair (with a sprout leaf
 /// growing out of it). A joint hierarchy (hips, torso, head, shoulders, elbows, legs, knees)
@@ -83,8 +83,9 @@ final class PlayerRig {
     private static let forearmHand: SIMD3<Float> = [0, -0.22, 0]
     /// Fists (and the gloves over them) are drawn big, Flyff style.
     private static let fistSize: Float = 1.6
-    /// The head keeps its anime detail but is drawn smaller than Sprout's old chibi one.
-    private static let headScale: Float = 0.7
+    /// The head keeps its anime detail but is drawn at a realistic size (Flyff's vagrant, about
+    /// five and a half heads tall), not Sprout's old chibi one.
+    private static let headScale: Float = 0.46
     private static let headCenter: SIMD3<Float> = [0, 0.33, 0]
     private static let headRadius: Float = 0.31
 
@@ -172,7 +173,7 @@ final class PlayerRig {
         // Paint the faces it will show up front, so the first blink doesn't hitch (townsfolk only blink).
         let expressions: [FacePainter.Expression] = look.face == .sprout ? FacePainter.Expression.allCases : [.open, .blink]
         for expression in expressions { _ = FacePainter.material(expression, look.face) }
-        face = ModelEntity(mesh: Meshes.animeHead, materials: [FacePainter.material(.open, look.face)])
+        face = ModelEntity(mesh: Meshes.animeFace, materials: [FacePainter.material(.open, look.face)])
         hatCap = ModelEntity(mesh: Self.capMesh, materials: [Materials.matte(Palette.capRed, roughness: 0.5)])
 
         root.addChild(body)
@@ -209,13 +210,13 @@ final class PlayerRig {
         hips.addPart(Meshes.torus(radius: 0.128, tube: 0.019), Materials.matte(SproutLook.belt), at: [0, 0.075, 0], scale: [1, 1, 0.74])
         hips.addPart(Meshes.roundedBox, Materials.glossy(SproutLook.gold), at: [0, 0.075, 0.097], scale: [0.055, 0.045, 0.02])
         // A slim neck, a little forward of the shoulders.
-        torso.addPart(Meshes.loft([.init(0.54, 0.034, 0.036, 0.01), .init(0.47, 0.036, 0.038, 0.004), .init(0.42, 0.045, 0.042)],
+        torso.addPart(Meshes.loft([.init(0.57, 0.032, 0.034, 0.01), .init(0.48, 0.035, 0.037, 0.004), .init(0.42, 0.045, 0.042)],
                                   segments: 14, name: "neck"),
                       Materials.matte(look.skin, roughness: 0.7), at: .zero, scale: .one)
 
         // A knitted scarf with two tails that flutter behind (it takes the class color).
         guard look.scarf else { return }
-        let scarf = torso.addPart(Meshes.torus(radius: 0.085, tube: 0.04), Materials.matte(SproutLook.scarf), at: [0, 0.44, 0],
+        let scarf = torso.addPart(Meshes.torus(radius: 0.078, tube: 0.029), Materials.matte(SproutLook.scarf), at: [0, 0.44, 0],
                                   scale: [1, 0.8, 1])
         scarfParts.append(scarf)
         for side in Self.sides {
@@ -291,7 +292,7 @@ final class PlayerRig {
     }
 
     private func buildHead() {
-        head.position = [0, 0.5, 0]
+        head.position = [0, 0.53, 0]
         head.scale = SIMD3(repeating: Self.headScale)
         torso.addChild(head)
         let skin = Materials.matte(look.skin, roughness: 0.7)

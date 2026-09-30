@@ -231,6 +231,61 @@ enum Meshes {
         return grid(rows, name: "animeHead")
     }()
 
+    /// The painted face: `animeHead`'s skull with a face sculpted onto it (`faceRelief`), sampled
+    /// finely over the face and coarsely around the back. Texture coordinates stay `animeHead`'s,
+    /// so the painted eyes, nose, and mouth land in their sockets, on the tip, and on the lips.
+    static let animeFace: MeshResource = {
+        /// Angles from `from` to `to`: `dense` apart inside `fine`, `coarse` apart outside it.
+        func steps(_ from: Float, _ to: Float, fine: ClosedRange<Float>, dense: Float, coarse: Float) -> [Float] {
+            var values = [from]
+            while let last = values.last, last < to {
+                values.append(min(to, last + (fine.contains(last) ? dense : coarse)))
+            }
+            return values
+        }
+        let latitudes = steps(-.pi / 2, .pi / 2, fine: -1.15...0.4, dense: 0.03, coarse: 0.1).reversed()
+        let longitudes = steps(-.pi, .pi, fine: -0.95...0.95, dense: 0.035, coarse: 0.13)
+        var rows: [[SIMD3<Float>]] = []
+        var uvs: [SIMD2<Float>] = []
+        for latitude in latitudes {
+            rows.append(longitudes.map { longitude in
+                let d: SIMD3<Float> = [cos(latitude) * sin(longitude), sin(latitude), cos(latitude) * cos(longitude)]
+                return headShape(d) + [0, 0, faceRelief(longitude, latitude)]
+            })
+            uvs += longitudes.map { [($0 + .pi) / (2 * .pi), (latitude + .pi / 2) / .pi] }
+        }
+        return grid(rows, uvs: uvs, name: "animeFace")
+    }()
+
+    /// How far the face stands forward at a spot (longitude/latitude on the unit sphere, where
+    /// `FacePainter` paints): a nose ridge rising from between the eyes to a rounded tip, brows
+    /// over shallow eye sockets, cheekbones, lips, and a chin. Heights are in head radii.
+    private static func faceRelief(_ longitude: Float, _ latitude: Float) -> Float {
+        func bump(_ lon: Float, _ lat: Float, _ width: Float, _ height: Float) -> Float {
+            let x = (longitude - lon) / width, y = (latitude - lat) / height
+            return exp(-(x * x + y * y))
+        }
+        func smoothstep(_ a: Float, _ b: Float, _ x: Float) -> Float {
+            let t = min(max((x - a) / (b - a), 0), 1)
+            return t * t * (3 - 2 * t)
+        }
+        // The nose: 0 at the bridge ... 1 at the tip, widening as it goes, tucked in underneath.
+        let t = min(max((-0.04 - latitude) / 0.27, 0), 1)
+        let width = 0.05 + 0.035 * t
+        var h = (0.015 + 0.115 * pow(t, 1.6)) * exp(-pow(longitude / width, 2))
+            * smoothstep(0.04, -0.06, latitude) * smoothstep(-0.37, -0.3, latitude)
+        for side: Float in [-1, 1] {
+            h += 0.035 * bump(side * 0.07, -0.3, 0.04, 0.035) // the nostrils' wings
+            h += 0.035 * bump(side * 0.3, 0.2, 0.2, 0.06) // brow ridge
+            h -= 0.03 * bump(side * 0.31, -0.08, 0.17, 0.17) // eye socket
+            h += 0.035 * bump(side * 0.47, -0.36, 0.13, 0.1) // cheekbone
+        }
+        h += 0.025 * bump(0, -0.425, 0.09, 0.03) // upper lip
+        h += 0.03 * bump(0, -0.48, 0.075, 0.03) // lower lip
+        h += 0.04 * bump(0, -0.85, 0.14, 0.13) // chin
+        return h
+    }
+
     /// Bends a point of the unit sphere into the head's shape.
     private static func headShape(_ d: SIMD3<Float>) -> SIMD3<Float> {
         func smoothstep(_ a: Float, _ b: Float, _ x: Float) -> Float {
@@ -262,14 +317,13 @@ enum Meshes {
 
     /// Builds a mesh from rows of points (top to bottom, each running once around and repeating
     /// its first point last) with smooth normals, welded across seams and poles.
-    static func grid(_ rows: [[SIMD3<Float>]], name: String) -> MeshResource {
+    /// A mesh through rows of points, top to bottom. Without `uvs`, texture coordinates run
+    /// evenly across the columns and down the rows.
+    static func grid(_ rows: [[SIMD3<Float>]], uvs: [SIMD2<Float>]? = nil, name: String) -> MeshResource {
         let columns = rows[0].count
         let positions = rows.flatMap(\.self)
-        var uvs: [SIMD2<Float>] = []
-        for i in rows.indices {
-            for j in 0..<columns {
-                uvs.append([Float(j) / Float(columns - 1), 1 - Float(i) / Float(rows.count - 1)])
-            }
+        let uvs = uvs ?? rows.indices.flatMap { i in
+            (0..<columns).map { j -> SIMD2<Float> in [Float(j) / Float(columns - 1), 1 - Float(i) / Float(rows.count - 1)] }
         }
         var indices: [UInt32] = []
         let row = UInt32(columns)
